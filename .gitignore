@@ -1,6 +1,15 @@
-__pycache__/
-.env
-*.env
-.env.local
+# Python
+backend/venv/
+backend/__pycache__/
 *.pyc
-node_modules/
+*.pyo
+
+# Node/React Native
+frontend/node_modules/
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
