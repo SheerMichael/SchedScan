@@ -5,9 +5,9 @@ It provides smart schedule scanning and management tools for both students and f
 
 
 Depedencies for editing:
-npx expo install react-native-safe-area-context
-npm install lucide-react-native
-npx expo install expo-image-picker
-npx expo install react-native-svg 
-npm install nativewind tailwindcss
+npx expo install react-native-safe-area-context,
+npm install lucide-react-native,
+npx expo install expo-image-picker,
+npx expo install react-native-svg,
+npm install nativewind tailwindcss,
 ---
