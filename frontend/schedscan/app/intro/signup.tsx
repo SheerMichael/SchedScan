@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StatusBar, Alert, Image } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StatusBar, Alert, Image, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import Svg, { Path, Circle, Rect, G } from 'react-native-svg';
+import { useAuth } from '../../context/AuthContext';
 
 type SignUpData = {
   first_name: string;
@@ -33,11 +34,15 @@ type SignUp3Props = {
   setScreen: (screen: Step) => void;
   formData: SignUpData;
   setFormData: React.Dispatch<React.SetStateAction<SignUpData>>;
+  handleSignup: () => Promise<void>;
+  isLoading: boolean;
 };
 
 const AuthFlow = () => {
   const [image, setImage] = useState<string | null>(null);
   const [screen, setScreen] = useState<Step>('signup1');
+  const [isLoading, setIsLoading] = useState(false);
+  const { register } = useAuth();
 
   const [formData, setFormData] = useState<SignUpData>({
     first_name: "",
@@ -102,6 +107,93 @@ const AuthFlow = () => {
         <View className={`h-1 bg-red-700 rounded-full ${widthClass}`} />
       </View>
     );
+  };
+
+  const handleSignup = async () => {
+    // Validation
+    if (!formData.first_name || !formData.last_name) {
+      Alert.alert('Error', 'Please enter your first and last name');
+      return;
+    }
+
+    if (!formData.email) {
+      Alert.alert('Error', 'Please enter your email');
+      return;
+    }
+
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(formData.email)) {
+      Alert.alert('Error', 'Please enter a valid email address');
+      return;
+    }
+
+    if (!formData.password) {
+      Alert.alert('Error', 'Please enter a password');
+      return;
+    }
+
+    if (formData.password !== formData.confirmPassword) {
+      Alert.alert('Error', 'Passwords do not match');
+      return;
+    }
+
+    if (formData.password.length < 6) {
+      Alert.alert('Error', 'Password must be at least 6 characters');
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      
+      await register({
+        email: formData.email,
+        password: formData.password,
+        first_name: formData.first_name,
+        last_name: formData.last_name,
+        profile_picture: image || undefined,
+      });
+
+      Alert.alert('Success!', 'Your account has been created successfully!', [
+        {
+          text: 'OK',
+          onPress: () => {
+            // Navigate to login screen
+            router.replace('/intro/login');
+          },
+        },
+      ]);
+    } catch (error: any) {
+      let errorMessage = 'Registration failed. Please try again.';
+      
+      if (error.message === 'Network Error' || !error.response) {
+        errorMessage = 'Cannot connect to server. Please check:\n\n' +
+          '1. Backend server is running (python manage.py runserver)\n' +
+          '2. You are using the correct network\n' +
+          '3. Firewall is not blocking the connection';
+      } else if (error.response?.data) {
+        // Handle specific API errors
+        const data = error.response.data;
+        if (data.email) {
+          errorMessage = `Email: ${Array.isArray(data.email) ? data.email[0] : data.email}`;
+        } else if (data.password) {
+          errorMessage = `Password: ${Array.isArray(data.password) ? data.password[0] : data.password}`;
+        } else if (data.first_name) {
+          errorMessage = `First Name: ${Array.isArray(data.first_name) ? data.first_name[0] : data.first_name}`;
+        } else if (data.last_name) {
+          errorMessage = `Last Name: ${Array.isArray(data.last_name) ? data.last_name[0] : data.last_name}`;
+        } else if (data.detail) {
+          errorMessage = data.detail;
+        } else if (data.non_field_errors) {
+          errorMessage = Array.isArray(data.non_field_errors) ? data.non_field_errors[0] : data.non_field_errors;
+        }
+      }
+      
+      Alert.alert('Registration Failed', errorMessage);
+      console.error('Registration error:', error);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   // ✅ Screen 1 – Photo + First Name
@@ -204,15 +296,18 @@ const AuthFlow = () => {
     </SafeAreaView>
   );
 
+  
   // ✅ Screen 3 – Passwords
   const SignUp3Screen = ({
     setScreen,
     formData,
-    setFormData
+    setFormData,
+    handleSignup,
+    isLoading
   }: SignUp3Props) => (
     <SafeAreaView className="flex-1 bg-white">
       <ScrollView className="flex-1 p-5">
-        <TouchableOpacity onPress={() => setScreen('signup2')} className="mb-5 w-4">
+        <TouchableOpacity onPress={() => setScreen('signup2')} className="mb-5 w-4" disabled={isLoading}>
           <ChevronRightIcon size={30} color="#000000" />
         </TouchableOpacity>
 
@@ -220,7 +315,7 @@ const AuthFlow = () => {
         
         <View className="mt-20 ml-8 mr-8">
           <Text className="text-3xl font-bold mb-2 text-primary-900">Create a password.</Text>
-          <Text className="text-md font-medium mb-4 text-gray-600">Create a password with at least 6 letters or numbers. It should be something others can’t guess..</Text>
+          <Text className="text-md font-medium mb-4 text-gray-600">Create a password with at least 6 letters or numbers. It should be something others can't guess..</Text>
 
           <TextInput
             className="bg-gray-100 rounded-xl p-4 mb-4"
@@ -230,6 +325,7 @@ const AuthFlow = () => {
             onChangeText={(text) =>
               setFormData((prev: SignUpData) => ({ ...prev, password: text }))
             }
+            editable={!isLoading}
           />
 
           <TextInput
@@ -240,13 +336,19 @@ const AuthFlow = () => {
             onChangeText={(text) =>
               setFormData((prev: SignUpData) => ({ ...prev, confirmPassword: text }))
             }
+            editable={!isLoading}
           />
 
           <TouchableOpacity
-            className="bg-primary-900 rounded-xl py-5 items-center"
-            onPress={() => Alert.alert("✅ Success", "Account Created!")}
+            className={`bg-primary-900 rounded-xl py-5 items-center ${isLoading ? 'opacity-50' : ''}`}
+            onPress={handleSignup}
+            disabled={isLoading}
           >
-            <Text className="text-white font-bold">Finish</Text>
+            {isLoading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text className="text-white font-bold">Finish</Text>
+            )}
           </TouchableOpacity>
 
         </View>
@@ -279,6 +381,8 @@ const AuthFlow = () => {
           setScreen={setScreen}
           formData={formData}
           setFormData={setFormData}
+          handleSignup={handleSignup}
+          isLoading={isLoading}
         />
       )}
     </>
