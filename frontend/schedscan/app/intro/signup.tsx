@@ -244,7 +244,9 @@ const AuthFlow = () => {
 
           <TouchableOpacity
             className="bg-primary-900 rounded-xl py-5 items-center"
-            onPress={() => Alert.alert("✅ Success", "Account Created!")}
+            onPress={() => {
+              Alert.alert("✅ Success", "Account Created!");
+              router.push('../test');}}
           >
             <Text className="text-white font-bold">Finish</Text>
           </TouchableOpacity>

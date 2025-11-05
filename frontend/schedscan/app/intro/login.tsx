@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'react-native';
 import { router } from "expo-router";
@@ -74,7 +74,10 @@ const LoginScreen = () => {
           </TouchableOpacity>
 
           {/* Login Button */}
-          <TouchableOpacity className="bg-primary-900 rounded-lg py-4 mb-8 shadow-sm">
+          <TouchableOpacity className="bg-primary-900 rounded-lg py-4 mb-8 shadow-sm"
+          onPress={() => {
+            Alert.alert("✅ Success", "Account Created!");
+            router.push('../test');}}>
             <Text className="text-white text-center font-semibold">Log in</Text>
           </TouchableOpacity>
 

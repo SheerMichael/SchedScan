@@ -5,30 +5,6 @@ import Svg, { Path, Circle, Rect, G } from 'react-native-svg';
 import { router } from 'expo-router';
 import { Image } from 'react-native';
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-
-// Icon Components
-const CalendarIcon = ({ size = 24, color = '#dc2626' }) => (
-  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
-    <Rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-    <Path d="M16 2v4M8 2v4M3 10h18" />
-  </Svg>
-);
-
-const SearchIcon = ({ size = 24, color = '#dc2626' }) => (
-  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
-    <Circle cx="11" cy="11" r="8" />
-    <Path d="M21 21l-4.35-4.35" />
-  </Svg>
-);
-
-const CheckCircleIcon = ({ size = 24, color = '#dc2626' }) => (
-  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
-    <Circle cx="12" cy="12" r="10" />
-    <Path d="M9 12l2 2 4-4" />
-  </Svg>
-);
-
 const ChevronRightIcon = ({ size = 24, color = '#ffffff' }) => (
   <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
     <Path d="M9 18l6-6-6-6" />
