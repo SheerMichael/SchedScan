@@ -3,7 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, ScrollView, Alert, ActivityInd
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'react-native';
 import { router } from "expo-router";
-import Svg, { Path, Circle, Rect, G } from 'react-native-svg';
+import Svg, { Path } from 'react-native-svg';
 import { Eye, EyeOff} from "lucide-react-native";
 import { useAuth } from '../../context/AuthContext';
 
