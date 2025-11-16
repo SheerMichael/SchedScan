@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Image} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path, Circle, G, Rect, Polygon } from "react-native-svg";
 import { router } from "expo-router";
 
@@ -50,38 +49,6 @@ const StarBadge = ({ value }: Star) => {
 const Bell = ({ size = 24, color = '#4D4D4D' }) => (
   <Svg width={size} height={size} viewBox="0 0 24 24" fill={color} stroke={color} strokeWidth="2">
     <Path d="M22 17H2a3 3 0 0 0 3-3V9a7 7 0 0 1 14 0v5a3 3 0 0 0 3 3zm-8.27 4a2 2 0 0 1-3.46 0" />
-  </Svg>
-);
-
-const Home = ({ size = 24, color = '#CB2222' }) => (
-  <Svg width={size} height={size} viewBox="0 0 24 24" fill="#FFFFFF" stroke={color} strokeWidth="2">
-    <Path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-  </Svg>
-);
-
-const Scan = ({ size = 24, color = '#4D4D4D' }) => (
-  <Svg width={size} height={size} viewBox="0 0 16 16" fill="#FFFFFF" stroke="#000000" strokeWidth="2">
-    <Path d="M0.5 5V2.5C0.5 1.39543 1.39543 0.5 2.5 0.5H5M10 0.5H12.5C13.6046 0.5 14.5 1.39543 14.5 2.5V5M0.5 10V12.5C0.5 13.6046 1.39543 14.5 2.5 14.5H5M14.5 10V12.5C14.5 13.6046 13.6046 14.5 12.5 14.5H10M2 7.5H13"/>
-  </Svg>
-);
-
-const Reminders = ({ size = 24, color = '#4D4D4D' }) => (
-  <Svg width={size} height={size} viewBox="0 0 24 24" fill="#FFFFFF" stroke={color} strokeWidth="2">
-    <Path d="M12 2a10 10 0 1 0 10 10H12V2zM21.18 8.02c-1-2.3-2.85-4.17-5.16-5.18"/>
-  </Svg>
-);
-
-const Schedules = ({ size = 32, color = '#4D4D4D' }) => (
-  <Svg width={size} height={size} viewBox="0 0 24 24" fill="#000000">
-    <Path
-      d="M9 2a1 1 0 0 1 1 1v1h4V3a1 1 0 1 1 2 0v1h3a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h3V3a1 1 0 0 1 1-1zM8 6H5v3h14V6h-3v1a1 1 0 1 1-2 0V6h-4v1a1 1 0 0 1-2 0V6zm11 5H5v8h14v-8z"/>
-  </Svg>
-);
-
-const Account = ({ size = 24, color = '#4D4D4D' }) => (
-  <Svg width={size} height={size} viewBox="0 0 24 24" fill="#FFFFFF" stroke={color} strokeWidth="2">
-    <Path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-    <Circle cx={12} cy={7} r={4}></Circle>
   </Svg>
 );
 
@@ -221,10 +188,10 @@ const Attending = ({ size = 24 }) => (
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-gray-50">
-      <View className="w-full h-14 bg-white border-b-2 border-gray-200 shadow-[0_4px_8px_rgba(0,0,0,0.15)] justify-between items-left flex-row">
+    <>
+      <View className="w-full h-14 bg-white border-b-2 border-gray-200 justify-between items-center flex-row">
         <View className='ml-8 flex-row justify-center items-center'>
-          <Image source={require('../assets/images/logo.png')} className='w-12 h-12'/>
+          <Image source={require('../../assets/images/logo.png')} className='w-12 h-12'/>
           <View className='flex-col justify-center items-left'>
             <Text className="text-xl font-bold text-primary-900/50 leading-none">Sched</Text>
             <Text className="text-xl font-bold text-primary-900 leading-none">Scan</Text>
@@ -233,7 +200,7 @@ const Attending = ({ size = 24 }) => (
         <View className='flex-row justify-center items-center mr-4'>
         <StarBadge value={5} />
         <TouchableOpacity
-          onPress={() => router.push('/intro/login')}>
+          onPress={() => router.push('/Home/notification')}>
           <Bell size={24} color="#4D4D4D"/>
         </TouchableOpacity>
         </View>
@@ -241,7 +208,7 @@ const Attending = ({ size = 24 }) => (
 
         {/* Banner */}
       <ScrollView className="flex-1">
-        <View className="bg-red-600 m-4 p-6 rounded-2xl">
+        <View className="bg-primary-600 m-4 p-6 rounded-2xl">
           <Text className="text-3xl font-bold text-white mb-1">Hi, Jane!</Text>
           <Text className="text-base text-red-200">Ready to organize?</Text>
         </View>
@@ -405,28 +372,6 @@ const Attending = ({ size = 24 }) => (
 
       </ScrollView>
 
-      <View className="w-full h-16 bg-white border-t-2 border-gray-200 justify-evenly items-center flex-row">
-        <View className='flex-col justify-center items-center'>
-          <Home size={24}/>
-          <Text className='text-primary-600 text-sm'>Home</Text>
-        </View>
-        <View className='flex-col justify-center items-center'>
-          <Reminders size={24}/>
-          <Text className='text-gray-500 text-sm'>Reminders</Text>
-        </View>
-        <TouchableOpacity className="w-20 h-20 rounded-full flex-col border border-gray-500 bg-white -mt-8 justify-center items-center">
-          <Scan size={40}/>
-        </TouchableOpacity>
-        <View className='flex-col justify-center items-center'>
-          <Schedules size={24}/>
-          <Text className='text-gray-500 text-sm'>Schedules</Text>
-        </View>
-        <View className='flex-col justify-center items-center'>
-          <Account size={24}/>
-          <Text className='text-gray-500 text-sm'>Account</Text>
-        </View>
-      </View>
-
-    </SafeAreaView>
+    </>
   );
 }
