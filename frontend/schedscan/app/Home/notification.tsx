@@ -13,6 +13,7 @@ const notificationscreen = () => {
             time: "Mon 7:00 AM - 8:30 AM",
             message: "Upcoming class in 5 minutes!",
             date: "1d ago",
+            isDismissed: false,
         },
         {
             id: 2,
@@ -20,6 +21,7 @@ const notificationscreen = () => {
             time: "Tue 10:00 AM - 12:00 PM",
             message: "Class starts soon",
             date: "3h ago",
+            isDismissed: false,
         }
     ]);
 
@@ -29,12 +31,26 @@ const notificationscreen = () => {
         </Svg>
     );
 
-    const handleDeleteNotification = (id: number) => {
-        setNotifications(prev => prev.filter(notif => notif.id !== id));
+    const handleDismissNotification = (id: number) => {
+        setNotifications(prev => 
+            prev.map(notif => 
+                notif.id === id 
+                    ? { ...notif, isDismissed: true }
+                    : notif
+            )
+        );
+        
+        // TODO: Update database here
+        // updateNotificationInDatabase(id, { isDismissed: true });
     };
 
     const handleClearAll = () => {
-        setNotifications([]);
+        setNotifications(prev => 
+            prev.map(notif => ({ ...notif, isDismissed: true }))
+        );
+        
+        // TODO: Update all in database
+        // updateAllNotificationsInDatabase({ isDismissed: true });
     };
 
     return (
@@ -69,7 +85,7 @@ const notificationscreen = () => {
                             time={item.time}
                             message={item.message}
                             date={item.date}
-                            onDelete={() => handleDeleteNotification(item.id)}
+                            onDelete={() => handleDismissNotification(item.id)}
                         />
                     ))}
                 </ScrollView>
