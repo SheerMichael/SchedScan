@@ -2,16 +2,34 @@ import React, { useState } from "react";
 import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { router } from "expo-router";
+import NotificationItem from "../../components/notifitem";
 
 const notificationscreen = () => {
 
-    const [hasnotif, setnotif] = useState(false);
+    const [hasnotif, setnotif] = useState(true); // Set this to true or false to see different outputs
 
     const LeftPointingArrow = ({ size = 24, color = '#ffffff' }) => (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
         <Path d="M19 12H6M12 5l-7 7 7 7" />
     </Svg>
     );
+
+    const notifications = [
+        {
+            id: 1,
+            title: "Software Engineering 1",
+            time: "Mon 7:00 AM - 8:30 AM",
+            message: "Upcoming class in 5 minutes!",
+            date: "1d ago",
+        },
+        {
+            id: 2,
+            title: "IT Elective",
+            time: "Tue 10:00 AM - 12:00 PM",
+            message: "Class starts soon",
+            date: "3h ago",
+        }
+    ];
 
     return (
     <>
@@ -34,8 +52,16 @@ const notificationscreen = () => {
     </View>
     
     {hasnotif ? (
-    <ScrollView>
-        
+    <ScrollView className="flex-1 px-6">
+        {notifications.map((item) => (
+            <NotificationItem
+                key={item.id}
+                title={item.title}
+                time={item.time}
+                message={item.message}
+                date={item.date}
+            />
+        ))}
     </ScrollView>
     ) : 
     <View className='flex-1 justify-center items-center'>

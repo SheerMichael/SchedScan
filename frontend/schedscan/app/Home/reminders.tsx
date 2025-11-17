@@ -1,9 +1,11 @@
 import React, { useState } from "react";
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Image, Keyboard } from 'react-native';
 import { router } from "expo-router";
-import Svg, { Path, Circle } from 'react-native-svg';
+import Svg, { Path } from 'react-native-svg';
 import DropDownPicker from "react-native-dropdown-picker";
-import { Search, Clock, PencilLine } from "lucide-react-native";
+import { Search } from "lucide-react-native";
+import ScheduleItem from "../../components/reminderschedule";
+import DayHeader from "../../components/reminderdayheader";
 
 const RemindersScreen = () => {
 
@@ -24,6 +26,31 @@ const RemindersScreen = () => {
       <Path d="M19 12H6M12 5l-7 7 7 7" />
     </Svg>
   );
+
+  const scheduleData = [
+  {
+    day: "Monday",
+    color: "bg-primary-500",
+    items: [
+      { id: 1, subject: "Software Engineering 1", time: "7:00 AM - 8:30 AM" },
+    ],
+  },
+  {
+    day: "Tuesday",
+    color: "bg-primary-500",
+    items: [
+      { id: 2, subject: "Software Engineering 1", time: "7:00 AM - 8:30 AM" },
+      { id: 3, subject: "Software Engineering 1", time: "7:00 AM - 8:30 AM" },
+    ],
+  },
+  {
+    day: "Thursday",
+    color: "bg-blue-800",
+    items: [
+      { id: 4, subject: "Software Engineering 1", time: "7:00 AM - 8:30 AM" },
+    ],
+  },
+];
 
   return (
     <>
@@ -116,74 +143,23 @@ const RemindersScreen = () => {
           </View>
 
           <View>
-            <View className="flex-row justify-start items-center mb-4">
-              <View className="bg-primary-500 w-2 rounded-full h-8 pr-2 mr-2"></View>
-              <Text className="text-3xl font-extrabold">Monday</Text>
-            </View>
+            {scheduleData.map((day) => (
+              <View key={day.day}>
+                {/* Day Header */}
+                <DayHeader label={day.day} color={day.color} />
 
-            <View className=" flex-row border border-gray-200 rounded-md justify-between mb-6">
-              <View className="flex-col pl-4 ml-2 mr-2 mt-4 mb-4 gap-1">
-                <Text className="font-bold text-lg">Software Engineering 1</Text>
-                <View className="flex-row pl-1">
-                  <Clock size={20} color="#7C7070"/>
-                  <Text className="text-gray-400 pl-2">7:00 AM - 8:30 AM</Text>
-                </View>
+                {/* Schedule Items */}
+                {day.items.map((item) => (
+                  <ScheduleItem
+                    key={item.id}
+                    subject={item.subject}
+                    time={item.time}
+                    onEdit={() => console.log("Edit", item.subject)}
+                  />
+                ))}
               </View>
-              <TouchableOpacity className="flex justify-center items-center pr-6">
-                <PencilLine size={20} color="#000"/>
-              </TouchableOpacity>
-            </View>
-
-            <View className="flex-row justify-start items-center mb-4">
-              <View className="bg-primary-500 w-2 rounded-full h-8 pr-2 mr-2"></View>
-              <Text className="text-3xl font-extrabold">Tuesday</Text>
-            </View>
-
-            <View className=" flex-row border border-gray-200 rounded-md justify-between mb-6">
-              <View className="flex-col pl-4 ml-2 mr-2 mt-4 mb-4 gap-1">
-                <Text className="font-bold text-lg">Software Engineering 1</Text>
-                <View className="flex-row pl-1">
-                  <Clock size={20} color="#7C7070"/>
-                  <Text className="text-gray-400 pl-2">7:00 AM - 8:30 AM</Text>
-                </View>
-              </View>
-              <TouchableOpacity className="flex justify-center items-center pr-6">
-                <PencilLine size={20} color="#000"/>
-              </TouchableOpacity>
-            </View>
-
-            <View className=" flex-row border border-gray-200 rounded-md justify-between mb-6">
-              <View className="flex-col pl-4 ml-2 mr-2 mt-4 mb-4 gap-1">
-                <Text className="font-bold text-lg">Software Engineering 1</Text>
-                <View className="flex-row pl-1">
-                  <Clock size={20} color="#7C7070"/>
-                  <Text className="text-gray-400 pl-2">7:00 AM - 8:30 AM</Text>
-                </View>
-              </View>
-              <TouchableOpacity className="flex justify-center items-center pr-6">
-                <PencilLine size={20} color="#000"/>
-              </TouchableOpacity>
-            </View>
-
-            <View className="flex-row justify-start items-center mb-4">
-              <View className="bg-blue-800 w-2 rounded-full h-8 pr-2 mr-2"></View>
-              <Text className="text-3xl font-extrabold">Thursday</Text>
-            </View>
-
-            <View className=" flex-row border border-gray-200 rounded-md justify-between mb-6">
-              <View className="flex-col pl-4 ml-2 mr-2 mt-4 mb-4 gap-1">
-                <Text className="font-bold text-lg">Software Engineering 1</Text>
-                <View className="flex-row pl-1">
-                  <Clock size={20} color="#7C7070"/>
-                  <Text className="text-gray-400 pl-2">7:00 AM - 8:30 AM</Text>
-                </View>
-              </View>
-              <TouchableOpacity className="flex justify-center items-center pr-6">
-                <PencilLine size={20} color="#000"/>
-              </TouchableOpacity>
-            </View>
+            ))}
           </View>
-          
         </ScrollView>
         ) : (
         <View className='flex-1 justify-center items-center'>
