@@ -37,17 +37,8 @@ const LoginScreen = () => {
       setIsLoading(true);
       await login({ email, password });
       
-      Alert.alert('Success', 'Login successful!', [
-        {
-          text: 'OK',
-          onPress: () => {
-            // Navigate to home or main app screen
-            // router.replace('/home');
-            Alert.alert('Welcome!', 'You are now logged in. Home screen not implemented yet.');
-            router.replace('/Home/home');
-          },
-        },
-      ]);
+      // Navigate to home screen after successful login
+      router.replace('/Home/home');
     } catch (error: any) {
       let errorMessage = 'Login failed. Please check your credentials.';
       

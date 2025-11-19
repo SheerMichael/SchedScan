@@ -79,3 +79,72 @@ class User(AbstractUser):
         Return the short name for the user.
         """
         return self.first_name
+
+
+class Course(models.Model):
+    """
+    Model to store course schedule information extracted from COR documents.
+    Each course entry represents a single class session with its details.
+    """
+    DAY_CHOICES = [
+        ('M', 'Monday'),
+        ('T', 'Tuesday'),
+        ('W', 'Wednesday'),
+        ('TH', 'Thursday'),
+        ('F', 'Friday'),
+        ('S', 'Saturday'),
+        ('TF', 'Tuesday-Friday'),
+        ('MW', 'Monday-Wednesday'),
+        ('MWF', 'Monday-Wednesday-Friday'),
+        ('MTH', 'Monday-Thursday'),
+        ('TTH', 'Tuesday-Thursday'),
+    ]
+    
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='courses',
+        help_text="The user who owns this course schedule"
+    )
+    subject_code = models.CharField(
+        max_length=50,
+        help_text="Course subject code (e.g., BSCS125781)"
+    )
+    subject_name = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Name/title of the course"
+    )
+    start_time = models.CharField(
+        max_length=20,
+        help_text="Class start time (e.g., 07:00AM)"
+    )
+    end_time = models.CharField(
+        max_length=20,
+        help_text="Class end time (e.g., 09:00AM)"
+    )
+    day = models.CharField(
+        max_length=10,
+        choices=DAY_CHOICES,
+        blank=True,
+        help_text="Day(s) of the week the class meets"
+    )
+    location = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Classroom/location (e.g., LR7, LAB2)"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = 'Course'
+        verbose_name_plural = 'Courses'
+        ordering = ['day', 'start_time']
+        indexes = [
+            models.Index(fields=['user', 'subject_code']),
+            models.Index(fields=['user', 'day']),
+        ]
+    
+    def __str__(self):
+        return f"{self.subject_code} - {self.subject_name or 'N/A'} ({self.day} {self.start_time}-{self.end_time})"

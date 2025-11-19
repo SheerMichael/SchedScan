@@ -43,7 +43,7 @@ export default function Footer() {
 
     <TouchableOpacity
         className="flex-col justify-center items-center"
-        onPress={() => router.push("/Home/home")}
+        onPress={() => router.push({ pathname: "/Home/home" })}
     >
         <Home size={24} color={isActive("/Home/home") ? "#CC0000" : "#4D4D4D"} />
         <Text className={isActive("/Home/home") ? "text-primary-600" : "text-gray-500"}>
@@ -53,7 +53,7 @@ export default function Footer() {
 
     <TouchableOpacity
         className="flex-col justify-center items-center"
-        onPress={() => router.push("/Home/reminders")}
+        onPress={() => router.push({ pathname: "/Home/reminders" })}
     >
         <Reminders size={24} color={isActive("/Home/reminders") ? "#CC0000" : "#4D4D4D"} />
         <Text className={isActive("/Home/reminders") ? "text-primary-600" : "text-gray-500"}>
@@ -62,13 +62,13 @@ export default function Footer() {
     </TouchableOpacity>
 
     <TouchableOpacity className="w-20 h-20 rounded-full flex-col border border-gray-500 bg-white -mt-8 justify-center items-center"
-    onPress={() => router.push("/Home/scanner")}>
+    onPress={() => router.push({ pathname: "/Home/scanner" })}>
         <Scan size={40}/>
     </TouchableOpacity>
 
     <TouchableOpacity
         className="flex-col justify-center items-center"
-        onPress={() => router.push("/Home/schedules")}
+        onPress={() => router.push({ pathname: "/Home/schedules" })}
     >
         <Schedules size={24} color={isActive("/Home/schedules") ? "#CC0000" : "#4D4D4D"} />
         <Text className={isActive("/Home/schedules") ? "text-primary-600" : "text-gray-500"}>
@@ -76,10 +76,15 @@ export default function Footer() {
         </Text>
     </TouchableOpacity>
 
-        <View className='flex-col justify-center items-center'>
-        <Account size={24}/>
-        <Text className='text-gray-500 text-sm'>Account</Text>
-        </View>
+    <TouchableOpacity
+        className="flex-col justify-center items-center"
+        onPress={() => router.push({ pathname: "/Home/account" as any })}
+    >
+        <Account size={24} color={isActive("/Home/account") ? "#CC0000" : "#4D4D4D"} />
+        <Text className={isActive("/Home/account") ? "text-primary-600" : "text-gray-500"}>
+        Account
+        </Text>
+    </TouchableOpacity>
 </View>
   );
 }
