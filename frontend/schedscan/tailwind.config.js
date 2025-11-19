@@ -27,15 +27,16 @@ module.exports = {
             light: '#F3F4F6',
             medium: '#9CA3AF',
             dark: '#6B7280',
+          },
+          maroon: 'rgb(182 88 88 / <alpha-value>)'
         }
-      }
+      },
+      borderRadius: {
+          'xl': '12px',
+          '2xl': '16px',
+          '3xl': '24px',
+        }
+      },
     },
-    borderRadius: {
-        'xl': '12px',
-        '2xl': '16px',
-        '3xl': '24px',
-      }
-    },
-  },
   presets: [require("nativewind/preset")],
 };

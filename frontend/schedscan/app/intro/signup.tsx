@@ -38,58 +38,6 @@ type SignUp3Props = {
   isLoading: boolean;
 };
 
-const AuthFlow = () => {
-  const [image, setImage] = useState<string | null>(null);
-  const [screen, setScreen] = useState<Step>('signup1');
-  const [isLoading, setIsLoading] = useState(false);
-  const { register } = useAuth();
-
-  const [formData, setFormData] = useState<SignUpData>({
-    first_name: "",
-    last_name: "",
-    email: "",
-    password: "",
-    confirmPassword: ""
-  });
-
-  const pickImageOption = () => {
-    Alert.alert("Select Image Source", "Choose an option", [
-      { text: "Camera", onPress: () => openCamera() },
-      { text: "Gallery", onPress: () => openGallery() },
-      { text: "Cancel", style: "cancel" },
-    ]);
-  };
-
-  // 📸 OPEN CAMERA
-  const openCamera = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== "granted") return alert("Camera permission is required!");
-
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [4, 4],
-      quality: 1,
-    });
-
-    if (!result.canceled) setImage(result.assets[0].uri);
-  };
-
-  // 🖼️ OPEN GALLERY
-  const openGallery = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== "granted") return alert("Gallery permission is required!");
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 4],
-      quality: 1,
-    });
-
-    if (!result.canceled) setImage(result.assets[0].uri);
-  };
-
   const ChevronRightIcon = ({ size = 24, color = '#ffffff' }) => (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
       <Path d="M19 12H6M12 5l-7 7 7 7" />
@@ -108,94 +56,6 @@ const AuthFlow = () => {
       </View>
     );
   };
-
-  const handleSignup = async () => {
-    // Validation
-    if (!formData.first_name || !formData.last_name) {
-      Alert.alert('Error', 'Please enter your first and last name');
-      return;
-    }
-
-    if (!formData.email) {
-      Alert.alert('Error', 'Please enter your email');
-      return;
-    }
-
-    // Basic email validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(formData.email)) {
-      Alert.alert('Error', 'Please enter a valid email address');
-      return;
-    }
-
-    if (!formData.password) {
-      Alert.alert('Error', 'Please enter a password');
-      return;
-    }
-
-    if (formData.password !== formData.confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match');
-      return;
-    }
-
-    if (formData.password.length < 6) {
-      Alert.alert('Error', 'Password must be at least 6 characters');
-      return;
-    }
-
-    try {
-      setIsLoading(true);
-      
-      await register({
-        email: formData.email,
-        password: formData.password,
-        first_name: formData.first_name,
-        last_name: formData.last_name,
-        profile_picture: image || undefined,
-      });
-
-      Alert.alert('Success!', 'Your account has been created successfully!', [
-        {
-          text: 'OK',
-          onPress: () => {
-            // Navigate to login screen
-            router.replace('/intro/login');
-          },
-        },
-      ]);
-    } catch (error: any) {
-      let errorMessage = 'Registration failed. Please try again.';
-      
-      if (error.message === 'Network Error' || !error.response) {
-        errorMessage = 'Cannot connect to server. Please check:\n\n' +
-          '1. Backend server is running (python manage.py runserver)\n' +
-          '2. You are using the correct network\n' +
-          '3. Firewall is not blocking the connection';
-      } else if (error.response?.data) {
-        // Handle specific API errors
-        const data = error.response.data;
-        if (data.email) {
-          errorMessage = `Email: ${Array.isArray(data.email) ? data.email[0] : data.email}`;
-        } else if (data.password) {
-          errorMessage = `Password: ${Array.isArray(data.password) ? data.password[0] : data.password}`;
-        } else if (data.first_name) {
-          errorMessage = `First Name: ${Array.isArray(data.first_name) ? data.first_name[0] : data.first_name}`;
-        } else if (data.last_name) {
-          errorMessage = `Last Name: ${Array.isArray(data.last_name) ? data.last_name[0] : data.last_name}`;
-        } else if (data.detail) {
-          errorMessage = data.detail;
-        } else if (data.non_field_errors) {
-          errorMessage = Array.isArray(data.non_field_errors) ? data.non_field_errors[0] : data.non_field_errors;
-        }
-      }
-      
-      Alert.alert('Registration Failed', errorMessage);
-      console.error('Registration error:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   // ✅ Screen 1 – Photo + First Name
   const SignUp1Screen = ({
     setScreen,
@@ -204,7 +64,7 @@ const AuthFlow = () => {
     image,
     pickImageOption
   }: SignUp1Props) => (
-    <SafeAreaView className="flex-2 bg-white px-4 m-2">
+    <SafeAreaView className="flex-1 bg-white px-4 m-2">
       <TouchableOpacity onPress={() => router.push('/intro/getstarted')} className="mb-5 w-4">
         <ChevronRightIcon size={30} color="#000000" />
       </TouchableOpacity>
@@ -341,7 +201,7 @@ const AuthFlow = () => {
 
           <TouchableOpacity
             className="bg-primary-900 rounded-xl py-5 items-center"
-            onPress={() => Alert.alert("✅ Success", "Account Created!")}
+            onPress={handleSignup}
           >
             {isLoading ? (
               <ActivityIndicator color="#fff" />
@@ -354,6 +214,145 @@ const AuthFlow = () => {
       </ScrollView>
     </SafeAreaView>
   );
+
+const AuthFlow = () => {
+  const [image, setImage] = useState<string | null>(null);
+  const [screen, setScreen] = useState<Step>('signup1');
+  const [isLoading, setIsLoading] = useState(false);
+  const { register } = useAuth();
+
+  const [formData, setFormData] = useState<SignUpData>({
+    first_name: "",
+    last_name: "",
+    email: "",
+    password: "",
+    confirmPassword: ""
+  });
+
+  const pickImageOption = () => {
+    Alert.alert("Select Image Source", "Choose an option", [
+      { text: "Camera", onPress: () => openCamera() },
+      { text: "Gallery", onPress: () => openGallery() },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  };
+
+  // 📸 OPEN CAMERA
+  const openCamera = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== "granted") return alert("Camera permission is required!");
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [4, 4],
+      quality: 1,
+    });
+
+    if (!result.canceled) setImage(result.assets[0].uri);
+  };
+
+  // 🖼️ OPEN GALLERY
+  const openGallery = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== "granted") return alert("Gallery permission is required!");
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [4, 4],
+      quality: 1,
+    });
+
+    if (!result.canceled) setImage(result.assets[0].uri);
+  };
+
+  const handleSignup = async () => {
+    // Validation
+    if (!formData.first_name || !formData.last_name) {
+      Alert.alert('Error', 'Please enter your first and last name');
+      return;
+    }
+
+    if (!formData.email) {
+      Alert.alert('Error', 'Please enter your email');
+      return;
+    }
+
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(formData.email)) {
+      Alert.alert('Error', 'Please enter a valid email address');
+      return;
+    }
+
+    if (!formData.password) {
+      Alert.alert('Error', 'Please enter a password');
+      return;
+    }
+
+    if (formData.password !== formData.confirmPassword) {
+      Alert.alert('Error', 'Passwords do not match');
+      return;
+    }
+
+    if (formData.password.length < 6) {
+      Alert.alert('Error', 'Password must be at least 6 characters');
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      
+      await register({
+        email: formData.email,
+        password: formData.password,
+        first_name: formData.first_name,
+        last_name: formData.last_name,
+        profile_picture: image || undefined,
+      });
+
+      Alert.alert('Success!', 'Your account has been created successfully!', [
+        {
+          text: 'OK',
+          onPress: () => {
+            // Navigate to login screen
+            router.replace('/Home/home');
+          },
+        },
+      ]);
+    } catch (error: any) {
+      let errorMessage = 'Registration failed. Please try again.';
+      
+      if (error.message === 'Network Error' || !error.response) {
+        errorMessage = 'Cannot connect to server. Please check:\n\n' +
+          '1. Backend server is running (python manage.py runserver)\n' +
+          '2. You are using the correct network\n' +
+          '3. Firewall is not blocking the connection';
+      } else if (error.response?.data) {
+        // Handle specific API errors
+        const data = error.response.data;
+        if (data.email) {
+          errorMessage = `Email: ${Array.isArray(data.email) ? data.email[0] : data.email}`;
+        } else if (data.password) {
+          errorMessage = `Password: ${Array.isArray(data.password) ? data.password[0] : data.password}`;
+        } else if (data.first_name) {
+          errorMessage = `First Name: ${Array.isArray(data.first_name) ? data.first_name[0] : data.first_name}`;
+        } else if (data.last_name) {
+          errorMessage = `Last Name: ${Array.isArray(data.last_name) ? data.last_name[0] : data.last_name}`;
+        } else if (data.detail) {
+          errorMessage = data.detail;
+        } else if (data.non_field_errors) {
+          errorMessage = Array.isArray(data.non_field_errors) ? data.non_field_errors[0] : data.non_field_errors;
+        }
+      }
+      
+      Alert.alert('Registration Failed', errorMessage);
+      console.error('Registration error:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
     <>

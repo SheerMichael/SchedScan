@@ -40,24 +40,6 @@ const Intro = () => {
     }
   }, [currentScreen]);
 
-  // Bounce animation
-  useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(bounceAnim, {
-          toValue: -10,
-          duration: 500,
-          useNativeDriver: true,
-        }),
-        Animated.timing(bounceAnim, {
-          toValue: 0,
-          duration: 500,
-          useNativeDriver: true,
-        }),
-      ])
-    ).start();
-  }, []);
-
 
   const IntroScreen = ({ title, bgColor }: { title: string; bgColor: string }) => {
     const progressWidth = progressAnim.interpolate({
