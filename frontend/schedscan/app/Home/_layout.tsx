@@ -8,6 +8,9 @@ export default function HomeLayout() {
 
   const hideFooterOn = [
     "/Home/notification",
+    "/Home/scanner",
+    "/Home/Schedules/faculty",
+    "/Home/Schedules/student",
   ];
 
   const shouldHideFooter = hideFooterOn.includes(pathname);

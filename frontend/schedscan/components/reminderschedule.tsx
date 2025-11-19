@@ -3,11 +3,13 @@ import { Clock, PencilLine } from "lucide-react-native";
 
 type Props = {
   subject: string;
-  time: string;
+  start_time: string;
+  end_time: string;
+  day: string;
   onEdit: () => void;
 };
 
-export default function ScheduleItem({ subject, time, onEdit } : Props) {
+export default function ScheduleItem({ subject, start_time, end_time, day, onEdit } : Props) {
   return (
     <View className="flex-row border border-gray-200 rounded-md justify-between mb-6">
       <View className="flex-col pl-4 ml-2 mr-2 mt-4 mb-4 gap-1">
@@ -15,7 +17,7 @@ export default function ScheduleItem({ subject, time, onEdit } : Props) {
 
         <View className="flex-row pl-1">
           <Clock size={20} color="#7C7070" />
-          <Text className="text-gray-400 pl-2">{time}</Text>
+          <Text className="text-gray-400 pl-2">{start_time} - {end_time}</Text>
         </View>
       </View>
 

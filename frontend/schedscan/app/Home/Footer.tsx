@@ -61,7 +61,8 @@ export default function Footer() {
         </Text>
     </TouchableOpacity>
 
-    <TouchableOpacity className="w-20 h-20 rounded-full flex-col border border-gray-500 bg-white -mt-8 justify-center items-center">
+    <TouchableOpacity className="w-20 h-20 rounded-full flex-col border border-gray-500 bg-white -mt-8 justify-center items-center"
+    onPress={() => router.push("/Home/scanner")}>
         <Scan size={40}/>
     </TouchableOpacity>
 

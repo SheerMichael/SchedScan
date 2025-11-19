@@ -1,5 +1,4 @@
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Image } from 'react-native';
-import {SafeAreaView} from 'react-native-safe-area-context';
 import { router } from "expo-router";
 import Svg, { Path, Circle, Rect, G } from 'react-native-svg';
 import { FolderClosed, ChevronRight } from "lucide-react-native";
@@ -11,7 +10,6 @@ const RemindersScreen = () => {
     </Svg>
   );
  
-
   return (
     <>
       <View className="w-full h-14 bg-white border-b-2 border-gray-200 justify-between items-center flex-row">
@@ -29,7 +27,7 @@ const RemindersScreen = () => {
 
         <ScrollView>
           <View className='flex items-center justify-center mt-8 pt-4'>
-            <TouchableOpacity className='flex-row justify-between items-center bg-primary-900 w-11/12 rounded-xl h-20'>
+            <TouchableOpacity className='flex-row justify-between items-center bg-primary-900 w-11/12 rounded-xl h-20' onPress={() => router.push('/Home/Schedules/faculty')}>
                 <View className='flex-row justify-evenly items-center ml-4'>
                     <FolderClosed size={40} color="#ffffff" fill="#ffffff" stroke="#990100"/>
                     <Text className='text-white text-2xl font-semibold'>Faculty</Text>
@@ -41,7 +39,7 @@ const RemindersScreen = () => {
           </View>
 
           <View className='flex items-center justify-center pt-4'>
-            <TouchableOpacity className='flex-row justify-between items-center bg-primary-900 w-11/12 rounded-xl h-20'>
+            <TouchableOpacity className='flex-row justify-between items-center bg-primary-900 w-11/12 rounded-xl h-20' onPress={() => router.push('/Home/Schedules/student')}>
                 <View className='flex-row justify-evenly items-center ml-4'>
                     <FolderClosed size={40} color="#ffffff" fill="#ffffff" stroke="#990100"/>
                     <Text className='text-white text-2xl font-semibold'>Student</Text>
@@ -52,7 +50,6 @@ const RemindersScreen = () => {
             </TouchableOpacity>
           </View>
         </ScrollView>
-      
     </>
   );
 };

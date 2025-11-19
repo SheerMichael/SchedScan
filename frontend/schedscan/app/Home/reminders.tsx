@@ -1,9 +1,9 @@
 import React, { useState } from "react";
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Image, Keyboard } from 'react-native';
 import { router } from "expo-router";
-import Svg, { Path } from 'react-native-svg';
+import Svg, { Path, Circle } from 'react-native-svg';
 import DropDownPicker from "react-native-dropdown-picker";
-import { Search } from "lucide-react-native";
+import { Search, Clock, PencilLine } from "lucide-react-native";
 import ScheduleItem from "../../components/reminderschedule";
 import DayHeader from "../../components/reminderdayheader";
 
@@ -32,22 +32,38 @@ const RemindersScreen = () => {
     day: "Monday",
     color: "bg-primary-500",
     items: [
-      { id: 1, subject: "Software Engineering 1", time: "7:00 AM - 8:30 AM" },
+      { id: 1, 
+        subject: "Software Engineering 1", 
+        start_time: "7:00 AM",
+        end_time: "8:30 AM" 
+      },
     ],
   },
   {
     day: "Tuesday",
     color: "bg-primary-500",
     items: [
-      { id: 2, subject: "Software Engineering 1", time: "7:00 AM - 8:30 AM" },
-      { id: 3, subject: "Software Engineering 1", time: "7:00 AM - 8:30 AM" },
+      { id: 2, 
+        subject: "Software Engineering 1",         
+        start_time: "7:00 AM",
+        end_time: "8:30 AM" 
+      },
+      { id: 3, 
+        subject: "Software Engineering 1",        
+        start_time: "7:00 AM",
+        end_time: "8:30 AM"  
+      },
     ],
   },
   {
     day: "Thursday",
     color: "bg-blue-800",
     items: [
-      { id: 4, subject: "Software Engineering 1", time: "7:00 AM - 8:30 AM" },
+      { id: 4, 
+        subject: "Software Engineering 1",         
+        start_time: "7:00 AM",
+        end_time: "8:30 AM" 
+      },
     ],
   },
 ];
@@ -153,7 +169,9 @@ const RemindersScreen = () => {
                   <ScheduleItem
                     key={item.id}
                     subject={item.subject}
-                    time={item.time}
+                    start_time={item.start_time}
+                    end_time={item.end_time}
+                    day={day.day}
                     onEdit={() => console.log("Edit", item.subject)}
                   />
                 ))}

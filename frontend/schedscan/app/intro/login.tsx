@@ -44,6 +44,7 @@ const LoginScreen = () => {
             // Navigate to home or main app screen
             // router.replace('/home');
             Alert.alert('Welcome!', 'You are now logged in. Home screen not implemented yet.');
+            router.replace('/Home/home');
           },
         },
       ]);
