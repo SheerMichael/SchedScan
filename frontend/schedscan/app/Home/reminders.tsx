@@ -20,6 +20,15 @@ const RemindersScreen = () => {
     { label: "Summer", value: "Summer" },
   ]);
 
+  type ScheduleItemType = {
+    id: number;
+    subject: string;
+    start_time: string;
+    end_time: string;
+    day: string; 
+    location: string;
+  };
+
 
   const LeftPointingArrow = ({ size = 24, color = '#ffffff' }) => (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
@@ -35,7 +44,8 @@ const RemindersScreen = () => {
       { id: 1, 
         subject: "Software Engineering 1", 
         start_time: "7:00 AM",
-        end_time: "8:30 AM" 
+        end_time: "8:30 AM",
+        location: "LR1",
       },
     ],
   },
@@ -45,13 +55,15 @@ const RemindersScreen = () => {
     items: [
       { id: 2, 
         subject: "Software Engineering 1",         
-        start_time: "7:00 AM",
-        end_time: "8:30 AM" 
+        start_time: "12:00 AM",
+        end_time: "9:30 AM",
+        location: "LR1",
       },
       { id: 3, 
         subject: "Software Engineering 1",        
         start_time: "7:00 AM",
-        end_time: "8:30 AM"  
+        end_time: "8:30 AM",
+        location: "LR1",  
       },
     ],
   },
@@ -62,11 +74,26 @@ const RemindersScreen = () => {
       { id: 4, 
         subject: "Software Engineering 1",         
         start_time: "7:00 AM",
-        end_time: "8:30 AM" 
+        end_time: "8:30 AM",
+        location: "LR1", 
       },
     ],
   },
 ];
+
+const onEdit = (item: ScheduleItemType) => {
+    router.push({
+    pathname: '/Home/Reminders/edit_reminders',
+    params: {
+      id: item.id,
+      subject: item.subject,
+      start_time: item.start_time,
+      end_time: item.end_time,
+      day: item.day,
+      location: item.location,
+    },
+    });
+  };
 
   return (
     <>
@@ -172,7 +199,7 @@ const RemindersScreen = () => {
                     start_time={item.start_time}
                     end_time={item.end_time}
                     day={day.day}
-                    onEdit={() => console.log("Edit", item.subject)}
+                    onEdit={() => onEdit({...item, day: day.day})}
                   />
                 ))}
               </View>
