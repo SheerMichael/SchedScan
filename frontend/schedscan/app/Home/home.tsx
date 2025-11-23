@@ -1,9 +1,13 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Image} from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity, ScrollView, Image, ActivityIndicator} from 'react-native';
 import Svg, { Path, Circle, G, Rect, Polygon } from "react-native-svg";
 import { router } from "expo-router";
+import { useAuth } from '../../context/AuthContext';
+import { courseService, Course } from '../../services/courseService';
+import { useFocusEffect } from '@react-navigation/native';
 
 export default function SchedScanApp() {
+  const { user } = useAuth();
   const startYear = 2025;
   const endYear = 2050;
   const now = new Date();
@@ -12,6 +16,8 @@ export default function SchedScanApp() {
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
   const [selectedDay, setSelectedDay] = useState<number | null>(new Date().getDate());
   const [selectedFilter, setSelectedFilter] = useState<'all' | 'teaching' | 'attending'>('all');
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [isLoadingCourses, setIsLoadingCourses] = useState(true);
 
   type ScheduleItem = {
     title: string;
@@ -105,6 +111,100 @@ const Attending = ({ size = 24 }) => (
 
   const [daySchedule, setDaySchedule] = useState<ScheduleItem[]>([]);
 
+  // Fetch courses when component mounts or comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      fetchCourses();
+    }, [])
+  );
+
+  const fetchCourses = async () => {
+    try {
+      setIsLoadingCourses(true);
+      const fetchedCourses = await courseService.getCourses();
+      setCourses(fetchedCourses);
+      console.log('Fetched courses:', fetchedCourses);
+      
+      // Update today's schedule if a day is selected
+      if (selectedDay !== null) {
+        updateDaySchedule(selectedDay, fetchedCourses);
+      }
+    } catch (error: any) {
+      console.error('Failed to fetch courses:', error);
+      
+      // Check if it's a session expired error
+      if (error.message?.includes('Session expired') || error.response?.status === 401) {
+        // Session expired, redirect to login
+        router.replace('/intro/login');
+      }
+    } finally {
+      setIsLoadingCourses(false);
+    }
+  };
+
+  // Map backend day codes to JavaScript day numbers
+  const dayCodeToNumbers = (dayCode: string): number[] => {
+    const dayMap: { [key: string]: number } = {
+      'SUN': 0,
+      'MON': 1,
+      'TUE': 2,
+      'WED': 3,
+      'THU': 4,
+      'FRI': 5,
+      'SAT': 6,
+    };
+
+    // Handle special cases like "MTH" (Mon-Thu)
+    if (dayCode === 'MTH') {
+      return [1, 2, 3, 4]; // Mon, Tue, Wed, Thu
+    } else if (dayCode === 'MW') {
+      return [1, 3]; // Mon, Wed
+    } else if (dayCode === 'TTH') {
+      return [2, 4]; // Tue, Thu
+    }
+
+    return dayMap[dayCode] !== undefined ? [dayMap[dayCode]] : [];
+  };
+
+  // Check if a specific date has courses
+  const hasCoursesOnDate = (day: number): boolean => {
+    const weekday = new Date(selectedYear, selectedMonth, day).getDay();
+    
+    return courses.some(course => {
+      const courseDays = dayCodeToNumbers(course.day);
+      return courseDays.includes(weekday);
+    });
+  };
+
+  // Get courses for a specific date
+  const getCoursesForDate = (day: number): Course[] => {
+    const weekday = new Date(selectedYear, selectedMonth, day).getDay();
+    
+    return courses.filter(course => {
+      const courseDays = dayCodeToNumbers(course.day);
+      return courseDays.includes(weekday);
+    });
+  };
+
+  // Update day schedule based on selected day
+  const updateDaySchedule = (day: number, coursesData: Course[] = courses) => {
+    const dateCourses = coursesData.filter(course => {
+      const weekday = new Date(selectedYear, selectedMonth, day).getDay();
+      const courseDays = dayCodeToNumbers(course.day);
+      return courseDays.includes(weekday);
+    });
+
+    // Convert Course[] to ScheduleItem[]
+    const scheduleItems: ScheduleItem[] = dateCourses.map(course => ({
+      title: course.subject_code,
+      time: `${course.start_time} - ${course.end_time}`,
+      location: course.location || '',
+      priority_level: 'Class',
+    }));
+
+    setDaySchedule(scheduleItems);
+  };
+
   const weeklySchedule: WeeklySchedule = {
     1: [
       { title: "Operating System", time: "8:00 AM - 10:00 AM", location: "LR1", priority_level: "High Priority" },
@@ -173,7 +273,7 @@ const Attending = ({ size = 24 }) => (
     return holidaySchedule[key] !== undefined;
   };
 
-  // ✅ UPDATED — Merge weekly & holiday
+  // ✅ UPDATED — Merge weekly & holiday & real courses
   const selectDay = (day:number) => {
     setSelectedDay(day);
 
@@ -183,7 +283,15 @@ const Attending = ({ size = 24 }) => (
     const dateKey = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const holiday = holidaySchedule[dateKey] ?? [];
 
-    const schedule = [...holiday, ...weekly];
+    // Get real courses from backend
+    const realCourses = getCoursesForDate(day).map(course => ({
+      title: course.subject_code,
+      time: `${course.start_time} - ${course.end_time}`,
+      location: course.location || '',
+      priority_level: 'Class',
+    }));
+
+    const schedule = [...holiday, ...realCourses, ...weekly];
     setDaySchedule(schedule);
   };
 
@@ -209,7 +317,9 @@ const Attending = ({ size = 24 }) => (
         {/* Banner */}
       <ScrollView className="flex-1">
         <View className="bg-primary-600 m-4 p-6 rounded-2xl">
-          <Text className="text-3xl font-bold text-white mb-1">Hi, Jane!</Text>
+          <Text className="text-3xl font-bold text-white mb-1">
+            Hi, {user?.first_name} {user?.last_name}!
+          </Text>
           <Text className="text-base text-red-200">Ready to organize?</Text>
         </View>
         
@@ -324,6 +434,7 @@ const Attending = ({ size = 24 }) => (
                 if (!day) return <View key={idx} className="w-[14.28%] aspect-square" />;
 
                 const recurring = weeklySchedule[new Date(selectedYear, selectedMonth, day).getDay()] !== undefined;
+                const hasCourses = hasCoursesOnDate(day);
                 const selected = selectedDay === day;
                 const holiday = isHoliday(day);
 
@@ -334,7 +445,7 @@ const Attending = ({ size = 24 }) => (
                       className={`w-9 h-9 rounded-full justify-center items-center
                         ${selected ? 'bg-primary-600' : ''}
                         ${holiday && !selected ? 'bg-green-300' : ''}
-                        ${recurring && !selected ? 'bg-yellow-300' : ''}
+                        ${(hasCourses || recurring) && !selected && !holiday ? 'bg-yellow-300' : ''}
                       `}
                       activeOpacity={0.7}
                     >
@@ -353,7 +464,12 @@ const Attending = ({ size = 24 }) => (
         <View className="px-4 mt-4 mb-20">
           <Text className="text-lg font-bold mb-2">Today's Schedule</Text>
 
-          {daySchedule.length === 0 ? (
+          {isLoadingCourses ? (
+            <View className="py-8 items-center">
+              <ActivityIndicator size="small" color="#DC2626" />
+              <Text className="text-gray-500 mt-2">Loading courses...</Text>
+            </View>
+          ) : daySchedule.length === 0 ? (
             <Text className="text-gray-500">No classes / events today</Text>
           ) : (
             daySchedule.map((item, index) => (

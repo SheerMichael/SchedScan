@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from rest_framework.validators import UniqueValidator
 from rest_framework_simplejwt.tokens import RefreshToken
+from .models import Course
 
 User = get_user_model()
 
@@ -130,3 +131,24 @@ class UserWithTokenSerializer(serializers.ModelSerializer):
             'refresh': str(refresh),
             'access': str(refresh.access_token),
         }
+
+
+class CourseSerializer(serializers.ModelSerializer):
+    """
+    Serializer for Course model - used for displaying course schedules
+    """
+    class Meta:
+        model = Course
+        fields = [
+            'id', 
+            'user', 
+            'subject_code', 
+            'subject_name', 
+            'start_time', 
+            'end_time', 
+            'day', 
+            'location',
+            'created_at',
+            'updated_at'
+        ]
+        read_only_fields = ['id', 'user', 'created_at', 'updated_at']

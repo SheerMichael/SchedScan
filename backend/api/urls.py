@@ -14,4 +14,8 @@ urlpatterns = [
     
     # User profile
     path('auth/user/', views.UserProfileView.as_view(), name='user_profile'),
+    
+    # Course/Schedule endpoints
+    path('upload-cor/', views.UploadCORView.as_view(), name='upload_cor'),
+    path('courses/', views.UserCoursesView.as_view(), name='user_courses'),
 ]

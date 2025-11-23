@@ -67,45 +67,62 @@ api.interceptors.response.use(
 
     const originalRequest = error.config;
 
-    // If error is 401 and we haven't tried to refresh yet
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    // Skip token refresh for login/register/refresh endpoints
+    const skipRefreshUrls = ['/auth/login/', '/auth/register/', '/auth/token/refresh/'];
+    const isSkippedUrl = skipRefreshUrls.some(url => originalRequest?.url?.includes(url));
+
+    // If error is 401 and we haven't tried to refresh yet and not a skipped URL
+    if (error.response?.status === 401 && !originalRequest._retry && !isSkippedUrl) {
       originalRequest._retry = true;
 
       try {
         const refreshToken = await SecureStore.getItemAsync('refresh_token');
         
-        if (refreshToken) {
-          // Try to refresh the token
-          const response = await axios.post(`${API_URL}/auth/token/refresh/`, {
-            refresh: refreshToken,
-          });
-
-          const { access, refresh } = response.data;
-
-          // Save new tokens
-          await SecureStore.setItemAsync('access_token', access);
-          if (refresh) {
-            await SecureStore.setItemAsync('refresh_token', refresh);
-          }
-
-          // Retry original request with new token
-          originalRequest.headers.Authorization = `Bearer ${access}`;
-          return api(originalRequest);
+        if (!refreshToken) {
+          // No refresh token available, clear everything
+          await clearAuthData();
+          return Promise.reject(new Error('Session expired. Please login again.'));
         }
-      } catch (refreshError) {
-        // Refresh failed, clear tokens and redirect to login
-        await SecureStore.deleteItemAsync('access_token');
-        await SecureStore.deleteItemAsync('refresh_token');
-        await SecureStore.deleteItemAsync('user');
+
+        console.log('Attempting to refresh token...');
         
-        // You can emit an event here to redirect to login
-        console.error('Token refresh failed:', refreshError);
-        return Promise.reject(refreshError);
+        // Try to refresh the token
+        const response = await axios.post(`${API_URL}/auth/token/refresh/`, {
+          refresh: refreshToken,
+        });
+
+        const { access } = response.data;
+
+        // Save new access token
+        await SecureStore.setItemAsync('access_token', access);
+        console.log('Token refreshed successfully');
+
+        // Retry original request with new token
+        originalRequest.headers.Authorization = `Bearer ${access}`;
+        return api(originalRequest);
+        
+      } catch (refreshError: any) {
+        // Refresh failed, clear tokens
+        console.error('Token refresh failed:', refreshError.response?.data || refreshError.message);
+        await clearAuthData();
+        return Promise.reject(new Error('Session expired. Please login again.'));
       }
     }
 
     return Promise.reject(error);
   }
 );
+
+// Helper function to clear auth data
+async function clearAuthData() {
+  try {
+    await SecureStore.deleteItemAsync('access_token');
+    await SecureStore.deleteItemAsync('refresh_token');
+    await SecureStore.deleteItemAsync('user');
+    console.log('Auth data cleared');
+  } catch (error) {
+    console.error('Error clearing auth data:', error);
+  }
+}
 
 export default api;

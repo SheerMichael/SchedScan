@@ -1,14 +1,16 @@
-import { View, Text, TouchableOpacity, Image, Alert } from "react-native";
+import { View, Text, TouchableOpacity, Image, Alert, ActivityIndicator } from "react-native";
 import { router } from "expo-router";
 import React, { useState } from "react";
 import Svg, { Path } from 'react-native-svg';
 import { Images, Files } from "lucide-react-native";
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
+import { courseService } from '../../services/courseService';
 
 export default function Scanner() {
   const [selectedFile, setSelectedFile] = useState<any>(null);
   const [selectedRole, setSelectedRole] = useState<'faculty' | 'student' | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
 
   // Handle role selection
   const handleRoleSelection = (role: 'faculty' | 'student') => {
@@ -128,36 +130,32 @@ export default function Scanner() {
     }
   };
 
-  // Upload function to your backend
+  // Upload function to backend
   const uploadFile = async (file: any, uploadType: string) => {
+    setIsUploading(true);
     try {
-      const formData = new FormData();
-      formData.append('file', {
-        uri: file.uri,
-        type: file.mimeType,
-        name: file.name,
-      } as any);
-      formData.append('uploadType', uploadType);
-
-      // Replace with your API endpoint
-      const response = await fetch('YOUR_API_ENDPOINT/upload', {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        console.log('Upload successful:', data);
-        Alert.alert('Success', 'File uploaded successfully');
-      } else {
-        throw new Error('Upload failed');
-      }
-    } catch (error) {
+      const response = await courseService.uploadCOR(file);
+      
+      console.log('Upload successful:', response);
+      Alert.alert(
+        'Success', 
+        `COR processed successfully!\n${response.total_courses} courses extracted.`,
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              resetScanner();
+              router.back(); // Go back to home to see the updated calendar
+            }
+          }
+        ]
+      );
+    } catch (error: any) {
       console.error('Upload error:', error);
-      Alert.alert('Error', 'Failed to upload file');
+      const errorMessage = error.response?.data?.error || 'Failed to upload file. Please try again.';
+      Alert.alert('Error', errorMessage);
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -188,6 +186,17 @@ export default function Scanner() {
           {!selectedRole ? "Scan as" : selectedFile ? "Preview" : "Scanner"}
         </Text>
       </View>
+
+      {/* Loading overlay */}
+      {isUploading && (
+        <View className="absolute inset-0 bg-black/50 justify-center items-center z-30">
+          <View className="bg-white rounded-lg p-6 items-center">
+            <ActivityIndicator size="large" color="#DC2626" />
+            <Text className="mt-4 text-lg font-semibold">Processing COR...</Text>
+            <Text className="text-sm text-gray-600 mt-2">Extracting course data</Text>
+          </View>
+        </View>
+      )}
 
       {/* Scanner frame */}
       <View className="flex-1 justify-center items-center p-8">
