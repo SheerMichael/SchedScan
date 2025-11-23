@@ -76,10 +76,15 @@ export default function Footer() {
         </Text>
     </TouchableOpacity>
 
-        <View className='flex-col justify-center items-center'>
-        <Account size={24}/>
-        <Text className='text-gray-500 text-sm'>Account</Text>
-        </View>
+    <TouchableOpacity
+        className="flex-col justify-center items-center"
+        onPress={() => router.push("../profile/user_profile")}
+    >
+        <Account size={24} color={isActive("../profile/user_profile") ? "#CC0000" : "#4D4D4D"} />
+        <Text className={isActive("../profile/user_profile") ? "text-primary-600" : "text-gray-500"}>
+        Account
+        </Text>
+    </TouchableOpacity>
 </View>
   );
 }
