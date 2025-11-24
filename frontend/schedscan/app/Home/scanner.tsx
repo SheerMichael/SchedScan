@@ -131,15 +131,15 @@ export default function Scanner() {
   };
 
   // Upload function to backend
-  const uploadFile = async (file: any, uploadType: string) => {
+  const uploadFile = async (file: any, uploadType: 'student' | 'faculty') => {
     setIsUploading(true);
     try {
-      const response = await courseService.uploadCOR(file);
+      const response = await courseService.uploadCOR(file, uploadType);
       
       console.log('Upload successful:', response);
       Alert.alert(
         'Success', 
-        `COR processed successfully!\n${response.total_courses} courses extracted.`,
+        `${uploadType.toUpperCase()} COR processed successfully!\n${response.total_courses} courses extracted.`,
         [
           {
             text: 'OK',
