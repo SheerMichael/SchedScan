@@ -1,5 +1,6 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { authService, User, LoginData, RegisterData } from '../services/authService';
+import { scheduleStorageService } from '../services/scheduleStorageService';
 
 interface AuthContextType {
   user: User | null;
@@ -28,6 +29,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (isAuth) {
         const storedUser = await authService.getStoredUser();
         setUser(storedUser);
+        
+        // Migrate/clear legacy schedules for this user
+        if (storedUser?.id) {
+          await scheduleStorageService.migrateLegacySchedules(storedUser.id);
+        }
       }
     } catch (error) {
       console.error('Auth check failed:', error);
@@ -42,6 +48,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(true);
       const response = await authService.login(data);
       setUser(response.user);
+      
+      // Migrate/clear legacy schedules for this user
+      if (response.user?.id) {
+        await scheduleStorageService.migrateLegacySchedules(response.user.id);
+      }
     } catch (error) {
       throw error;
     } finally {
@@ -54,6 +65,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(true);
       const response = await authService.register(data);
       setUser(response.user);
+      
+      // Migrate/clear legacy schedules for this user
+      if (response.user?.id) {
+        await scheduleStorageService.migrateLegacySchedules(response.user.id);
+      }
     } catch (error) {
       throw error;
     } finally {

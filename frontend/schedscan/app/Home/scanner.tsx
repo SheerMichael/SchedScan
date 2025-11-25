@@ -1,16 +1,22 @@
-import { View, Text, TouchableOpacity, Image, Alert, ActivityIndicator } from "react-native";
+import { View, Text, TouchableOpacity, Image, Alert, ActivityIndicator, Modal, TextInput } from "react-native";
 import { router } from "expo-router";
 import React, { useState } from "react";
 import Svg, { Path } from 'react-native-svg';
 import { Images, Files } from "lucide-react-native";
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import { courseService } from '../../services/courseService';
+import { courseService, Course } from '../../services/courseService';
+import { scheduleStorageService } from '../../services/scheduleStorageService';
+import { useAuth } from '../../context/AuthContext';
 
 export default function Scanner() {
+  const { user } = useAuth();
   const [selectedFile, setSelectedFile] = useState<any>(null);
   const [selectedRole, setSelectedRole] = useState<'faculty' | 'student' | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [showTitleModal, setShowTitleModal] = useState(false);
+  const [scheduleTitle, setScheduleTitle] = useState('');
+  const [uploadedCourses, setUploadedCourses] = useState<Course[]>([]);
 
   // Handle role selection
   const handleRoleSelection = (role: 'faculty' | 'student') => {
@@ -131,37 +137,81 @@ export default function Scanner() {
   };
 
   // Upload function to backend
-  const uploadFile = async (file: any, uploadType: 'student' | 'faculty') => {
+  const uploadFile = async (file: any, uploadType: string) => {
     setIsUploading(true);
     try {
-      const response = await courseService.uploadCOR(file, uploadType);
+      const response = await courseService.uploadCOR(file);
       
       console.log('Upload successful:', response);
+      
+      // Store courses and show title input modal
+      setUploadedCourses(response.courses);
+      setIsUploading(false);
+      setShowTitleModal(true);
+    } catch (error: any) {
+      console.error('Upload error:', error);
+      const errorMessage = error.response?.data?.error || 'Failed to upload file. Please try again.';
+      Alert.alert('Error', errorMessage);
+      setIsUploading(false);
+    }
+  };
+
+  // Save schedule with title
+  const saveScheduleWithTitle = async () => {
+    if (!scheduleTitle.trim()) {
+      Alert.alert('Error', 'Please enter a schedule title');
+      return;
+    }
+
+    if (!selectedRole) {
+      Alert.alert('Error', 'Invalid upload type');
+      return;
+    }
+
+    if (!user?.id) {
+      Alert.alert('Error', 'User not authenticated');
+      return;
+    }
+
+    try {
+      await scheduleStorageService.saveSchedule(
+        scheduleTitle.trim(),
+        uploadedCourses,
+        selectedRole,
+        user.id
+      );
+
+      setShowTitleModal(false);
+      
       Alert.alert(
         'Success', 
-        `${uploadType.toUpperCase()} COR processed successfully!\n${response.total_courses} courses extracted.`,
+        `Schedule "${scheduleTitle}" saved successfully!\n${uploadedCourses.length} courses stored.`,
         [
           {
             text: 'OK',
             onPress: () => {
               resetScanner();
-              router.back(); // Go back to home to see the updated calendar
+              // Navigate to the appropriate schedule view
+              if (selectedRole === 'student') {
+                router.push('/Home/Schedules/student');
+              } else {
+                router.push('/Home/Schedules/faculty');
+              }
             }
           }
         ]
       );
-    } catch (error: any) {
-      console.error('Upload error:', error);
-      const errorMessage = error.response?.data?.error || 'Failed to upload file. Please try again.';
-      Alert.alert('Error', errorMessage);
-    } finally {
-      setIsUploading(false);
+    } catch (error) {
+      console.error('Error saving schedule:', error);
+      Alert.alert('Error', 'Failed to save schedule. Please try again.');
     }
   };
 
   const resetScanner = () => {
     setSelectedFile(null);
     setSelectedRole(null);
+    setScheduleTitle('');
+    setUploadedCourses([]);
   };
 
   const LeftPointingArrow = ({ size = 24, color = '#ffffff' }) => (
@@ -288,6 +338,57 @@ export default function Scanner() {
           </TouchableOpacity>
         </View>
       )}
+
+      {/* Title Input Modal */}
+      <Modal
+        visible={showTitleModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowTitleModal(false)}
+      >
+        <View className="flex-1 bg-black/50 justify-center items-center px-6">
+          <View className="bg-white rounded-lg p-6 w-full">
+            <Text className="text-xl font-bold text-gray-800 mb-2">
+              Name Your Schedule
+            </Text>
+            <Text className="text-sm text-gray-600 mb-4">
+              {uploadedCourses.length} courses extracted successfully
+            </Text>
+            
+            <TextInput
+              className="border border-gray-300 rounded-lg px-4 py-3 mb-4 text-base"
+              placeholder="e.g., Fall 2025, Spring 2026"
+              value={scheduleTitle}
+              onChangeText={setScheduleTitle}
+              autoFocus
+            />
+            
+            <View className="flex-row gap-3">
+              <TouchableOpacity
+                className="flex-1 bg-gray-200 py-3 rounded-lg"
+                onPress={() => {
+                  setShowTitleModal(false);
+                  setScheduleTitle('');
+                  resetScanner();
+                }}
+              >
+                <Text className="text-center font-semibold text-gray-700">
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                className="flex-1 bg-primary-600 py-3 rounded-lg"
+                onPress={saveScheduleWithTitle}
+              >
+                <Text className="text-center font-semibold text-white">
+                  Save Schedule
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
