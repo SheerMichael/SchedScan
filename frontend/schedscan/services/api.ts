@@ -35,13 +35,21 @@ const api = axios.create({
 api.interceptors.request.use(
   async (config) => {
     console.log('API Request:', config.method?.toUpperCase(), config.url);
-    try {
-      const token = await SecureStore.getItemAsync('access_token');
-      if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
+    
+    // Skip adding Authorization header for public endpoints
+    // These endpoints don't require authentication
+    const publicEndpoints = ['/auth/login/', '/auth/register/', '/auth/token/refresh/'];
+    const isPublicEndpoint = publicEndpoints.some(endpoint => config.url?.includes(endpoint));
+    
+    if (!isPublicEndpoint) {
+      try {
+        const token = await SecureStore.getItemAsync('access_token');
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`;
+        }
+      } catch (error) {
+        console.error('Error getting token:', error);
       }
-    } catch (error) {
-      console.error('Error getting token:', error);
     }
     return config;
   },

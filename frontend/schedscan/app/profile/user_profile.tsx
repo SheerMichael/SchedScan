@@ -1,12 +1,15 @@
 import React, { useState } from "react";
-import { View, Text, TouchableOpacity, ScrollView, Image, Modal } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Image, Modal, Alert } from 'react-native';
 import { router } from "expo-router";
 import Svg, { Path, Circle } from 'react-native-svg';
 import { Gem, ScrollText, BellRing, CalendarDays, FileText, EyeOff, Trash2 } from "lucide-react-native";
+import { useAuth } from '../../context/AuthContext';
+import { scheduleStorageService } from '../../services/scheduleStorageService';
 
 const UserProfile = () => {
     const [modallogout, setModalLogout] = useState(false);
     const [modaldeleteaccount, setModalDeleteAccount] = useState(false);
+    const { user, logout } = useAuth();
 
     const LeftPointingArrow = ({ size = 24, color = '#ffffff' }) => (
         <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
@@ -14,10 +17,23 @@ const UserProfile = () => {
         </Svg>
     );
 
-    const handleLogout = () => {
+    const handleLogout = async () => {
         setModalLogout(false);
-        // Add your logout logic here
-        console.log('User logged out');
+        try {
+            // Clear user-specific schedules from AsyncStorage
+            if (user?.id) {
+                await scheduleStorageService.clearAllSchedules(user.id);
+            }
+            
+            // Logout from backend (clears tokens)
+            await logout();
+            
+            // Navigate to login
+            router.replace('/intro/login');
+        } catch (error) {
+            console.error('Logout error:', error);
+            Alert.alert('Error', 'Failed to logout. Please try again.');
+        }
     };
 
     const handleDeleteAccount = () => {
@@ -42,8 +58,10 @@ const UserProfile = () => {
                     style={{ width: 90, height: 90, borderRadius: 100, marginBottom: 20, margin: 6, marginTop: 6,}}
                     />
                     <View className="flex-1 flex-col ml-2">
-                        <Text className="text-white font-bold text-3xl mb-2">Jane Doe</Text>
-                        <Text className="text-white">jane@gmail.com</Text>
+                        <Text className="text-white font-bold text-3xl mb-2">
+                            {user?.first_name} {user?.last_name}
+                        </Text>
+                        <Text className="text-white">{user?.email}</Text>
                     </View>
                 </View>
 

@@ -1,26 +1,41 @@
-import React, { useState } from "react";
-import { View, Text, TextInput, TouchableOpacity, ScrollView, Image, Keyboard } from 'react-native';
-import { router } from "expo-router";
-import Svg, { Path, Circle } from 'react-native-svg';
-import ScheduleCard from '../../../components/facultycard';
-
+import React, { useState, useCallback } from "react";
+import { View, Text, TouchableOpacity, ScrollView, Image, Alert } from 'react-native';
+import { router, useFocusEffect } from "expo-router";
+import Svg, { Path } from 'react-native-svg';
+import SchedulePreviewCard from '../../../components/schedulepreviewcard';
+import { scheduleStorageService, SavedSchedule } from '../../../services/scheduleStorageService';
+import { useAuth } from '../../../context/AuthContext';
 
 const FacultySchedule = () => {
+  const { user } = useAuth();
+  const [facultySchedules, setFacultySchedules] = useState<SavedSchedule[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const [FacultySchedule, setFacultySchedules] = useState([
-      {
-        id: 1,
-        imageSource: require('../../../assets/images/faculty_schedule.png'),
-      },
-      {
-        id: 2,
-        imageSource: require('../../../assets/images/faculty_schedule.png'),
-      },
-      {
-        id: 3,
-        imageSource: require('../../../assets/images/faculty_schedule.png'),
-      }
-    ]);
+  const loadSchedules = useCallback(async () => {
+    if (!user?.id) {
+      console.error('No user ID available');
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      const schedules = await scheduleStorageService.getSchedules('faculty', user.id);
+      setFacultySchedules(schedules);
+    } catch (error) {
+      console.error('Error loading faculty schedules:', error);
+      Alert.alert('Error', 'Failed to load schedules');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [user?.id]);
+
+  // Load schedules when screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      loadSchedules();
+    }, [loadSchedules])
+  );
 
   const LeftPointingArrow = ({ size = 24, color = '#ffffff' }) => (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
@@ -28,17 +43,17 @@ const FacultySchedule = () => {
     </Svg>
   );
 
-    const handleApplyReminders = (studentid: number) => {
-      console.log(`Applying reminders for ${studentid}`);
-      router.push({
-        pathname: '/Home/reminders',
-      })
-    };
-  
-    const handleDownload = (studentidd: number) => {
-      console.log(`Downloading schedule for ${studentidd}`);
-      // Add your download logic here
-    };
+  const handleApplyReminders = (scheduleId: string) => {
+    console.log(`Applying reminders for schedule ${scheduleId}`);
+    router.push({
+      pathname: '/Home/reminders',
+    });
+  };
+
+  const handleDownload = (scheduleId: string) => {
+    console.log(`Downloading schedule ${scheduleId}`);
+    Alert.alert('Download', 'Download functionality coming soon!');
+  };
 
   return (
     <>
@@ -55,26 +70,33 @@ const FacultySchedule = () => {
         </View>
       </View>
 
-        {FacultySchedule.length > 0 ? (
-        <ScrollView className="flex-1 px-6 pt-4">
-          {FacultySchedule.map((schedule) => (
-            <ScheduleCard
+        {isLoading ? (
+        <View className="flex-1 justify-center items-center">
+          <Text className="text-gray-500">Loading schedules...</Text>
+        </View>
+      ) : facultySchedules.length > 0 ? (
+        <ScrollView className="flex-1 pt-4">
+          {facultySchedules.map((schedule) => (
+            <SchedulePreviewCard
               key={schedule.id}
-              imageSource={schedule.imageSource}
+              title={schedule.title}
+              courses={schedule.courses}
+              uploadType={schedule.uploadType}
+              uploadDate={schedule.uploadDate}
               onApplyReminders={() => handleApplyReminders(schedule.id)}
               onDownload={() => handleDownload(schedule.id)}
             />
           ))} 
         </ScrollView>
-        ) : (
+      ) : (
         <View className='flex-1 justify-center items-center'>
           <Image source={require('../../../assets/images/Reminders.png')}
-          style={{ width: 268, height: 168 }}
+            style={{ width: 268, height: 168 }}
           />
-          <Text>No schedule, yet!</Text>
-          <Text>Scan your schedule now</Text>
+          <Text className="text-lg font-semibold text-gray-700 mt-4">No schedules yet!</Text>
+          <Text className="text-gray-500">Scan your schedule now</Text>
         </View>
-        )}
+      )}
 
     </>
   );

@@ -205,21 +205,7 @@ const Attending = ({ size = 24 }) => (
     setDaySchedule(scheduleItems);
   };
 
-  const weeklySchedule: WeeklySchedule = {
-    1: [
-      { title: "Operating System", time: "8:00 AM - 10:00 AM", location: "LR1", priority_level: "High Priority" },
-      { title: "Christmas", time: "10:30 AM - 12:00 PM", location: "", priority_level: "" }
-    ],
-    2: [
-      { title: "Database Systems", time: "8:00 AM - 10:00 AM", location: "LR1", priority_level: "High Priority" }
-    ],
-    3: [
-      { title: "Operating System", time: "8:00 AM - 10:00 AM", location: "LR1", priority_level: "High Priority" }
-    ],
-    5: [
-      { title: "Operating System", time: "8:00 AM - 10:00 AM", location: "LR1", priority_level: "High Priority" }
-    ]
-  };
+  const weeklySchedule: WeeklySchedule = {};
 
   // ✅ One-time Holidays / Events
   const holidaySchedule: { [key: string]: ScheduleItem[] } = {
@@ -376,20 +362,8 @@ const Attending = ({ size = 24 }) => (
           </TouchableOpacity>
         </View>
 
-        {/* Year Selector */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-4 mt-4" contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}>
-          {years.map(year => (
-            <TouchableOpacity key={year} onPress={() => setSelectedYear(year)}
-              className={`px-4 py-2.5 rounded-full ${selectedYear === year ? 'bg-red-600' : 'bg-gray-100'}`}>
-              <Text className={`text-sm font-semibold ${selectedYear === year ? 'text-white' : 'text-gray-600'}`}>
-                {year}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-
         {/* Month Selector */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-4" contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-4 mt-4" contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}>
           {months.map((month, idx) => (
             <TouchableOpacity key={month} onPress={() => setSelectedMonth(idx)}
               className={`px-3 py-2 rounded-full ${selectedMonth === idx ? 'bg-red-600' : 'bg-gray-100'}`}>
