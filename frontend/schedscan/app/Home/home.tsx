@@ -208,14 +208,7 @@ const Attending = ({ size = 24 }) => (
   const weeklySchedule: WeeklySchedule = {};
 
   // ✅ One-time Holidays / Events
-  const holidaySchedule: { [key: string]: ScheduleItem[] } = {
-    "2025-12-25": [
-      { title: "Christmas Day", time: "-", location: "", priority_level: "Holiday" }
-    ],
-    "2025-02-14": [
-      { title: "Valentine's Day", time: "-", location: "", priority_level: "Holiday" }
-    ]
-  };
+  const holidaySchedule: { [key: string]: ScheduleItem[] } = {};
 
   const years = Array.from({ length: endYear - startYear + 1 }, (_, i) => startYear + i);
   const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
@@ -259,12 +252,9 @@ const Attending = ({ size = 24 }) => (
     return holidaySchedule[key] !== undefined;
   };
 
-  // ✅ UPDATED — Merge weekly & holiday & real courses
+  // ✅ UPDATED — Only show real courses from backend
   const selectDay = (day:number) => {
     setSelectedDay(day);
-
-    const weekday = new Date(selectedYear, selectedMonth, day).getDay();
-    const weekly = weeklySchedule[weekday] ?? [];
 
     const dateKey = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const holiday = holidaySchedule[dateKey] ?? [];
@@ -277,7 +267,7 @@ const Attending = ({ size = 24 }) => (
       priority_level: 'Class',
     }));
 
-    const schedule = [...holiday, ...realCourses, ...weekly];
+    const schedule = [...holiday, ...realCourses];
     setDaySchedule(schedule);
   };
 
@@ -407,7 +397,6 @@ const Attending = ({ size = 24 }) => (
               {generateCalendarDays().map((day, idx) => {
                 if (!day) return <View key={idx} className="w-[14.28%] aspect-square" />;
 
-                const recurring = weeklySchedule[new Date(selectedYear, selectedMonth, day).getDay()] !== undefined;
                 const hasCourses = hasCoursesOnDate(day);
                 const selected = selectedDay === day;
                 const holiday = isHoliday(day);
@@ -419,7 +408,7 @@ const Attending = ({ size = 24 }) => (
                       className={`w-9 h-9 rounded-full justify-center items-center
                         ${selected ? 'bg-primary-600' : ''}
                         ${holiday && !selected ? 'bg-green-300' : ''}
-                        ${(hasCourses || recurring) && !selected && !holiday ? 'bg-yellow-300' : ''}
+                        ${hasCourses && !selected && !holiday ? 'bg-yellow-300' : ''}
                       `}
                       activeOpacity={0.7}
                     >

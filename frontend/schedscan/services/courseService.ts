@@ -17,13 +17,16 @@ export interface UploadCORResponse {
   message: string;
   courses: Course[];
   total_courses: number;
+  upload_type: string;
 }
 
 export const courseService = {
   /**
    * Upload COR file and extract courses
+   * @param file - The file object to upload
+   * @param uploadType - Either 'student' or 'faculty'
    */
-  uploadCOR: async (file: any): Promise<UploadCORResponse> => {
+  uploadCOR: async (file: any, uploadType: 'student' | 'faculty' = 'student'): Promise<UploadCORResponse> => {
     try {
       const formData = new FormData();
       
@@ -38,7 +41,10 @@ export const courseService = {
         type: type,
       } as any);
 
-      const response = await api.post('/upload-cor/', formData, {
+      // Use appropriate endpoint based on upload type
+      const endpoint = `/upload-cor/${uploadType}/`;
+      
+      const response = await api.post(endpoint, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -47,7 +53,7 @@ export const courseService = {
 
       return response.data;
     } catch (error: any) {
-      console.error('Upload COR error:', error.response?.data || error.message);
+      console.error(`Upload ${uploadType.toUpperCase()} COR error:`, error.response?.data || error.message);
       throw error;
     }
   },
