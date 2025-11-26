@@ -72,7 +72,7 @@ const UserProfile = () => {
                             <ScrollText/>
                             <Text className="text-base">My plans</Text>
                         </TouchableOpacity>
-                        <TouchableOpacity className="p-4 flex-row items-center gap-2">
+                        <TouchableOpacity className="p-4 flex-row items-center gap-2"  onPress={() => router.push('./profile/premium_pay')}>
                             <Gem/>
                             <Text className="text-base">Upgrade to Premium</Text>
                         </TouchableOpacity>
