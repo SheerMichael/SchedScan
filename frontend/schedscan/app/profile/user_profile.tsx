@@ -44,7 +44,7 @@ const UserProfile = () => {
 
     return (
         <>
-            <ScrollView className="flex-1 p-5">
+            <View className="flex-1 p-5">
 
                 <TouchableOpacity onPress={() => router.back()} className="mb-5 w-4">
                     <LeftPointingArrow size={30} color="#000000" />
@@ -68,7 +68,7 @@ const UserProfile = () => {
                 <Text className="text-xl mb-2">Account</Text>
                 <View className="w-full border border-gray-500/50 rounded-2xl mb-10">
                     <View>
-                        <TouchableOpacity className="p-4 border-b border-gray-500/50 flex-row items-center gap-2">
+                        <TouchableOpacity className="p-4 border-b border-gray-500/50 flex-row items-center gap-2" onPress={() => router.push('./profile/my_plans')}>
                             <ScrollText/>
                             <Text className="text-base">My plans</Text>
                         </TouchableOpacity>
@@ -186,7 +186,12 @@ const UserProfile = () => {
                         </View>
                     </View>
                 </Modal>
-            </ScrollView>
+            </View>
+            <View className="absolute w-56 h-56 rounded-full bg-[#DBE5CF] -z-10" 
+            style={{ bottom: -75,
+                    right: -50
+                }}/>
+            <View className="absolute w-24 h-24 top-20 right-[-20] rounded-full bg-[#FDE8C8] -z-10"/>
         </>
     );
 };
