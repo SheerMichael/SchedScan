@@ -1,12 +1,22 @@
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 
 // API Base URL - automatically detects platform
 // Android Emulator: 10.0.2.2
 // iOS Simulator: 127.0.0.1
-// Physical Device: Use your computer's local IP (e.g., 192.168.1.x)
+// Physical Device: Use your computer's local IP (set in app.json extra.apiUrl)
 const getApiUrl = () => {
+  // Check if we have a custom API URL from app.json (for physical devices)
+  const customApiUrl = Constants.expoConfig?.extra?.apiUrl;
+  
+  if (customApiUrl) {
+    console.log('Using custom API URL from config:', customApiUrl);
+    return customApiUrl;
+  }
+  
+  // Fallback to platform-specific defaults (for emulators/simulators)
   if (Platform.OS === 'android') {
     return 'http://10.0.2.2:8000/api';
   }
