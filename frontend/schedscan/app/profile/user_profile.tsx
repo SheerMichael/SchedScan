@@ -10,6 +10,7 @@ const UserProfile = () => {
     const [modallogout, setModalLogout] = useState(false);
     const [modaldeleteaccount, setModalDeleteAccount] = useState(false);
     const { user, logout } = useAuth();
+    const [premiumuser, setPremiumUser] = useState(false);
 
     const LeftPointingArrow = ({ size = 24, color = '#ffffff' }) => (
         <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
@@ -41,10 +42,16 @@ const UserProfile = () => {
         // Add your delete account logic here
         console.log('Another page to delete account or another modal for it');
     }
+    
+    const is_premiumuser = () => {
+        if (!premiumuser) {
+            router.push('/profile/premium_pay');
+        }
+    }
 
     return (
         <>
-            <View className="flex-1 p-5">
+            <View className="flex-1 px-5">
 
                 <TouchableOpacity onPress={() => router.back()} className="mb-5 w-4">
                     <LeftPointingArrow size={30} color="#000000" />
@@ -68,7 +75,7 @@ const UserProfile = () => {
                 <Text className="text-xl mb-2">Account</Text>
                 <View className="w-full border border-gray-500/50 rounded-2xl mb-10">
                     <View>
-                        <TouchableOpacity className="p-4 border-b border-gray-500/50 flex-row items-center gap-2" onPress={() => router.push('./profile/my_plans')}>
+                        <TouchableOpacity className="p-4 border-b border-gray-500/50 flex-row items-center gap-2" onPress={() => router.push('/profile/my_plans')}>
                             <ScrollText/>
                             <Text className="text-base">My plans</Text>
                         </TouchableOpacity>
@@ -82,13 +89,16 @@ const UserProfile = () => {
                 <Text className="text-xl mb-2">Settings</Text>
                 <View className="w-full border border-gray-500/50 rounded-2xl mb-4">
                     <View>
-                        <TouchableOpacity className="p-4 border-b border-gray-500/50 flex-row items-center gap-2">
+                        <TouchableOpacity className="p-4 border-b border-gray-500/50 flex-row items-center gap-2" onPress={() => router.push('/profile/reminder_sys')}>
                             <BellRing/>
                             <Text className="text-base">Reminders</Text>
                         </TouchableOpacity>
-                        <TouchableOpacity className="p-4 border-b border-gray-500/50 flex-row items-center gap-2">
+                        <TouchableOpacity className="p-4 border-b border-gray-500/50 flex-row items-center gap-2" onPress={is_premiumuser}>
                             <CalendarDays/>
                             <Text className="text-base">Calendar Sync</Text>
+                            <View className="bg-red-400 rounded-full p-1 px-2 ml-auto">
+                                <Text className="text-white font-semibold">PRO</Text>
+                            </View>
                         </TouchableOpacity>
                         <TouchableOpacity className="p-4 border-b border-gray-500/50 flex-row items-center gap-2">
                             <FileText/>

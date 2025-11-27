@@ -271,6 +271,10 @@ const Attending = ({ size = 24 }) => (
     setDaySchedule(schedule);
   };
 
+  useEffect(() => {
+    selectDay(new Date().getDate());
+  }, [])
+
   return (
     <>
       <View className="w-full h-14 bg-white border-b-2 border-gray-200 justify-between items-center flex-row">
