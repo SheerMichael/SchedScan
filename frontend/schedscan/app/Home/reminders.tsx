@@ -1,15 +1,20 @@
-import React, { useState } from "react";
-import { View, Text, TextInput, TouchableOpacity, ScrollView, Image, Keyboard } from 'react-native';
+import React, { useState, useEffect, useCallback } from "react";
+import { View, Text, TextInput, TouchableOpacity, ScrollView, Image, Keyboard, ActivityIndicator, Alert } from 'react-native';
 import { router } from "expo-router";
+import { useFocusEffect } from '@react-navigation/native';
 import Svg, { Path, Circle } from 'react-native-svg';
 import DropDownPicker from "react-native-dropdown-picker";
 import { Search, Clock, PencilLine } from "lucide-react-native";
 import ScheduleItem from "../../components/reminderschedule";
 import DayHeader from "../../components/reminderdayheader";
+import { useAuth } from '../../context/AuthContext';
+import { courseService, Course } from '../../services/courseService';
 
 const RemindersScreen = () => {
-
-  const [hasSchedules, setHasSchedules] = useState(true); // Set this to true or false to see different outputs
+  const { user } = useAuth();
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasSchedules, setHasSchedules] = useState(false);
   const [searchFocused, setSearchFocused] = useState(false);
 
   const [openSemester, setOpenSemester] = useState(false);
@@ -36,52 +41,107 @@ const RemindersScreen = () => {
     </Svg>
   );
 
-  const scheduleData = [
-  {
-    day: "Monday",
-    color: "bg-primary-500",
-    items: [
-      { id: 1, 
-        subject: "Software Engineering 1", 
-        start_time: "7:00 AM",
-        end_time: "8:30 AM",
-        location: "LR1",
-      },
-    ],
-  },
-  {
-    day: "Tuesday",
-    color: "bg-primary-500",
-    items: [
-      { id: 2, 
-        subject: "Software Engineering 1",         
-        start_time: "12:00 AM",
-        end_time: "9:30 AM",
-        location: "LR1",
-      },
-      { id: 3, 
-        subject: "Software Engineering 1",        
-        start_time: "7:00 AM",
-        end_time: "8:30 AM",
-        location: "LR1",  
-      },
-    ],
-  },
-  {
-    day: "Thursday",
-    color: "bg-blue-800",
-    items: [
-      { id: 4, 
-        subject: "Software Engineering 1",         
-        start_time: "7:00 AM",
-        end_time: "8:30 AM",
-        location: "LR1", 
-      },
-    ],
-  },
-];
+  // Helper: Expand day codes to full names
+  const expandDayCode = (dayCode: string): string[] => {
+    const dayMap: Record<string, string[]> = {
+      'M': ['Monday'],
+      'T': ['Tuesday'],
+      'W': ['Wednesday'],
+      'TH': ['Thursday'],
+      'F': ['Friday'],
+      'S': ['Saturday'],
+      'TF': ['Tuesday', 'Friday'],
+      'MW': ['Monday', 'Wednesday'],
+      'MWF': ['Monday', 'Wednesday', 'Friday'],
+      'MTH': ['Monday', 'Thursday'],
+      'TTH': ['Tuesday', 'Thursday']
+    };
+    return dayMap[dayCode] || [];
+  };
 
-const onEdit = (item: ScheduleItemType) => {
+  // Transform courses into day-grouped schedule data
+  const transformCoursesToScheduleData = (courseList: Course[]) => {
+    const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const dayColors: Record<string, string> = {
+      'Monday': 'bg-primary-500',
+      'Tuesday': 'bg-primary-500',
+      'Wednesday': 'bg-green-500',
+      'Thursday': 'bg-blue-800',
+      'Friday': 'bg-yellow-500',
+      'Saturday': 'bg-purple-500'
+    };
+
+    // Group courses by day
+    const coursesByDay: Record<string, any[]> = {};
+
+    courseList.forEach((course) => {
+      const days = expandDayCode(course.day);
+      
+      days.forEach((dayName) => {
+        if (!coursesByDay[dayName]) {
+          coursesByDay[dayName] = [];
+        }
+        
+        coursesByDay[dayName].push({
+          id: course.id,
+          subject: course.subject_name || course.subject_code,
+          start_time: course.start_time,
+          end_time: course.end_time,
+          day: course.day, // Keep original day code for reference
+          location: course.location,
+        });
+      });
+    });
+
+    // Convert to array format expected by UI, maintaining day order
+    return dayOrder
+      .filter((day) => coursesByDay[day] && coursesByDay[day].length > 0)
+      .map((day) => ({
+        day,
+        color: dayColors[day] || 'bg-gray-500',
+        items: coursesByDay[day].sort((a, b) => {
+          // Sort by start time
+          return a.start_time.localeCompare(b.start_time);
+        }),
+      }));
+  };
+
+  // Fetch courses from backend
+  const loadCourses = useCallback(async () => {
+    if (!user?.id) {
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      const fetchedCourses = await courseService.getCourses();
+      setCourses(fetchedCourses);
+      setHasSchedules(fetchedCourses.length > 0);
+    } catch (error: any) {
+      console.error('Error loading courses:', error);
+      Alert.alert(
+        'Error',
+        'Failed to load courses. Please try again.',
+        [{ text: 'OK' }]
+      );
+      setHasSchedules(false);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [user?.id]);
+
+  // Load courses when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      loadCourses();
+    }, [loadCourses])
+  );
+
+  // Transform courses into schedule data
+  const scheduleData = transformCoursesToScheduleData(courses);
+
+  const onEdit = (item: ScheduleItemType) => {
     router.push({
     pathname: '/Home/Reminders/edit_reminders',
     params: {
@@ -94,6 +154,30 @@ const onEdit = (item: ScheduleItemType) => {
     },
     });
   };
+
+  // Show loading spinner while fetching
+  if (isLoading) {
+    return (
+      <>
+        <View className="w-full h-14 bg-white border-b-2 border-b-gray-200 justify-between items-center flex-row">
+          <View className='pl-8 flex-row justify-center items-center'>
+            <TouchableOpacity onPress={() => router.push('/Home/home')}>
+              <LeftPointingArrow size={30} color="#000000" />
+            </TouchableOpacity>
+          </View>
+          <View className='flex-row justify-center items-center mr-4'>
+            <Text className='font-bold text-2xl'>Reminders</Text>
+          </View>
+          <View>
+          </View>
+        </View>
+        <View className="flex-1 justify-center items-center">
+          <ActivityIndicator size="large" color="#DC2626" />
+          <Text className="mt-4 text-gray-600">Loading courses...</Text>
+        </View>
+      </>
+    );
+  }
 
   return (
     <>
@@ -211,8 +295,8 @@ const onEdit = (item: ScheduleItemType) => {
           <Image source={require('../../assets/images/Reminders.png')}
           style={{ width: 268, height: 168 }}
           />
-          <Text>No schedule, yet!</Text>
-          <Text>Scan your schedule now</Text>
+          <Text className="text-gray-600 text-lg mt-4">No schedule, yet!</Text>
+          <Text className="text-gray-500">Scan your schedule now</Text>
         </View>
         )}
 
