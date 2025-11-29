@@ -8,7 +8,8 @@ import { Search, Clock, PencilLine } from "lucide-react-native";
 import ScheduleItem from "../../components/reminderschedule";
 import DayHeader from "../../components/reminderdayheader";
 import { useAuth } from '../../context/AuthContext';
-import { courseService, Course } from '../../services/courseService';
+import { Course } from '../../services/courseService';
+import { scheduleStorageService, SavedSchedule } from '../../services/scheduleStorageService';
 
 const RemindersScreen = () => {
   const { user } = useAuth();
@@ -16,6 +17,7 @@ const RemindersScreen = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [hasSchedules, setHasSchedules] = useState(false);
   const [searchFocused, setSearchFocused] = useState(false);
+  const [activeSchedule, setActiveSchedule] = useState<SavedSchedule | null>(null);
 
   const [openSemester, setOpenSemester] = useState(false);
   const [semesterValue, setSemesterValue] = useState("1st");
@@ -43,6 +45,11 @@ const RemindersScreen = () => {
 
   // Helper: Expand day codes to full names
   const expandDayCode = (dayCode: string): string[] => {
+    // Return empty if no day code
+    if (!dayCode || dayCode.trim() === '') {
+      return [];
+    }
+    
     const dayMap: Record<string, string[]> = {
       'M': ['Monday'],
       'T': ['Tuesday'],
@@ -50,13 +57,16 @@ const RemindersScreen = () => {
       'TH': ['Thursday'],
       'F': ['Friday'],
       'S': ['Saturday'],
+      'SUN': ['Sunday'],
       'TF': ['Tuesday', 'Friday'],
       'MW': ['Monday', 'Wednesday'],
       'MWF': ['Monday', 'Wednesday', 'Friday'],
       'MTH': ['Monday', 'Thursday'],
-      'TTH': ['Tuesday', 'Thursday']
+      'TTH': ['Tuesday', 'Thursday'],
+      'MTWTH': ['Monday', 'Tuesday', 'Wednesday', 'Thursday'],
+      'MTWTHF': ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
     };
-    return dayMap[dayCode] || [];
+    return dayMap[dayCode.toUpperCase().trim()] || [];
   };
 
   // Transform courses into day-grouped schedule data
@@ -82,9 +92,10 @@ const RemindersScreen = () => {
           coursesByDay[dayName] = [];
         }
         
+        // Use subject_code to match calendar page display
         coursesByDay[dayName].push({
           id: course.id,
-          subject: course.subject_name || course.subject_code,
+          subject: course.subject_code,
           start_time: course.start_time,
           end_time: course.end_time,
           day: course.day, // Keep original day code for reference
@@ -106,7 +117,7 @@ const RemindersScreen = () => {
       }));
   };
 
-  // Fetch courses from backend
+  // Fetch courses from active local schedule
   const loadCourses = useCallback(async () => {
     if (!user?.id) {
       setIsLoading(false);
@@ -115,14 +126,23 @@ const RemindersScreen = () => {
 
     try {
       setIsLoading(true);
-      const fetchedCourses = await courseService.getCourses();
-      setCourses(fetchedCourses);
-      setHasSchedules(fetchedCourses.length > 0);
+      const active = await scheduleStorageService.getActiveSchedule(user.id);
+      setActiveSchedule(active);
+      
+      if (active) {
+        setCourses(active.courses);
+        setHasSchedules(active.courses.length > 0);
+        console.log('Loaded active schedule for reminders:', active.title);
+      } else {
+        setCourses([]);
+        setHasSchedules(false);
+        console.log('No active schedule for reminders');
+      }
     } catch (error: any) {
-      console.error('Error loading courses:', error);
+      console.error('Error loading active schedule:', error);
       Alert.alert(
         'Error',
-        'Failed to load courses. Please try again.',
+        'Failed to load schedule. Please try again.',
         [{ text: 'OK' }]
       );
       setHasSchedules(false);
@@ -196,6 +216,7 @@ const RemindersScreen = () => {
 
         {hasSchedules ? (
         <ScrollView className="flex-1 px-6" keyboardShouldPersistTaps="handled">
+          {/* School Year and Semester card - commented out for now
           <View className="bg-primary-700 m-4 p-6 rounded-2xl">
             <View className="flex-row justify-between">
 
@@ -255,7 +276,9 @@ const RemindersScreen = () => {
 
             </View>
           </View>
+          */}
 
+          {/* Search bar - commented out for now
           <View className="relative mb-2 w-full">
             <TextInput
                 placeholder="Search"
@@ -268,6 +291,7 @@ const RemindersScreen = () => {
               <Search size={20} color="#444"/>
             </View>
           </View>
+          */}
 
           <View>
             {scheduleData.map((day) => (

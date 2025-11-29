@@ -43,11 +43,36 @@ const FacultySchedule = () => {
     </Svg>
   );
 
-  const handleApplyReminders = (scheduleId: string) => {
-    console.log(`Applying reminders for schedule ${scheduleId}`);
-    router.push({
-      pathname: '/Home/reminders',
-    });
+  const handleApplyReminders = async (scheduleId: string) => {
+    if (!user?.id) {
+      Alert.alert('Error', 'User not authenticated');
+      return;
+    }
+
+    try {
+      await scheduleStorageService.setActiveSchedule(scheduleId, user.id);
+      
+      // Reload schedules to update UI
+      await loadSchedules();
+      
+      Alert.alert(
+        'Success!',
+        'Schedule is now active. Your calendar and reminders will show courses from this schedule.',
+        [
+          {
+            text: 'View Calendar',
+            onPress: () => router.replace('/Home/home'),
+          },
+          {
+            text: 'OK',
+            style: 'cancel',
+          },
+        ]
+      );
+    } catch (error) {
+      console.error('Error setting active schedule:', error);
+      Alert.alert('Error', 'Failed to apply schedule. Please try again.');
+    }
   };
 
   const handleDownload = (scheduleId: string) => {
@@ -83,6 +108,7 @@ const FacultySchedule = () => {
               courses={schedule.courses}
               uploadType={schedule.uploadType}
               uploadDate={schedule.uploadDate}
+              isActive={schedule.isActive}
               onApplyReminders={() => handleApplyReminders(schedule.id)}
               onDownload={() => handleDownload(schedule.id)}
             />

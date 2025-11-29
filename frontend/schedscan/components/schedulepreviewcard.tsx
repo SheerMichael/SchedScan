@@ -8,6 +8,7 @@ interface SchedulePreviewCardProps {
   courses: Course[];
   uploadType: 'student' | 'faculty';
   uploadDate: string;
+  isActive: boolean;
   onApplyReminders: () => void;
   onDownload: () => void;
 }
@@ -17,6 +18,7 @@ const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
   courses,
   uploadType,
   uploadDate,
+  isActive,
   onApplyReminders,
   onDownload,
 }) => {
@@ -59,7 +61,14 @@ const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
   };
 
   return (
-    <View className="bg-white rounded-lg border border-gray-300 mb-4 p-4 mx-2">
+    <View className={`bg-white rounded-lg border mb-4 p-4 mx-2 ${isActive ? 'border-green-500 border-2' : 'border-gray-300'}`}>
+      {/* Active badge */}
+      {isActive && (
+        <View className="absolute -top-2 -right-2 bg-green-500 px-2 py-1 rounded-full z-10">
+          <Text className="text-white text-xs font-bold">ACTIVE</Text>
+        </View>
+      )}
+      
       {/* Header */}
       <View className="flex-row justify-between items-center mb-3">
         <View className="flex-1">
@@ -133,12 +142,18 @@ const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
 
       {/* Apply Reminders Button */}
       <View className="flex-row justify-end">
-        <TouchableOpacity 
-          className="bg-primary-800 px-6 py-2 rounded-full"
-          onPress={onApplyReminders}
-        >
-          <Text className="font-semibold text-white text-sm">Apply Reminders</Text>
-        </TouchableOpacity>
+        {isActive ? (
+          <View className="bg-green-600 px-6 py-2 rounded-full">
+            <Text className="font-semibold text-white text-sm">Currently Active</Text>
+          </View>
+        ) : (
+          <TouchableOpacity 
+            className="bg-primary-800 px-6 py-2 rounded-full"
+            onPress={onApplyReminders}
+          >
+            <Text className="font-semibold text-white text-sm">Apply Reminders</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );

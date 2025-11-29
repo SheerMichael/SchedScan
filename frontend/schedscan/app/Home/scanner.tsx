@@ -18,6 +18,26 @@ export default function Scanner() {
   const [scheduleTitle, setScheduleTitle] = useState('');
   const [uploadedCourses, setUploadedCourses] = useState<Course[]>([]);
 
+  // Check rate limit before any upload action
+  const checkRateLimit = async (): Promise<boolean> => {
+    if (!user?.id) {
+      Alert.alert('Error', 'User not authenticated');
+      return false;
+    }
+
+    const { allowed, remainingSeconds } = await scheduleStorageService.canUpload(user.id);
+    
+    if (!allowed) {
+      Alert.alert(
+        'Please Wait', 
+        `You can upload again in ${remainingSeconds} seconds.\n\nRate limit: 1 upload per minute.`
+      );
+      return false;
+    }
+    
+    return true;
+  };
+
   // Handle role selection
   const handleRoleSelection = (role: 'faculty' | 'student') => {
     setSelectedRole(role);
@@ -27,6 +47,11 @@ export default function Scanner() {
   const handleDocumentUpload = async () => {
     if (!selectedRole) {
       Alert.alert('Error', 'Please select a role first');
+      return;
+    }
+
+    // Check rate limit first
+    if (!(await checkRateLimit())) {
       return;
     }
 
@@ -61,6 +86,11 @@ export default function Scanner() {
   const handleImageGallery = async () => {
     if (!selectedRole) {
       Alert.alert('Error', 'Please select a role first');
+      return;
+    }
+
+    // Check rate limit first
+    if (!(await checkRateLimit())) {
       return;
     }
 
@@ -104,6 +134,11 @@ export default function Scanner() {
       return;
     }
 
+    // Check rate limit first
+    if (!(await checkRateLimit())) {
+      return;
+    }
+
     try {
       // Request permission
       const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
@@ -144,6 +179,11 @@ export default function Scanner() {
       
       console.log('Upload successful:', response);
       
+      // Record the upload timestamp for rate limiting
+      if (user?.id) {
+        await scheduleStorageService.recordUpload(user.id);
+      }
+      
       // Store courses and show title input modal
       setUploadedCourses(response.courses);
       setIsUploading(false);
@@ -156,8 +196,8 @@ export default function Scanner() {
     }
   };
 
-  // Save schedule with title
-  const saveScheduleWithTitle = async () => {
+  // Save schedule with title (save only, not active)
+  const saveScheduleOnly = async () => {
     if (!scheduleTitle.trim()) {
       Alert.alert('Error', 'Please enter a schedule title');
       return;
@@ -178,14 +218,15 @@ export default function Scanner() {
         scheduleTitle.trim(),
         uploadedCourses,
         selectedRole,
-        user.id
+        user.id,
+        false // Not active
       );
 
       setShowTitleModal(false);
       
       Alert.alert(
-        'Success', 
-        `Schedule "${scheduleTitle}" saved successfully!\n${uploadedCourses.length} courses stored.`,
+        'Saved!', 
+        `Schedule "${scheduleTitle}" saved.\n${uploadedCourses.length} courses stored.\n\nYou can apply it as your active schedule anytime from the Schedules page.`,
         [
           {
             text: 'OK',
@@ -197,6 +238,54 @@ export default function Scanner() {
               } else {
                 router.push('/Home/Schedules/faculty');
               }
+            }
+          }
+        ]
+      );
+    } catch (error) {
+      console.error('Error saving schedule:', error);
+      Alert.alert('Error', 'Failed to save schedule. Please try again.');
+    }
+  };
+
+  // Save schedule AND apply as active (for reminders)
+  const saveAndApplyReminders = async () => {
+    if (!scheduleTitle.trim()) {
+      Alert.alert('Error', 'Please enter a schedule title');
+      return;
+    }
+
+    if (!selectedRole) {
+      Alert.alert('Error', 'Invalid upload type');
+      return;
+    }
+
+    if (!user?.id) {
+      Alert.alert('Error', 'User not authenticated');
+      return;
+    }
+
+    try {
+      await scheduleStorageService.saveSchedule(
+        scheduleTitle.trim(),
+        uploadedCourses,
+        selectedRole,
+        user.id,
+        true // Set as active
+      );
+
+      setShowTitleModal(false);
+      
+      Alert.alert(
+        'Success!', 
+        `Schedule "${scheduleTitle}" is now your active schedule!\n${uploadedCourses.length} courses will appear on your calendar.`,
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              resetScanner();
+              // Navigate to home to see the calendar
+              router.replace('/Home/home');
             }
           }
         ]
@@ -363,26 +452,45 @@ export default function Scanner() {
               autoFocus
             />
             
-            <View className="flex-row gap-3">
+            {/* Action buttons */}
+            <View className="gap-3">
+              {/* Apply Reminders - Primary action */}
               <TouchableOpacity
-                className="flex-1 bg-gray-200 py-3 rounded-lg"
+                className="bg-primary-600 py-3 rounded-lg"
+                onPress={saveAndApplyReminders}
+              >
+                <Text className="text-center font-semibold text-white">
+                  Apply Reminders
+                </Text>
+                <Text className="text-center text-xs text-white/80">
+                  Set as active schedule
+                </Text>
+              </TouchableOpacity>
+              
+              {/* Save Only - Secondary action */}
+              <TouchableOpacity
+                className="bg-gray-200 py-3 rounded-lg"
+                onPress={saveScheduleOnly}
+              >
+                <Text className="text-center font-semibold text-gray-700">
+                  Save Only
+                </Text>
+                <Text className="text-center text-xs text-gray-500">
+                  Don't change current schedule
+                </Text>
+              </TouchableOpacity>
+              
+              {/* Cancel */}
+              <TouchableOpacity
+                className="py-2"
                 onPress={() => {
                   setShowTitleModal(false);
                   setScheduleTitle('');
                   resetScanner();
                 }}
               >
-                <Text className="text-center font-semibold text-gray-700">
+                <Text className="text-center text-gray-500">
                   Cancel
-                </Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                className="flex-1 bg-primary-600 py-3 rounded-lg"
-                onPress={saveScheduleWithTitle}
-              >
-                <Text className="text-center font-semibold text-white">
-                  Save Schedule
                 </Text>
               </TouchableOpacity>
             </View>

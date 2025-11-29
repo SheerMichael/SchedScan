@@ -3,7 +3,8 @@ import { View, Text, TouchableOpacity, ScrollView, Image, ActivityIndicator} fro
 import Svg, { Path, Circle, G, Rect, Polygon } from "react-native-svg";
 import { router } from "expo-router";
 import { useAuth } from '../../context/AuthContext';
-import { courseService, Course } from '../../services/courseService';
+import { Course } from '../../services/courseService';
+import { scheduleStorageService, SavedSchedule } from '../../services/scheduleStorageService';
 import { useFocusEffect } from '@react-navigation/native';
 
 export default function SchedScanApp() {
@@ -18,6 +19,7 @@ export default function SchedScanApp() {
   const [selectedFilter, setSelectedFilter] = useState<'all' | 'teaching' | 'attending'>('all');
   const [courses, setCourses] = useState<Course[]>([]);
   const [isLoadingCourses, setIsLoadingCourses] = useState(true);
+  const [activeSchedule, setActiveSchedule] = useState<SavedSchedule | null>(null);
 
   type ScheduleItem = {
     title: string;
@@ -111,41 +113,62 @@ const Attending = ({ size = 24 }) => (
 
   const [daySchedule, setDaySchedule] = useState<ScheduleItem[]>([]);
 
-  // Fetch courses when component mounts or comes into focus
+  // Fetch courses from active local schedule when component mounts or comes into focus
   useFocusEffect(
     React.useCallback(() => {
-      fetchCourses();
-    }, [])
+      loadActiveSchedule();
+    }, [user?.id])
   );
 
-  const fetchCourses = async () => {
+  const loadActiveSchedule = async () => {
+    if (!user?.id) {
+      setIsLoadingCourses(false);
+      return;
+    }
+
     try {
       setIsLoadingCourses(true);
-      const fetchedCourses = await courseService.getCourses();
-      setCourses(fetchedCourses);
-      console.log('Fetched courses:', fetchedCourses);
+      const active = await scheduleStorageService.getActiveSchedule(user.id);
+      setActiveSchedule(active);
       
-      // Update today's schedule if a day is selected
-      if (selectedDay !== null) {
-        updateDaySchedule(selectedDay, fetchedCourses);
+      if (active) {
+        setCourses(active.courses);
+        console.log('Loaded active schedule:', active.title, 'with', active.courses.length, 'courses');
+        
+        // Update today's schedule if a day is selected
+        if (selectedDay !== null) {
+          updateDaySchedule(selectedDay, active.courses);
+        }
+      } else {
+        setCourses([]);
+        setDaySchedule([]);
+        console.log('No active schedule found');
       }
     } catch (error: any) {
-      console.error('Failed to fetch courses:', error);
-      
-      // Check if it's a session expired error
-      if (error.message?.includes('Session expired') || error.response?.status === 401) {
-        // Session expired, redirect to login
-        router.replace('/intro/login');
-      }
+      console.error('Failed to load active schedule:', error);
+      setCourses([]);
     } finally {
       setIsLoadingCourses(false);
     }
   };
 
   // Map backend day codes to JavaScript day numbers
+  // OCR extracts codes like: M, T, W, TH, F, S, MTH, TF, MW, TTH, MWF, etc.
   const dayCodeToNumbers = (dayCode: string): number[] => {
-    const dayMap: { [key: string]: number } = {
-      'SUN': 0,
+    // Return empty array if no day code (course won't show on any day)
+    if (!dayCode || dayCode.trim() === '') {
+      return [];
+    }
+
+    // Single letter/code mappings
+    const singleDayMap: { [key: string]: number } = {
+      'M': 1,    // Monday
+      'T': 2,    // Tuesday
+      'W': 3,    // Wednesday
+      'TH': 4,   // Thursday
+      'F': 5,    // Friday
+      'S': 6,    // Saturday
+      'SUN': 0,  // Sunday
       'MON': 1,
       'TUE': 2,
       'WED': 3,
@@ -154,16 +177,29 @@ const Attending = ({ size = 24 }) => (
       'SAT': 6,
     };
 
-    // Handle special cases like "MTH" (Mon-Thu)
-    if (dayCode === 'MTH') {
-      return [1, 2, 3, 4]; // Mon, Tue, Wed, Thu
-    } else if (dayCode === 'MW') {
-      return [1, 3]; // Mon, Wed
-    } else if (dayCode === 'TTH') {
-      return [2, 4]; // Tue, Thu
+    // Multi-day combination mappings
+    const multiDayMap: { [key: string]: number[] } = {
+      'MTH': [1, 4],      // Monday & Thursday
+      'TF': [2, 5],       // Tuesday & Friday
+      'MW': [1, 3],       // Monday & Wednesday
+      'TTH': [2, 4],      // Tuesday & Thursday
+      'MWF': [1, 3, 5],   // Monday, Wednesday & Friday
+      'MTWTH': [1, 2, 3, 4], // Mon-Thu
+      'MTWTHF': [1, 2, 3, 4, 5], // Mon-Fri
+    };
+
+    // Check multi-day codes first (they're more specific)
+    const upperCode = dayCode.toUpperCase().trim();
+    if (multiDayMap[upperCode]) {
+      return multiDayMap[upperCode];
     }
 
-    return dayMap[dayCode] !== undefined ? [dayMap[dayCode]] : [];
+    // Check single day codes
+    if (singleDayMap[upperCode] !== undefined) {
+      return [singleDayMap[upperCode]];
+    }
+
+    return [];
   };
 
   // Check if a specific date has courses
@@ -259,18 +295,51 @@ const Attending = ({ size = 24 }) => (
     const dateKey = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const holiday = holidaySchedule[dateKey] ?? [];
 
-    // Get real courses from backend
-    const realCourses = getCoursesForDate(day).map(course => ({
-      title: course.subject_code,
-      time: `${course.start_time} - ${course.end_time}`,
-      location: course.location || '',
-      priority_level: 'Class',
-    }));
+    // Calculate the weekday (0=Sun, 1=Mon, 2=Tue, etc.)
+    const weekday = new Date(selectedYear, selectedMonth, day).getDay();
+
+    // Get real courses for this specific day
+    const realCourses = courses
+      .filter(course => {
+        const courseDays = dayCodeToNumbers(course.day);
+        return courseDays.includes(weekday);
+      })
+      .sort((a, b) => {
+        // Sort by start time (chronological order)
+        // Convert time strings like "11:30AM" to comparable values
+        const parseTime = (timeStr: string): number => {
+          const match = timeStr.match(/(\d{1,2}):(\d{2})(AM|PM)/i);
+          if (!match) return 0;
+          let hours = parseInt(match[1], 10);
+          const minutes = parseInt(match[2], 10);
+          const period = match[3].toUpperCase();
+          
+          if (period === 'PM' && hours !== 12) hours += 12;
+          if (period === 'AM' && hours === 12) hours = 0;
+          
+          return hours * 60 + minutes;
+        };
+        return parseTime(a.start_time) - parseTime(b.start_time);
+      })
+      .map(course => ({
+        title: course.subject_code,
+        time: `${course.start_time} - ${course.end_time}`,
+        location: course.location || '',
+        priority_level: 'Class',
+      }));
 
     const schedule = [...holiday, ...realCourses];
     setDaySchedule(schedule);
   };
 
+  // Re-calculate day schedule when courses or selected month/year changes
+  useEffect(() => {
+    if (selectedDay !== null && courses.length > 0) {
+      selectDay(selectedDay);
+    }
+  }, [courses, selectedMonth, selectedYear]);
+
+  // Select today on initial load
   useEffect(() => {
     selectDay(new Date().getDate());
   }, [])
