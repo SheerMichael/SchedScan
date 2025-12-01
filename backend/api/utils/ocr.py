@@ -16,6 +16,72 @@ from abc import ABC, abstractmethod
 logger = logging.getLogger(__name__)
 
 
+# Day code expansion mapping - splits multi-day codes into individual days
+DAY_CODE_EXPANSION = {
+    # Single days remain as-is
+    'M': ['M'],
+    'T': ['T'],
+    'W': ['W'],
+    'TH': ['TH'],
+    'F': ['F'],
+    'S': ['S'],
+    # Two-day combinations
+    'TF': ['T', 'F'],
+    'MW': ['M', 'W'],
+    'MTH': ['M', 'TH'],
+    'TTH': ['T', 'TH'],
+    # Three-day combinations
+    'MWF': ['M', 'W', 'F'],
+    # Four-day combinations
+    'MTWTH': ['M', 'T', 'W', 'TH'],
+    # Five-day combinations
+    'MTWTHF': ['M', 'T', 'W', 'TH', 'F'],
+}
+
+
+def expand_day_code(day_code: str) -> List[str]:
+    """
+    Expand a combined day code into individual day codes.
+    
+    Args:
+        day_code: Day code like 'MTH', 'TF', 'MWF', etc.
+        
+    Returns:
+        List of individual day codes like ['M', 'TH'] or ['T', 'F']
+    """
+    day_code = day_code.upper().strip()
+    return DAY_CODE_EXPANSION.get(day_code, [day_code])
+
+
+def split_course_by_days(course: Dict) -> List[Dict]:
+    """
+    Split a course with a multi-day code into separate course entries.
+    Each day gets its own course entry with the same time.
+    
+    Args:
+        course: Course dictionary with 'day' field that may contain multi-day code
+        
+    Returns:
+        List of course dictionaries, one per day
+    """
+    day_code = course.get('day', '')
+    days = expand_day_code(day_code)
+    
+    if len(days) <= 1:
+        # Single day or no day - return as-is
+        return [course]
+    
+    # Create separate course entries for each day
+    split_courses = []
+    for day in days:
+        new_course = course.copy()
+        new_course['day'] = day
+        split_courses.append(new_course)
+    
+    logger.info(f"Split course {course.get('subject_code')} from day '{day_code}' into {len(split_courses)} separate entries: {days}")
+    return split_courses
+
+
 class BaseCORExtractor(ABC):
     """
     Base class for extracting course information from Certificate of Registration (COR) documents.
@@ -230,9 +296,11 @@ class BaseCORExtractor(ABC):
                     'day': day_matches[idx_pair] if idx_pair < len(day_matches) else (day_matches[0] if day_matches else ''),
                     'location': location_list[idx_pair] if idx_pair < len(location_list) else (location_list[0] if location_list else '')
                 }
-                courses.append(course)
+                # Split multi-day courses into individual day entries
+                split_courses = split_course_by_days(course)
+                courses.extend(split_courses)
         
-        logger.info(f"Extracted {len(courses)} courses from document")
+        logger.info(f"Extracted {len(courses)} courses from document (after day splitting)")
         return courses
 
 
@@ -369,9 +437,11 @@ class StudentCORExtractor(BaseCORExtractor):
                     'day': day_matches[idx_pair] if idx_pair < len(day_matches) else (day_matches[0] if day_matches else ''),
                     'location': location_list[idx_pair] if idx_pair < len(location_list) else (location_list[0] if location_list else '')
                 }
-                courses.append(course)
+                # Split multi-day courses into individual day entries
+                split_courses = split_course_by_days(course)
+                courses.extend(split_courses)
         
-        logger.info(f"Extracted {len(courses)} courses from Student COR")
+        logger.info(f"Extracted {len(courses)} courses from Student COR (after day splitting)")
         return courses
 
 

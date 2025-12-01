@@ -19,4 +19,5 @@ urlpatterns = [
     path('upload-cor/student/', views.UploadStudentCORView.as_view(), name='upload_student_cor'),
     path('upload-cor/faculty/', views.UploadFacultyCORView.as_view(), name='upload_faculty_cor'),
     path('courses/', views.UserCoursesView.as_view(), name='user_courses'),
+    path('courses/delete-all/', views.DeleteAllCoursesView.as_view(), name='delete_all_courses'),
 ]

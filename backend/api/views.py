@@ -395,3 +395,42 @@ class UserCoursesView(generics.ListAPIView):
     
     def get_queryset(self):
         return Course.objects.filter(user=self.request.user)
+
+
+class DeleteAllCoursesView(APIView):
+    """
+    API endpoint to delete all courses for all users (admin operation).
+    
+    DELETE /api/courses/delete-all/
+    Headers: Authorization: Bearer <access_token>
+    
+    Response: {
+        "message": "Successfully deleted N courses for all users",
+        "deleted_count": N
+    }
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def delete(self, request):
+        try:
+            # Delete all courses for ALL users (admin operation for clearing data)
+            deleted_count, _ = Course.objects.all().delete()
+            
+            logger.info(f"Deleted {deleted_count} courses for all users (requested by user {request.user.id})")
+            
+            return Response(
+                {
+                    "message": f"Successfully deleted {deleted_count} courses for all users",
+                    "deleted_count": deleted_count
+                },
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            logger.error(f"Error deleting all courses: {str(e)}")
+            return Response(
+                {
+                    "error": "Failed to delete courses",
+                    "details": str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
