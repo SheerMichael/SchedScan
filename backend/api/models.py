@@ -85,6 +85,9 @@ class Course(models.Model):
     """
     Model to store course schedule information extracted from COR documents.
     Each course entry represents a single class session with its details.
+    
+    Note: Multi-day courses (e.g., MTH, TF) are split into individual day entries
+    during OCR extraction. Each day gets its own Course record with the same time.
     """
     DAY_CHOICES = [
         ('M', 'Monday'),
@@ -93,11 +96,6 @@ class Course(models.Model):
         ('TH', 'Thursday'),
         ('F', 'Friday'),
         ('S', 'Saturday'),
-        ('TF', 'Tuesday-Friday'),
-        ('MW', 'Monday-Wednesday'),
-        ('MWF', 'Monday-Wednesday-Friday'),
-        ('MTH', 'Monday-Thursday'),
-        ('TTH', 'Tuesday-Thursday'),
     ]
     
     user = models.ForeignKey(
