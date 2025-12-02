@@ -510,14 +510,19 @@ const Attending = ({ size = 24 }) => (
           ) : (
             daySchedule.map((item, index) => (
             <TouchableOpacity
-              onPress={() => router.push('/Home/Subject/subjectdetails')} /* This still needs the title or the id for the subjectdetails page*/
-              key={index}
-              className={` bg-white p-4 mb-3 rounded-xl shadow border-l-4 ${item.priority_level === "Holiday" ? "border-green-600" : "border-red-500"}`}
+              onPress={() => {
+                router.push({
+                  pathname: "/Home/Subject/subjectdetails",
+                  params: {
+                    title: item.title
+                  }
+                });
+              }}
+              className="bg-white p-4 mb-3 rounded-xl shadow border-l-4 border-red-500"
             >
               <Text className="font-bold text-base text-black">{item.title}</Text>
               <Text className="text-sm text-gray-600">{item.time}</Text>
               <Text className="text-sm text-gray-600">{item.location}</Text>
-              <Text className="text-sm text-gray-600">{item.priority_level}</Text>
             </TouchableOpacity>
             ))
           )}

@@ -18,8 +18,18 @@ export default function SubjectDetails() {
   }, []);
 
   // Remove task (but only applied after Save)
-  const completeTask = (index: number) => {
-    setTaskList(prev => prev.filter((_, i) => i !== index));
+  const [completedTasks, setCompletedTasks] = useState<boolean[]>([]);
+
+  useEffect(() => {
+    setCompletedTasks(taskList.map(() => false));
+  }, [taskList]);
+
+  const toggleComplete = (index: number) => {
+    setCompletedTasks(prev => {
+      const copy = [...prev];
+      copy[index] = !copy[index];
+      return copy;
+    });
   };
 
   // Add a new task
@@ -82,16 +92,13 @@ export default function SubjectDetails() {
               key={idx}
               className="bg-white p-3 rounded-lg mb-2 shadow flex-row items-center"
             >
-              {/* Checkbox */}
               <Checkbox
-                value={false}
-                onValueChange={() => completeTask(idx)}
+                value={completedTasks[idx]}
+                onValueChange={() => toggleComplete(idx)}
                 color="#DC2626"
-                style={{ marginRight: 12 }}
               />
 
-              {/* Task Text */}
-              <Text className="font-semibold text-black">{task}</Text>
+              <Text className="font-semibold text-black ml-2">{task}</Text>
             </View>
           ))
         )}
