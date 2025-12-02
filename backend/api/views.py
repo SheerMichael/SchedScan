@@ -19,9 +19,10 @@ from .serializers import (
     UserWithTokenSerializer,
     CourseSerializer,
     ScheduleSerializer,
-    ScheduleListSerializer
+    ScheduleListSerializer,
+    TaskSerializer
 )
-from .models import Course, Schedule
+from .models import Course, Schedule, Task
 from .utils.ocr import get_cor_extractor
 
 User = get_user_model()
@@ -690,5 +691,182 @@ class ScheduleTimetableDownloadView(APIView):
             logger.error(f"Error generating timetable: {str(e)}")
             return Response(
                 {"error": "Failed to generate timetable", "details": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# =============================================================================
+# Task Management Views
+# =============================================================================
+
+class TaskListCreateView(generics.ListCreateAPIView):
+    """
+    API endpoint to list and create tasks for a specific subject code.
+    
+    GET /api/tasks/?subject_code=CS101
+    Headers: Authorization: Bearer <access_token>
+    
+    Response: [
+        {
+            "id": 1,
+            "subject_code": "CS101",
+            "text": "Complete assignment 1",
+            "is_completed": false,
+            "created_at": "2025-12-02T...",
+            "updated_at": "2025-12-02T..."
+        }
+    ]
+    
+    POST /api/tasks/
+    Headers: Authorization: Bearer <access_token>
+    Request body: {
+        "subject_code": "CS101",
+        "text": "Complete assignment 1"
+    }
+    """
+    serializer_class = TaskSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        """
+        Filter tasks by subject_code query param.
+        """
+        queryset = Task.objects.filter(user=self.request.user)
+        subject_code = self.request.query_params.get('subject_code', None)
+        if subject_code:
+            queryset = queryset.filter(subject_code=subject_code)
+        return queryset.order_by('-created_at')
+
+
+class TaskDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    API endpoint to retrieve, update, or delete a specific task.
+    
+    GET /api/tasks/<id>/
+    PATCH /api/tasks/<id>/
+    DELETE /api/tasks/<id>/
+    
+    Headers: Authorization: Bearer <access_token>
+    
+    PATCH Request body (to mark as completed):
+    {
+        "is_completed": true
+    }
+    """
+    serializer_class = TaskSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        """
+        Only allow access to user's own tasks.
+        """
+        return Task.objects.filter(user=self.request.user)
+
+
+# =============================================================================
+# Account Management Views
+# =============================================================================
+
+class ChangePasswordView(APIView):
+    """
+    API endpoint to change user password.
+    
+    POST /api/auth/change-password/
+    Headers: Authorization: Bearer <access_token>
+    Request body: {
+        "current_password": "oldpassword",
+        "new_password": "newpassword"
+    }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        current_password = request.data.get('current_password')
+        new_password = request.data.get('new_password')
+
+        # Validate required fields
+        if not current_password or not new_password:
+            return Response(
+                {"error": "Both current_password and new_password are required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Verify current password
+        if not user.check_password(current_password):
+            return Response(
+                {"error": "Current password is incorrect"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Validate new password length
+        if len(new_password) < 8:
+            return Response(
+                {"error": "New password must be at least 8 characters long"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Set new password
+        user.set_password(new_password)
+        user.save()
+
+        return Response(
+            {"message": "Password changed successfully"},
+            status=status.HTTP_200_OK
+        )
+
+
+class DeleteAccountView(APIView):
+    """
+    API endpoint to delete user account.
+    Requires password confirmation for security.
+    
+    POST /api/auth/delete-account/
+    Headers: Authorization: Bearer <access_token>
+    Request body: {
+        "password": "userpassword",
+        "confirmation": "DELETE"
+    }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        password = request.data.get('password')
+        confirmation = request.data.get('confirmation')
+
+        # Validate required fields
+        if not password:
+            return Response(
+                {"error": "Password is required to delete account"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if confirmation != "DELETE":
+            return Response(
+                {"error": "Please type 'DELETE' to confirm account deletion"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Verify password
+        if not user.check_password(password):
+            return Response(
+                {"error": "Incorrect password"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Delete user account (this will cascade delete related data)
+        try:
+            user_email = user.email
+            user.delete()
+            logger.info(f"User account deleted: {user_email}")
+            return Response(
+                {"message": "Account deleted successfully"},
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            logger.error(f"Error deleting account: {str(e)}")
+            return Response(
+                {"error": "Failed to delete account"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

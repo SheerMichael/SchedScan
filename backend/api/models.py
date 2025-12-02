@@ -213,3 +213,43 @@ class Course(models.Model):
     
     def __str__(self):
         return f"{self.subject_code} - {self.subject_name or 'N/A'} ({self.day} {self.start_time}-{self.end_time})"
+
+
+class Task(models.Model):
+    """
+    Model to store tasks associated with a subject code.
+    Tasks are shared across schedules - if you have the same subject code
+    in multiple schedules, they share the same tasks.
+    """
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='tasks',
+        help_text="The user who owns this task"
+    )
+    subject_code = models.CharField(
+        max_length=50,
+        help_text="Subject code this task is associated with"
+    )
+    text = models.CharField(
+        max_length=500,
+        help_text="Task description/content"
+    )
+    is_completed = models.BooleanField(
+        default=False,
+        help_text="Whether this task has been completed"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Task'
+        verbose_name_plural = 'Tasks'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'subject_code']),
+        ]
+
+    def __str__(self):
+        status = "✓" if self.is_completed else "○"
+        return f"[{status}] {self.subject_code}: {self.text[:50]}"

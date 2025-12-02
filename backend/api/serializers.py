@@ -3,7 +3,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from rest_framework.validators import UniqueValidator
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import Course, Schedule
+from .models import Course, Schedule, Task
 from .utils.timetable_generator import generate_and_save_timetable
 
 User = get_user_model()
@@ -347,3 +347,28 @@ class ScheduleListSerializer(serializers.ModelSerializer):
     
     def get_course_count(self, obj):
         return obj.courses.count()
+
+
+class TaskSerializer(serializers.ModelSerializer):
+    """
+    Serializer for Task model - used for managing tasks per subject code.
+    Tasks are shared across schedules for the same subject code.
+    """
+    class Meta:
+        model = Task
+        fields = [
+            'id',
+            'subject_code',
+            'text',
+            'is_completed',
+            'created_at',
+            'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def create(self, validated_data):
+        """
+        Create a task associated with the current user.
+        """
+        user = self.context['request'].user
+        return Task.objects.create(user=user, **validated_data)

@@ -1,16 +1,23 @@
 import React, { useState } from "react";
-import { View, Text, TouchableOpacity, ScrollView, Image, Modal, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Image, Modal, Alert, TextInput, ActivityIndicator } from 'react-native';
 import { router } from "expo-router";
 import Svg, { Path, Circle } from 'react-native-svg';
 import { Gem, ScrollText, BellRing, CalendarDays, FileText, EyeOff, Trash2 } from "lucide-react-native";
 import { useAuth } from '../../context/AuthContext';
 import { scheduleStorageService } from '../../services/scheduleStorageService';
+import api from '@/services/api';
 
 const UserProfile = () => {
     const [modallogout, setModalLogout] = useState(false);
     const [modaldeleteaccount, setModalDeleteAccount] = useState(false);
     const { user, logout } = useAuth();
     const [premiumuser, setPremiumUser] = useState(false);
+    
+    // Delete account states
+    const [deletePassword, setDeletePassword] = useState('');
+    const [deleteConfirmation, setDeleteConfirmation] = useState('');
+    const [deleteError, setDeleteError] = useState('');
+    const [isDeleting, setIsDeleting] = useState(false);
 
     const LeftPointingArrow = ({ size = 24, color = '#ffffff' }) => (
         <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
@@ -37,11 +44,63 @@ const UserProfile = () => {
         }
     };
 
-    const handleDeleteAccount = () => {
+    const resetDeleteModal = () => {
+        setDeletePassword('');
+        setDeleteConfirmation('');
+        setDeleteError('');
+        setIsDeleting(false);
+    };
+
+    const handleCloseDeleteModal = () => {
         setModalDeleteAccount(false);
-        // Add your delete account logic here
-        console.log('Another page to delete account or another modal for it');
-    }
+        resetDeleteModal();
+    };
+
+    const handleDeleteAccount = async () => {
+        setDeleteError('');
+
+        // Validate password
+        if (!deletePassword.trim()) {
+            setDeleteError('Please enter your password');
+            return;
+        }
+
+        // Validate confirmation text
+        if (deleteConfirmation !== 'DELETE') {
+            setDeleteError('Please type DELETE to confirm');
+            return;
+        }
+
+        setIsDeleting(true);
+
+        try {
+            await api.post('/auth/delete-account/', {
+                password: deletePassword,
+                confirmation: 'DELETE',
+            });
+
+            // Clear local data
+            if (user?.id) {
+                await scheduleStorageService.clearAllSchedules(user.id);
+            }
+
+            // Close modal
+            setModalDeleteAccount(false);
+            resetDeleteModal();
+
+            // Show success and navigate to login
+            Alert.alert(
+                'Account Deleted',
+                'Your account has been permanently deleted.',
+                [{ text: 'OK', onPress: () => router.replace('/intro/login') }]
+            );
+        } catch (err: any) {
+            const errorMessage = err.response?.data?.error || 'Failed to delete account. Please try again.';
+            setDeleteError(errorMessage);
+        } finally {
+            setIsDeleting(false);
+        }
+    };
     
     const is_premiumuser = () => {
         if (!premiumuser) {
@@ -129,31 +188,69 @@ const UserProfile = () => {
                         animationType="fade"
                         transparent={true}
                         visible={modaldeleteaccount}
-                        onRequestClose={() => setModalDeleteAccount(false)}>
+                        onRequestClose={handleCloseDeleteModal}>
 
                         <View className="flex-1 bg-black/50 justify-center items-center">
                             <View className="bg-white rounded-xl p-6 w-4/5 max-w-sm shadow-lg">
-                                <Text className="text-base text-center mb-6 text-gray-800 m-4">
-                                    Are you sure you want to delete your account?
+                                <Text className="text-lg font-bold text-center mb-2 text-red-600">
+                                    Delete Account
                                 </Text>
+                                <Text className="text-sm text-center mb-4 text-gray-600">
+                                    This action is permanent and cannot be undone. All your data will be deleted.
+                                </Text>
+
+                                {/* Error Message */}
+                                {deleteError ? (
+                                    <View className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">
+                                        <Text className="text-red-600 text-sm text-center">{deleteError}</Text>
+                                    </View>
+                                ) : null}
+
+                                {/* Password Input */}
+                                <TextInput
+                                    className="border border-gray-300 rounded-lg px-4 py-3 mb-3 text-sm"
+                                    placeholder="Enter your password"
+                                    placeholderTextColor="#9ca3af"
+                                    secureTextEntry
+                                    value={deletePassword}
+                                    onChangeText={setDeletePassword}
+                                    editable={!isDeleting}
+                                />
+
+                                {/* Confirmation Input */}
+                                <TextInput
+                                    className="border border-gray-300 rounded-lg px-4 py-3 mb-4 text-sm"
+                                    placeholder="Type DELETE to confirm"
+                                    placeholderTextColor="#9ca3af"
+                                    value={deleteConfirmation}
+                                    onChangeText={setDeleteConfirmation}
+                                    autoCapitalize="characters"
+                                    editable={!isDeleting}
+                                />
 
                                 <View className="flex-row gap-3">
                                     <TouchableOpacity
                                         className="flex-1 bg-gray-400 py-3 rounded-lg items-center"
-                                        onPress={() => setModalDeleteAccount(false)}
+                                        onPress={handleCloseDeleteModal}
+                                        disabled={isDeleting}
                                     >
                                         <Text className="text-white text-base font-semibold">
-                                        No
+                                        Cancel
                                         </Text>
                                     </TouchableOpacity>
 
                                     <TouchableOpacity
                                         className="flex-1 bg-red-600 py-3 rounded-lg items-center"
                                         onPress={handleDeleteAccount}
+                                        disabled={isDeleting}
                                     >
-                                        <Text className="text-white text-base font-semibold">
-                                        Yes
-                                        </Text>
+                                        {isDeleting ? (
+                                            <ActivityIndicator color="#ffffff" size="small" />
+                                        ) : (
+                                            <Text className="text-white text-base font-semibold">
+                                            Delete
+                                            </Text>
+                                        )}
                                     </TouchableOpacity>
                                 </View>
                             </View>

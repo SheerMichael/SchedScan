@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
-import { Download } from 'lucide-react-native';
+import { Download, Trash2 } from 'lucide-react-native';
 import { Course } from '../services/courseService';
 
 interface SchedulePreviewCardProps {
@@ -11,6 +11,7 @@ interface SchedulePreviewCardProps {
   isActive: boolean;
   onApplyReminders: () => void;
   onDownload: () => void;
+  onDelete?: () => void;
 }
 
 const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
@@ -21,6 +22,7 @@ const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
   isActive,
   onApplyReminders,
   onDownload,
+  onDelete,
 }) => {
   // Create weekly grid structure
   const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thurs', 'Fri', 'Sat'];
@@ -117,9 +119,16 @@ const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
           <Text className="text-sm text-gray-600 mt-1">{title}</Text>
           <Text className="text-xs text-gray-400">{formatDate(uploadDate)}</Text>
         </View>
-        <TouchableOpacity onPress={onDownload}>
-          <Download size={28} color="#990100" />
-        </TouchableOpacity>
+        <View className="flex-row items-center gap-3">
+          <TouchableOpacity onPress={onDownload}>
+            <Download size={26} color="#990100" />
+          </TouchableOpacity>
+          {onDelete && (
+            <TouchableOpacity onPress={onDelete}>
+              <Trash2 size={24} color="#dc2626" />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {/* Calendar Grid Preview */}

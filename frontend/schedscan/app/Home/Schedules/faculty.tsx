@@ -79,6 +79,36 @@ const FacultySchedule = () => {
     }
   };
 
+  const handleDeleteSchedule = async (schedule: SavedSchedule) => {
+    Alert.alert(
+      'Delete Schedule',
+      `Are you sure you want to delete "${schedule.title}"?${schedule.isActive ? '\n\nThis is your currently active schedule. Deleting it will remove it from your calendar.' : ''}`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await scheduleStorageService.deleteSchedule(schedule.id, 'faculty', user!.id);
+              
+              // Reload schedules to update UI
+              await loadSchedules();
+              
+              Alert.alert('Success', 'Schedule deleted successfully');
+            } catch (error) {
+              console.error('Error deleting schedule:', error);
+              Alert.alert('Error', 'Failed to delete schedule. Please try again.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const handleDownload = async (scheduleId: string | number, scheduleTitle: string = 'schedule') => {
     console.log(`Downloading timetable for schedule ${scheduleId}`);
     
@@ -167,6 +197,7 @@ const FacultySchedule = () => {
               isActive={schedule.isActive}
               onApplyReminders={() => handleApplyReminders(schedule.id)}
               onDownload={() => handleDownload(schedule.id, schedule.title)}
+              onDelete={() => handleDeleteSchedule(schedule)}
             />
           ))} 
         </ScrollView>

@@ -30,8 +30,12 @@ export default function SchedScanApp() {
 
   type ScheduleItem = {
     title: string;
+    subjectName: string;
     time: string;
+    startTime: string;
+    endTime: string;
     location: string;
+    day: string;
     priority_level: string;
   };
   
@@ -375,8 +379,12 @@ const Attending = ({ size = 24 }) => (
     // Convert Course[] to ScheduleItem[]
     const scheduleItems: ScheduleItem[] = sortedCourses.map(course => ({
       title: course.subject_code,
+      subjectName: course.subject_name || '',
       time: `${course.start_time} - ${course.end_time}`,
+      startTime: course.start_time,
+      endTime: course.end_time,
       location: course.location || '',
+      day: course.day,
       priority_level: 'Class',
     }));
 
@@ -465,8 +473,12 @@ const Attending = ({ size = 24 }) => (
       })
       .map(course => ({
         title: course.subject_code,
+        subjectName: course.subject_name || '',
         time: `${course.start_time} - ${course.end_time}`,
+        startTime: course.start_time,
+        endTime: course.end_time,
         location: course.location || '',
+        day: course.day,
         priority_level: 'Class',
       }));
 
@@ -518,21 +530,25 @@ const Attending = ({ size = 24 }) => (
           {/* Classes Today */}
           <View className="flex-1 bg-white rounded-xl p-4 items-center border border-red-200 mx-1">
             <Classes_Today size={24}/>
-            <Text className="text-3xl font-bold text-primary-600">0</Text>
+            <Text className="text-3xl font-bold text-primary-600">{daySchedule.length}</Text>
             <Text className="text-sm text-gray-500">Classes Today</Text>
           </View>
 
-          {/* Teaching */}
+          {/* Teaching - shows count for faculty schedules */}
           <View className="flex-1 bg-white rounded-xl p-4 items-center border border-red-200 mx-1">
             <Teaching size={24}/>
-            <Text className="text-3xl font-bold text-primary-600">0</Text>
+            <Text className="text-3xl font-bold text-primary-600">
+              {activeSchedule?.uploadType === 'faculty' ? daySchedule.length : 0}
+            </Text>
             <Text className="text-sm text-gray-500">Teaching</Text>
           </View>
 
-          {/* Attending */}
+          {/* Attending - shows count for student schedules */}
           <View className="flex-1 bg-white rounded-xl p-4 items-center border border-red-200 mx-1">
             <Attending size={24}/>
-            <Text className="text-3xl font-bold text-primary-600">0</Text>
+            <Text className="text-3xl font-bold text-primary-600">
+              {activeSchedule?.uploadType === 'student' ? daySchedule.length : 0}
+            </Text>
             <Text className="text-sm text-gray-500">Attending</Text>
           </View>
         </View>
@@ -657,16 +673,22 @@ const Attending = ({ size = 24 }) => (
                   router.push({
                     pathname: "/Home/Subject/subjectdetails",
                     params: {
-                      title: item.title
+                      title: item.title,
+                      subjectName: item.subjectName,
+                      time: item.time,
+                      startTime: item.startTime,
+                      endTime: item.endTime,
+                      location: item.location,
+                      day: item.day,
                     }
                   });
                 }}
                 className="bg-white p-4 mb-3 rounded-xl shadow border-l-4 border-red-500"
               >
                 <Text className="font-bold text-base text-black">{item.title}</Text>
+                {/* Subject name hidden until OCR properly extracts it */}
                 <Text className="text-sm text-gray-600">{item.time}</Text>
                 <Text className="text-sm text-gray-600">{item.location}</Text>
-                <Text className="text-sm text-gray-600">{item.priority_level}</Text>
               </TouchableOpacity>
             ))
           )}

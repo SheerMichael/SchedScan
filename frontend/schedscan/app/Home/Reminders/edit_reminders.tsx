@@ -432,7 +432,7 @@ const EditRemindersScreen = () => {
                     />
                 </View>
                 
-                <View className='mb-4'>
+                {/* <View className='mb-4'>
                     <Text className="mb-1 font-semibold text-gray-500">Description</Text>
                     <TextInput
                         placeholder='Add Description'
@@ -442,7 +442,7 @@ const EditRemindersScreen = () => {
                         textAlignVertical="top"
                         numberOfLines={4} 
                     />
-                </View>
+                </View> */}
             
                 <View>
                     <Text className="mb-1 font-semibold text-gray-500">Time: </Text>
@@ -492,7 +492,7 @@ const EditRemindersScreen = () => {
                     />
                 </View> 
                 
-                <View className='mb-4' style={{ zIndex: openNotification ? Z.highest : Z.low,  position: "relative" }}>
+                {/* <View className='mb-4' style={{ zIndex: openNotification ? Z.highest : Z.low,  position: "relative" }}>
                     <Text className="mb-1 font-semibold text-gray-500">Notification</Text>
                     <DropDownPicker
                         open={openNotification}
@@ -592,7 +592,7 @@ const EditRemindersScreen = () => {
                         }}
                         dropDownDirection='TOP'
                     />
-                </View>
+                </View> */}
             </ScrollView>
 
             <View className=" bg-white px-4 py-3 flex-row justify-between items-center">
