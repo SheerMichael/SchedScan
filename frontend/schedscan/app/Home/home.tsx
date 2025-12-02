@@ -650,17 +650,25 @@ const Attending = ({ size = 24 }) => (
           ) : daySchedule.length === 0 ? (
             <Text className="text-gray-500">No classes / events today</Text>
           ) : (
-            <View>
-              {daySchedule.map((item, index) => (
-                <DraggableCard
-                  key={`${item.title}-${index}`}
-                  item={item}
-                  index={index}
-                  onDragEnd={handleDragEnd}
-                  totalItems={daySchedule.length}
-                />
-              ))}
-            </View>
+            daySchedule.map((item, index) => (
+              <TouchableOpacity
+                key={`${item.title}-${index}`}
+                onPress={() => {
+                  router.push({
+                    pathname: "/Home/Subject/subjectdetails",
+                    params: {
+                      title: item.title
+                    }
+                  });
+                }}
+                className="bg-white p-4 mb-3 rounded-xl shadow border-l-4 border-red-500"
+              >
+                <Text className="font-bold text-base text-black">{item.title}</Text>
+                <Text className="text-sm text-gray-600">{item.time}</Text>
+                <Text className="text-sm text-gray-600">{item.location}</Text>
+                <Text className="text-sm text-gray-600">{item.priority_level}</Text>
+              </TouchableOpacity>
+            ))
           )}
         </View>
 
