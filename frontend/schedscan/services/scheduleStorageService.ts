@@ -282,6 +282,31 @@ export const scheduleStorageService = {
   },
 
   /**
+   * Download timetable image for a schedule
+   * Returns the URL to download the timetable image
+   */
+  getTimetableDownloadUrl: (scheduleId: number | string): string => {
+    // Get the base URL from api instance
+    const baseUrl = api.defaults.baseURL || '';
+    return `${baseUrl}/schedules/${scheduleId}/timetable/`;
+  },
+
+  /**
+   * Download timetable as blob (for saving to device)
+   */
+  downloadTimetable: async (scheduleId: number | string): Promise<Blob> => {
+    try {
+      const response = await api.get(`/schedules/${scheduleId}/timetable/`, {
+        responseType: 'blob',
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error('Error downloading timetable:', error.response?.data || error.message);
+      throw error;
+    }
+  },
+
+  /**
    * Clear all local schedule data (for logout - local rate limit data only)
    */
   clearAllSchedules: async (userId: number): Promise<void> => {

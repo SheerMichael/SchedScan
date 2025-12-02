@@ -111,6 +111,12 @@ class Schedule(models.Model):
         default=False,
         help_text="Whether this is the currently active schedule for the user"
     )
+    timetable_image = models.ImageField(
+        upload_to='timetables/',
+        null=True,
+        blank=True,
+        help_text="Auto-generated timetable image for this schedule"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     

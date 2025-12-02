@@ -27,4 +27,5 @@ urlpatterns = [
     path('schedules/clear-active/', views.ScheduleClearActiveView.as_view(), name='schedule_clear_active'),
     path('schedules/<int:pk>/', views.ScheduleDetailView.as_view(), name='schedule_detail'),
     path('schedules/<int:pk>/set-active/', views.ScheduleSetActiveView.as_view(), name='schedule_set_active'),
+    path('schedules/<int:pk>/timetable/', views.ScheduleTimetableDownloadView.as_view(), name='schedule_timetable_download'),
 ]

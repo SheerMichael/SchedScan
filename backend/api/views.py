@@ -626,3 +626,69 @@ class ScheduleClearActiveView(APIView):
             {"message": "Active schedule cleared"},
             status=status.HTTP_200_OK
         )
+
+
+class ScheduleTimetableDownloadView(APIView):
+    """
+    API endpoint to download the generated timetable image for a schedule.
+    
+    GET /api/schedules/<id>/timetable/
+    Headers: Authorization: Bearer <access_token>
+    
+    Response: PNG image file download
+    
+    If timetable doesn't exist, it will be generated on-demand.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, pk):
+        from django.http import FileResponse, HttpResponse
+        from .utils.timetable_generator import generate_timetable_image
+        
+        try:
+            schedule = Schedule.objects.get(pk=pk, user=request.user)
+        except Schedule.DoesNotExist:
+            return Response(
+                {"error": "Schedule not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check if timetable image exists
+        if schedule.timetable_image and schedule.timetable_image.name:
+            try:
+                # Return existing file
+                response = FileResponse(
+                    schedule.timetable_image.open('rb'),
+                    content_type='image/png'
+                )
+                filename = f"timetable_{schedule.title.replace(' ', '_')}.png"
+                response['Content-Disposition'] = f'attachment; filename="{filename}"'
+                return response
+            except Exception as e:
+                logger.warning(f"Could not open existing timetable file: {e}")
+        
+        # Generate on-demand if not exists
+        try:
+            courses_data = list(schedule.courses.values(
+                'subject_code', 'subject_name', 'start_time', 
+                'end_time', 'day', 'location'
+            ))
+            
+            image_buffer = generate_timetable_image(
+                courses=courses_data,
+                title=schedule.title,
+                upload_type=schedule.upload_type,
+                user_name=request.user.get_full_name()
+            )
+            
+            response = HttpResponse(image_buffer.getvalue(), content_type='image/png')
+            filename = f"timetable_{schedule.title.replace(' ', '_')}.png"
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            return response
+            
+        except Exception as e:
+            logger.error(f"Error generating timetable: {str(e)}")
+            return Response(
+                {"error": "Failed to generate timetable", "details": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

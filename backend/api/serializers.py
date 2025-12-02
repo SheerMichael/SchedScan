@@ -4,6 +4,7 @@ from django.contrib.auth.password_validation import validate_password
 from rest_framework.validators import UniqueValidator
 from rest_framework_simplejwt.tokens import RefreshToken
 from .models import Course, Schedule
+from .utils.timetable_generator import generate_and_save_timetable
 
 User = get_user_model()
 
@@ -197,6 +198,7 @@ class ScheduleSerializer(serializers.ModelSerializer):
     Supports creating schedules with courses in a single request.
     """
     courses = WritableCourseSerializer(many=True, required=False)
+    timetable_image = serializers.ImageField(read_only=True)
     
     class Meta:
         model = Schedule
@@ -206,14 +208,15 @@ class ScheduleSerializer(serializers.ModelSerializer):
             'upload_type',
             'is_active',
             'courses',
+            'timetable_image',
             'created_at',
             'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'timetable_image', 'created_at', 'updated_at']
     
     def create(self, validated_data):
         """
-        Create a schedule with nested courses.
+        Create a schedule with nested courses and generate timetable image.
         """
         courses_data = validated_data.pop('courses', [])
         user = self.context['request'].user
@@ -232,11 +235,49 @@ class ScheduleSerializer(serializers.ModelSerializer):
                 **course_data
             )
         
+        # Generate timetable image
+        self._generate_timetable(schedule, courses_data, user)
+        
         return schedule
+    
+    def _generate_timetable(self, schedule, courses_data, user):
+        """
+        Generate and save timetable image for the schedule.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            # Convert courses_data to list of dicts if needed
+            if not courses_data:
+                # If no courses_data passed, get from schedule
+                courses_data = list(schedule.courses.values(
+                    'subject_code', 'subject_name', 'start_time', 
+                    'end_time', 'day', 'location'
+                ))
+            
+            # Generate and save the timetable image
+            image_path = generate_and_save_timetable(
+                schedule_id=schedule.id,
+                courses=courses_data,
+                title=schedule.title,
+                upload_type=schedule.upload_type,
+                user_id=user.id,
+                user_name=user.get_full_name()
+            )
+            
+            # Update schedule with image path
+            schedule.timetable_image = image_path
+            schedule.save(update_fields=['timetable_image'])
+            
+            logger.info(f"Generated timetable for schedule {schedule.id}: {image_path}")
+        except Exception as e:
+            logger.error(f"Failed to generate timetable for schedule {schedule.id}: {str(e)}")
     
     def update(self, instance, validated_data):
         """
         Update a schedule and optionally its courses.
+        Regenerates timetable image when courses are updated.
         """
         import logging
         logger = logging.getLogger(__name__)
@@ -278,6 +319,9 @@ class ScheduleSerializer(serializers.ModelSerializer):
                 created_count += 1
             
             logger.info(f"ScheduleSerializer.update: Created {created_count} courses")
+            
+            # Regenerate timetable image
+            self._generate_timetable(instance, courses_data, user)
         
         return instance
 
