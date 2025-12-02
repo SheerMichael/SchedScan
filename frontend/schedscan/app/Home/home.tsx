@@ -509,7 +509,8 @@ const Attending = ({ size = 24 }) => (
             <Text className="text-gray-500">No classes / events today</Text>
           ) : (
             daySchedule.map((item, index) => (
-            <View
+            <TouchableOpacity
+              onPress={() => router.push('/Home/Subject/subjectdetails')} /* This still needs the title or the id for the subjectdetails page*/
               key={index}
               className={` bg-white p-4 mb-3 rounded-xl shadow border-l-4 ${item.priority_level === "Holiday" ? "border-green-600" : "border-red-500"}`}
             >
@@ -517,7 +518,7 @@ const Attending = ({ size = 24 }) => (
               <Text className="text-sm text-gray-600">{item.time}</Text>
               <Text className="text-sm text-gray-600">{item.location}</Text>
               <Text className="text-sm text-gray-600">{item.priority_level}</Text>
-            </View>
+            </TouchableOpacity>
             ))
           )}
         </View>
