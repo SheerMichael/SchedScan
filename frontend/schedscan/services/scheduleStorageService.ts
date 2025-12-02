@@ -1,30 +1,97 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import api from './api';
 import { Course } from './courseService';
 
+/**
+ * Interface for schedule data as returned by the backend API
+ */
 export interface SavedSchedule {
-  id: string;
+  id: number;
   title: string;
   courses: Course[];
   uploadType: 'student' | 'faculty';
   uploadDate: string;
-  isActive: boolean; // Only one schedule can be active at a time
+  isActive: boolean;
 }
 
-// Rate limiting constants
-const UPLOAD_COOLDOWN_MS = 5 * 1000; // 5 seconds cooldown (anti-spam)
+/**
+ * Interface matching backend API response format
+ */
+interface APISchedule {
+  id: number;
+  title: string;
+  upload_type: 'student' | 'faculty';
+  is_active: boolean;
+  courses: APICourse[];
+  created_at: string;
+  updated_at: string;
+}
+
+interface APICourse {
+  id: number;
+  subject_code: string;
+  subject_name: string;
+  start_time: string;
+  end_time: string;
+  day: string;
+  location: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface APIScheduleListItem {
+  id: number;
+  title: string;
+  upload_type: 'student' | 'faculty';
+  is_active: boolean;
+  course_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// Rate limiting constants (kept local for anti-spam)
+const UPLOAD_COOLDOWN_MS = 5 * 1000; // 5 seconds cooldown
 const LAST_UPLOAD_KEY = 'last_upload_timestamp';
 
-const getStorageKey = (uploadType: 'student' | 'faculty', userId: number): string => {
-  return `schedules_${uploadType}_${userId}`;
-};
+/**
+ * Transform API response to frontend format
+ */
+const transformAPISchedule = (apiSchedule: APISchedule): SavedSchedule => ({
+  id: apiSchedule.id,
+  title: apiSchedule.title,
+  uploadType: apiSchedule.upload_type,
+  isActive: apiSchedule.is_active,
+  uploadDate: apiSchedule.created_at,
+  courses: apiSchedule.courses.map(course => ({
+    id: course.id,
+    user: 0, // Not needed on frontend
+    subject_code: course.subject_code,
+    subject_name: course.subject_name,
+    start_time: course.start_time,
+    end_time: course.end_time,
+    day: course.day,
+    location: course.location,
+    created_at: course.created_at || '',
+    updated_at: course.updated_at || '',
+  })),
+});
 
-const getActiveScheduleKey = (userId: number): string => {
-  return `active_schedule_${userId}`;
-};
+/**
+ * Transform frontend courses to API format (for creating schedules)
+ */
+const transformCoursesForAPI = (courses: Course[]): Omit<APICourse, 'id' | 'created_at' | 'updated_at'>[] => 
+  courses.map(course => ({
+    subject_code: course.subject_code,
+    subject_name: course.subject_name,
+    start_time: course.start_time,
+    end_time: course.end_time,
+    day: course.day,
+    location: course.location,
+  }));
 
 export const scheduleStorageService = {
   /**
-   * Check if user can upload (rate limiting - 1 upload per minute)
+   * Check if user can upload (rate limiting - local only for anti-spam)
    */
   canUpload: async (userId: number): Promise<{ allowed: boolean; remainingSeconds: number }> => {
     try {
@@ -47,12 +114,12 @@ export const scheduleStorageService = {
       return { allowed: false, remainingSeconds: Math.ceil(remainingMs / 1000) };
     } catch (error) {
       console.error('Error checking upload rate limit:', error);
-      return { allowed: true, remainingSeconds: 0 }; // Allow on error
+      return { allowed: true, remainingSeconds: 0 };
     }
   },
 
   /**
-   * Record an upload timestamp for rate limiting
+   * Record an upload timestamp for rate limiting (local only)
    */
   recordUpload: async (userId: number): Promise<void> => {
     try {
@@ -62,8 +129,9 @@ export const scheduleStorageService = {
       console.error('Error recording upload timestamp:', error);
     }
   },
+
   /**
-   * Save a new schedule (inactive by default)
+   * Save a new schedule to the backend API
    */
   saveSchedule: async (
     title: string,
@@ -73,215 +141,194 @@ export const scheduleStorageService = {
     setAsActive: boolean = false
   ): Promise<SavedSchedule> => {
     try {
-      const newSchedule: SavedSchedule = {
-        id: Date.now().toString(),
+      const response = await api.post('/schedules/', {
         title,
-        courses,
-        uploadType,
-        uploadDate: new Date().toISOString(),
-        isActive: setAsActive,
-      };
-
-      const key = getStorageKey(uploadType, userId);
-      let existingSchedules = await scheduleStorageService.getSchedules(uploadType, userId);
+        upload_type: uploadType,
+        is_active: setAsActive,
+        courses: transformCoursesForAPI(courses),
+      });
       
-      // If setting as active, deactivate all other schedules
-      if (setAsActive) {
-        existingSchedules = existingSchedules.map(s => ({ ...s, isActive: false }));
-        // Also save as the active schedule reference
-        await scheduleStorageService.setActiveSchedule(newSchedule.id, userId);
-      }
-      
-      const updatedSchedules = [...existingSchedules, newSchedule];
-
-      await AsyncStorage.setItem(key, JSON.stringify(updatedSchedules));
-      return newSchedule;
-    } catch (error) {
-      console.error('Error saving schedule:', error);
+      console.log('Schedule saved to backend:', response.data);
+      return transformAPISchedule(response.data);
+    } catch (error: any) {
+      console.error('Error saving schedule to backend:', error.response?.data || error.message);
       throw error;
     }
   },
 
   /**
-   * Get all schedules for a specific type
+   * Get all schedules for a specific type from the backend API
    */
   getSchedules: async (uploadType: 'student' | 'faculty', userId: number): Promise<SavedSchedule[]> => {
     try {
-      const key = getStorageKey(uploadType, userId);
-      const data = await AsyncStorage.getItem(key);
-      return data ? JSON.parse(data) : [];
-    } catch (error) {
-      console.error('Error getting schedules:', error);
+      const response = await api.get(`/schedules/?upload_type=${uploadType}`);
+      const schedules: APIScheduleListItem[] = response.data;
+      
+      // For list view, we need to fetch full details for each schedule
+      // Or we can return minimal data - let's fetch full details
+      const fullSchedules = await Promise.all(
+        schedules.map(async (s) => {
+          const detailResponse = await api.get(`/schedules/${s.id}/`);
+          return transformAPISchedule(detailResponse.data);
+        })
+      );
+      
+      return fullSchedules;
+    } catch (error: any) {
+      console.error('Error getting schedules from backend:', error.response?.data || error.message);
       return [];
     }
   },
 
   /**
-   * Delete a schedule by ID
+   * Delete a schedule by ID from the backend API
    */
-  deleteSchedule: async (id: string, uploadType: 'student' | 'faculty', userId: number): Promise<void> => {
+  deleteSchedule: async (id: string | number, uploadType: 'student' | 'faculty', userId: number): Promise<void> => {
     try {
-      const key = getStorageKey(uploadType, userId);
-      const existingSchedules = await scheduleStorageService.getSchedules(uploadType, userId);
-      const updatedSchedules = existingSchedules.filter(schedule => schedule.id !== id);
-      await AsyncStorage.setItem(key, JSON.stringify(updatedSchedules));
-    } catch (error) {
-      console.error('Error deleting schedule:', error);
+      await api.delete(`/schedules/${id}/`);
+      console.log('Schedule deleted from backend:', id);
+    } catch (error: any) {
+      console.error('Error deleting schedule from backend:', error.response?.data || error.message);
       throw error;
     }
   },
 
   /**
-   * Update a schedule
+   * Update a schedule on the backend API
    */
   updateSchedule: async (
-    id: string,
+    id: string | number,
     uploadType: 'student' | 'faculty',
     userId: number,
     updates: Partial<SavedSchedule>
   ): Promise<void> => {
     try {
-      const key = getStorageKey(uploadType, userId);
-      const existingSchedules = await scheduleStorageService.getSchedules(uploadType, userId);
-      const updatedSchedules = existingSchedules.map(schedule =>
-        schedule.id === id ? { ...schedule, ...updates } : schedule
-      );
-      await AsyncStorage.setItem(key, JSON.stringify(updatedSchedules));
-    } catch (error) {
-      console.error('Error updating schedule:', error);
+      const apiUpdates: any = {};
+      if (updates.title !== undefined) apiUpdates.title = updates.title;
+      if (updates.uploadType !== undefined) apiUpdates.upload_type = updates.uploadType;
+      if (updates.isActive !== undefined) apiUpdates.is_active = updates.isActive;
+      if (updates.courses !== undefined) {
+        apiUpdates.courses = transformCoursesForAPI(updates.courses);
+        console.log('updateSchedule: Sending', apiUpdates.courses.length, 'courses');
+        console.log('updateSchedule: First course:', JSON.stringify(apiUpdates.courses[0]));
+      }
+      
+      console.log('updateSchedule: PATCH /schedules/' + id + '/ with:', JSON.stringify(apiUpdates).substring(0, 500));
+      await api.patch(`/schedules/${id}/`, apiUpdates);
+      console.log('Schedule updated on backend:', id);
+    } catch (error: any) {
+      console.error('Error updating schedule on backend:', error.response?.data || error.message);
       throw error;
     }
   },
 
   /**
-   * Get a single schedule by ID
+   * Get a single schedule by ID from the backend API
    */
   getScheduleById: async (
-    id: string,
+    id: string | number,
     uploadType: 'student' | 'faculty',
     userId: number
   ): Promise<SavedSchedule | null> => {
     try {
-      const schedules = await scheduleStorageService.getSchedules(uploadType, userId);
-      return schedules.find(schedule => schedule.id === id) || null;
-    } catch (error) {
-      console.error('Error getting schedule by ID:', error);
+      const response = await api.get(`/schedules/${id}/`);
+      return transformAPISchedule(response.data);
+    } catch (error: any) {
+      console.error('Error getting schedule by ID from backend:', error.response?.data || error.message);
       return null;
     }
   },
 
   /**
-   * Set a schedule as active (deactivates all others)
+   * Set a schedule as active (deactivates all others) via backend API
    */
-  setActiveSchedule: async (scheduleId: string, userId: number): Promise<void> => {
+  setActiveSchedule: async (scheduleId: string | number, userId: number): Promise<void> => {
     try {
-      // Store active schedule ID reference
-      const activeKey = getActiveScheduleKey(userId);
-      await AsyncStorage.setItem(activeKey, scheduleId);
-      
-      // Update all schedules to reflect active status
-      for (const uploadType of ['student', 'faculty'] as const) {
-        const key = getStorageKey(uploadType, userId);
-        const schedules = await scheduleStorageService.getSchedules(uploadType, userId);
-        const updatedSchedules = schedules.map(s => ({
-          ...s,
-          isActive: s.id === scheduleId,
-        }));
-        await AsyncStorage.setItem(key, JSON.stringify(updatedSchedules));
-      }
-    } catch (error) {
-      console.error('Error setting active schedule:', error);
+      await api.post(`/schedules/${scheduleId}/set-active/`);
+      console.log('Schedule set as active:', scheduleId);
+    } catch (error: any) {
+      console.error('Error setting active schedule:', error.response?.data || error.message);
       throw error;
     }
   },
 
   /**
-   * Get the currently active schedule
+   * Get the currently active schedule from the backend API
    */
   getActiveSchedule: async (userId: number): Promise<SavedSchedule | null> => {
     try {
-      // Check both student and faculty schedules for active one
-      const studentSchedules = await scheduleStorageService.getSchedules('student', userId);
-      const facultySchedules = await scheduleStorageService.getSchedules('faculty', userId);
-      
-      const allSchedules = [...studentSchedules, ...facultySchedules];
-      return allSchedules.find(s => s.isActive) || null;
-    } catch (error) {
-      console.error('Error getting active schedule:', error);
+      const response = await api.get('/schedules/active/');
+      if (response.data) {
+        return transformAPISchedule(response.data);
+      }
+      return null;
+    } catch (error: any) {
+      console.error('Error getting active schedule from backend:', error.response?.data || error.message);
       return null;
     }
   },
 
   /**
-   * Clear active schedule (deactivate current)
+   * Clear active schedule (deactivate current) via backend API
    */
   clearActiveSchedule: async (userId: number): Promise<void> => {
     try {
-      const activeKey = getActiveScheduleKey(userId);
-      await AsyncStorage.removeItem(activeKey);
-      
-      // Deactivate all schedules
-      for (const uploadType of ['student', 'faculty'] as const) {
-        const key = getStorageKey(uploadType, userId);
-        const schedules = await scheduleStorageService.getSchedules(uploadType, userId);
-        const updatedSchedules = schedules.map(s => ({ ...s, isActive: false }));
-        await AsyncStorage.setItem(key, JSON.stringify(updatedSchedules));
-      }
-    } catch (error) {
-      console.error('Error clearing active schedule:', error);
+      await api.post('/schedules/clear-active/');
+      console.log('Active schedule cleared');
+    } catch (error: any) {
+      console.error('Error clearing active schedule:', error.response?.data || error.message);
       throw error;
     }
   },
 
   /**
-   * Clear all schedules for a specific user (useful for logout)
+   * Clear all local schedule data (for logout - local rate limit data only)
    */
   clearAllSchedules: async (userId: number): Promise<void> => {
     try {
-      const studentKey = getStorageKey('student', userId);
-      const facultyKey = getStorageKey('faculty', userId);
+      // Only clear local rate limiting data
+      const key = `${LAST_UPLOAD_KEY}_${userId}`;
+      await AsyncStorage.removeItem(key);
       
-      // Also clear old legacy keys (without user ID) for backward compatibility
-      const legacyStudentKey = 'schedules_student';
-      const legacyFacultyKey = 'schedules_faculty';
-      
+      // Clear legacy keys if they exist
       await AsyncStorage.multiRemove([
-        studentKey, 
-        facultyKey,
-        legacyStudentKey,
-        legacyFacultyKey
+        'schedules_student',
+        'schedules_faculty',
+        `schedules_student_${userId}`,
+        `schedules_faculty_${userId}`,
+        `active_schedule_${userId}`,
       ]);
+      
+      console.log('Local schedule data cleared');
     } catch (error) {
-      console.error('Error clearing schedules:', error);
+      console.error('Error clearing local schedule data:', error);
       throw error;
     }
   },
 
   /**
-   * Migrate old schedules to user-specific storage
-   * Called on app startup/login to move legacy data
+   * Migrate legacy local schedules to backend
+   * Called on login to sync any local-only data to the server
    */
   migrateLegacySchedules: async (userId: number): Promise<void> => {
     try {
-      // Check for old legacy keys
-      const legacyStudentData = await AsyncStorage.getItem('schedules_student');
-      const legacyFacultyData = await AsyncStorage.getItem('schedules_faculty');
-
-      // If legacy data exists, we'll clear it (don't migrate to avoid data leakage)
-      const keysToRemove: string[] = [];
+      // Check for old legacy keys and clear them
+      const legacyKeys = [
+        'schedules_student',
+        'schedules_faculty',
+        `schedules_student_${userId}`,
+        `schedules_faculty_${userId}`,
+      ];
       
-      if (legacyStudentData) {
-        keysToRemove.push('schedules_student');
+      for (const key of legacyKeys) {
+        const data = await AsyncStorage.getItem(key);
+        if (data) {
+          console.log(`Found legacy data at ${key}, clearing...`);
+          await AsyncStorage.removeItem(key);
+        }
       }
       
-      if (legacyFacultyData) {
-        keysToRemove.push('schedules_faculty');
-      }
-
-      if (keysToRemove.length > 0) {
-        await AsyncStorage.multiRemove(keysToRemove);
-        console.log('Cleared legacy schedule data');
-      }
+      console.log('Legacy schedule migration complete');
     } catch (error) {
       console.error('Error migrating legacy schedules:', error);
     }

@@ -43,7 +43,7 @@ const FacultySchedule = () => {
     </Svg>
   );
 
-  const handleApplyReminders = async (scheduleId: string) => {
+  const handleApplyReminders = async (scheduleId: string | number) => {
     if (!user?.id) {
       Alert.alert('Error', 'User not authenticated');
       return;
@@ -75,7 +75,7 @@ const FacultySchedule = () => {
     }
   };
 
-  const handleDownload = (scheduleId: string) => {
+  const handleDownload = (scheduleId: string | number) => {
     console.log(`Downloading schedule ${scheduleId}`);
     Alert.alert('Download', 'Download functionality coming soon!');
   };

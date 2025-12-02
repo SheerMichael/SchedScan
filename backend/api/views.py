@@ -17,9 +17,11 @@ from .serializers import (
     LoginSerializer,
     UserSerializer,
     UserWithTokenSerializer,
-    CourseSerializer
+    CourseSerializer,
+    ScheduleSerializer,
+    ScheduleListSerializer
 )
-from .models import Course
+from .models import Course, Schedule
 from .utils.ocr import get_cor_extractor
 
 User = get_user_model()
@@ -434,3 +436,193 @@ class DeleteAllCoursesView(APIView):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+# ============== Schedule CRUD Views ==============
+
+class ScheduleListCreateView(generics.ListCreateAPIView):
+    """
+    API endpoint to list all schedules or create a new schedule.
+    
+    GET /api/schedules/
+    Headers: Authorization: Bearer <access_token>
+    Query params:
+        - upload_type: Filter by 'student' or 'faculty' (optional)
+    
+    Response: [
+        {
+            "id": 1,
+            "title": "1st Semester 2025",
+            "upload_type": "student",
+            "is_active": true,
+            "course_count": 8,
+            "created_at": "2025-12-01T...",
+            "updated_at": "2025-12-01T..."
+        },
+        ...
+    ]
+    
+    POST /api/schedules/
+    Headers: Authorization: Bearer <access_token>
+    Request body: {
+        "title": "1st Semester 2025",
+        "upload_type": "student",
+        "is_active": true,
+        "courses": [
+            {
+                "subject_code": "BSCS125781",
+                "subject_name": "SOFTWARE ENGINEERING",
+                "start_time": "07:00AM",
+                "end_time": "09:00AM",
+                "day": "M",
+                "location": "LR7"
+            },
+            ...
+        ]
+    }
+    
+    Response: {
+        "id": 1,
+        "title": "1st Semester 2025",
+        "upload_type": "student",
+        "is_active": true,
+        "courses": [...],
+        "created_at": "2025-12-01T...",
+        "updated_at": "2025-12-01T..."
+    }
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return ScheduleSerializer
+        return ScheduleListSerializer
+    
+    def get_queryset(self):
+        queryset = Schedule.objects.filter(user=self.request.user)
+        upload_type = self.request.query_params.get('upload_type', None)
+        if upload_type:
+            queryset = queryset.filter(upload_type=upload_type)
+        return queryset
+
+
+class ScheduleDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    API endpoint to retrieve, update, or delete a specific schedule.
+    
+    GET /api/schedules/<id>/
+    Headers: Authorization: Bearer <access_token>
+    
+    Response: {
+        "id": 1,
+        "title": "1st Semester 2025",
+        "upload_type": "student",
+        "is_active": true,
+        "courses": [...],
+        "created_at": "2025-12-01T...",
+        "updated_at": "2025-12-01T..."
+    }
+    
+    PUT/PATCH /api/schedules/<id>/
+    Headers: Authorization: Bearer <access_token>
+    Request body: { "title": "Updated Title", "is_active": true, ... }
+    
+    DELETE /api/schedules/<id>/
+    Headers: Authorization: Bearer <access_token>
+    """
+    serializer_class = ScheduleSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        return Schedule.objects.filter(user=self.request.user)
+
+
+class ScheduleSetActiveView(APIView):
+    """
+    API endpoint to set a schedule as active (deactivates all others).
+    
+    POST /api/schedules/<id>/set-active/
+    Headers: Authorization: Bearer <access_token>
+    
+    Response: {
+        "message": "Schedule set as active",
+        "schedule": { ... }
+    }
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, pk):
+        try:
+            schedule = Schedule.objects.get(pk=pk, user=request.user)
+            
+            # Deactivate all other schedules
+            Schedule.objects.filter(user=request.user, is_active=True).update(is_active=False)
+            
+            # Activate this schedule
+            schedule.is_active = True
+            schedule.save()
+            
+            serializer = ScheduleSerializer(schedule)
+            
+            return Response(
+                {
+                    "message": "Schedule set as active",
+                    "schedule": serializer.data
+                },
+                status=status.HTTP_200_OK
+            )
+        except Schedule.DoesNotExist:
+            return Response(
+                {"error": "Schedule not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+
+class ScheduleActiveView(APIView):
+    """
+    API endpoint to get the currently active schedule.
+    
+    GET /api/schedules/active/
+    Headers: Authorization: Bearer <access_token>
+    
+    Response: {
+        "id": 1,
+        "title": "1st Semester 2025",
+        "upload_type": "student",
+        "is_active": true,
+        "courses": [...],
+        ...
+    }
+    
+    Returns null/empty if no active schedule.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        try:
+            schedule = Schedule.objects.get(user=request.user, is_active=True)
+            serializer = ScheduleSerializer(schedule)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Schedule.DoesNotExist:
+            return Response(None, status=status.HTTP_200_OK)
+
+
+class ScheduleClearActiveView(APIView):
+    """
+    API endpoint to clear the active schedule (deactivate current).
+    
+    POST /api/schedules/clear-active/
+    Headers: Authorization: Bearer <access_token>
+    
+    Response: {
+        "message": "Active schedule cleared"
+    }
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        Schedule.objects.filter(user=request.user, is_active=True).update(is_active=False)
+        return Response(
+            {"message": "Active schedule cleared"},
+            status=status.HTTP_200_OK
+        )
