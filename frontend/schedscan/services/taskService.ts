@@ -231,4 +231,29 @@ export const taskService = {
       console.error('Error clearing task caches:', error);
     }
   },
+
+  /**
+   * Get task counts for multiple subject codes.
+   * Returns a map of subject_code -> { total: number, incomplete: number }
+   */
+  getTaskCounts: async (subjectCodes: string[]): Promise<Record<string, { total: number; incomplete: number }>> => {
+    const counts: Record<string, { total: number; incomplete: number }> = {};
+    
+    await Promise.all(
+      subjectCodes.map(async (subjectCode) => {
+        try {
+          const tasks = await taskService.getTasks(subjectCode);
+          counts[subjectCode] = {
+            total: tasks.length,
+            incomplete: tasks.filter(t => !t.is_completed).length,
+          };
+        } catch (error) {
+          console.error(`Error getting task count for ${subjectCode}:`, error);
+          counts[subjectCode] = { total: 0, incomplete: 0 };
+        }
+      })
+    );
+    
+    return counts;
+  },
 };

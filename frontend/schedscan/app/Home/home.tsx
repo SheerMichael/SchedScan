@@ -5,6 +5,7 @@ import { router } from "expo-router";
 import { useAuth } from '../../context/AuthContext';
 import { Course } from '../../services/courseService';
 import { scheduleStorageService, SavedSchedule } from '../../services/scheduleStorageService';
+import { taskService } from '../../services/taskService';
 import { useFocusEffect } from '@react-navigation/native';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, { 
@@ -213,6 +214,7 @@ const Attending = ({ size = 24 }) => (
 );
 
   const [daySchedule, setDaySchedule] = useState<ScheduleItem[]>([]);
+  const [taskCounts, setTaskCounts] = useState<Record<string, { total: number; incomplete: number }>>({});
 
   // Handle drag end and reorder
   const handleDragEnd = (fromIndex: number, toIndex: number) => {
@@ -252,9 +254,17 @@ const Attending = ({ size = 24 }) => (
         if (selectedDay !== null) {
           updateDaySchedule(selectedDay, active.courses);
         }
+        
+        // Load task counts for all subjects
+        const subjectCodes = active.courses.map(c => c.subject_code);
+        if (subjectCodes.length > 0) {
+          const counts = await taskService.getTaskCounts(subjectCodes);
+          setTaskCounts(counts);
+        }
       } else {
         setCourses([]);
         setDaySchedule([]);
+        setTaskCounts({});
         console.log('No active schedule found');
       }
     } catch (error: any) {
@@ -685,10 +695,27 @@ const Attending = ({ size = 24 }) => (
                 }}
                 className="bg-white p-4 mb-3 rounded-xl shadow border-l-4 border-red-500"
               >
-                <Text className="font-bold text-base text-black">{item.title}</Text>
-                {/* Subject name hidden until OCR properly extracts it */}
-                <Text className="text-sm text-gray-600">{item.time}</Text>
-                <Text className="text-sm text-gray-600">{item.location}</Text>
+                <View className="flex-row justify-between items-start">
+                  <View className="flex-1">
+                    <Text className="font-bold text-base text-black">{item.title}</Text>
+                    {/* Subject name hidden until OCR properly extracts it */}
+                    <Text className="text-sm text-gray-600">{item.time}</Text>
+                    <Text className="text-sm text-gray-600">{item.location}</Text>
+                  </View>
+                  {taskCounts[item.title]?.total > 0 && (
+                    <View className="flex-row items-center bg-amber-100 px-2 py-1 rounded-full">
+                      <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2">
+                        <Path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                        <Path d="M9 12l2 2 4-4" />
+                      </Svg>
+                      <Text className="text-xs font-semibold text-amber-700 ml-1">
+                        {taskCounts[item.title]?.incomplete > 0 
+                          ? `${taskCounts[item.title].incomplete}` 
+                          : '✓'}
+                      </Text>
+                    </View>
+                  )}
+                </View>
               </TouchableOpacity>
             ))
           )}
