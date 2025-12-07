@@ -1,9 +1,9 @@
 import React, { useState, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, Keyboard, TextInput as RNTextInput, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, Keyboard, TextInput as RNTextInput, Alert, Modal } from 'react-native';
 import { router, useLocalSearchParams } from "expo-router";
 import Svg, { Path } from 'react-native-svg';
 import DropDownPicker from "react-native-dropdown-picker";
-import { History } from 'lucide-react-native';
+import { History, Clock } from 'lucide-react-native';
 import { useAuth } from '../../../context/AuthContext';
 import { scheduleStorageService } from '../../../services/scheduleStorageService';
 
@@ -30,37 +30,65 @@ const EditRemindersScreen = () => {
     const startTimeString = Array.isArray(start_time) ? start_time[0] : start_time;
     const endTimeString = Array.isArray(end_time) ? end_time[0] : end_time;
 
-    const generateTimes = () => {
-        const times: { label: string; value: string }[] = [];
-        const periods = ["AM", "PM"];
+    // Parse time string into components (e.g., "1:30 PM" -> { hour: 1, minute: 30, period: 'PM' })
+    const parseTimeString = (timeStr: string | null): { hour: number; minute: number; period: 'AM' | 'PM' } => {
+        if (!timeStr) return { hour: 12, minute: 0, period: 'AM' };
+        const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+        if (match) {
+            return {
+                hour: parseInt(match[1], 10),
+                minute: parseInt(match[2], 10),
+                period: match[3].toUpperCase() as 'AM' | 'PM'
+            };
+        }
+        return { hour: 12, minute: 0, period: 'AM' };
+    };
 
-        periods.forEach((period) => {
-            [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].forEach((hour) => {
-            ["00", "15", "30", "45"].forEach((minute) => {
-                const timeString = `${hour}:${minute} ${period}`;
-                times.push({ label: timeString, value: timeString });
-            });
-            });
-        });
-        
-        return times;
-        };
+    // Format time components to string
+    const formatTime = (hour: number, minute: number, period: 'AM' | 'PM'): string => {
+        return `${hour}:${minute.toString().padStart(2, '0')} ${period}`;
+    };
 
-    const timeOptions = generateTimes();
     const [keyboardfocused, setKeyboardFocused] = useState(false);
     const inputRef = useRef<RNTextInput>(null);
 
-    const [starttimeOpen, setStarttimeOpen] = useState(false);
-    const [starttimeValue, setStarttimeValue] = useState<string | null>(startTimeString  || null);
-    const [starttimeItems, setStarttimeItems] = useState<{label: string; value: string}[]>(timeOptions);
+    // Time picker modal states
+    const [showStartTimePicker, setShowStartTimePicker] = useState(false);
+    const [showEndTimePicker, setShowEndTimePicker] = useState(false);
     
-    const [endtimeOpen, setEndtimeOpen] = useState(false);
-    const [endtimeValue, setEndtimeValue] = useState<string | null>(endTimeString  || null);
-    const [endtimeItems, setEndtimeItems] = useState<{label: string; value: string}[]>(timeOptions);
+    const [starttimeValue, setStarttimeValue] = useState<string | null>(startTimeString || null);
+    const [endtimeValue, setEndtimeValue] = useState<string | null>(endTimeString || null);
+    
+    // Temp states for time picker selection
+    const [tempHour, setTempHour] = useState(12);
+    const [tempMinute, setTempMinute] = useState(0);
+    const [tempPeriod, setTempPeriod] = useState<'AM' | 'PM'>('AM');
+
+
+    // Helper to normalize day values - converts full names to codes
+    const normalizeDayCode = (dayValue: string | undefined | null): string | null => {
+        if (!dayValue) return null;
+        const dayStr = String(dayValue).trim().toUpperCase();
+        const dayMapping: Record<string, string> = {
+            'M': 'M',
+            'T': 'T',
+            'W': 'W',
+            'TH': 'TH',
+            'F': 'F',
+            'S': 'S',
+            'MONDAY': 'M',
+            'TUESDAY': 'T',
+            'WEDNESDAY': 'W',
+            'THURSDAY': 'TH',
+            'FRIDAY': 'F',
+            'SATURDAY': 'S',
+        };
+        return dayMapping[dayStr] || null;
+    };
 
     // Day dropdown state
     const [dayOpen, setDayOpen] = useState(false);
-    const [dayDropdownValue, setDayDropdownValue] = useState<string | null>(String(day || null));
+    const [dayDropdownValue, setDayDropdownValue] = useState<string | null>(normalizeDayCode(day as string));
     const [dayItems, setDayItems] = useState([
         { label: "Monday", value: "M" },
         { label: "Tuesday", value: "T" },
@@ -87,20 +115,57 @@ const EditRemindersScreen = () => {
         { label: "Low before", value: "Priority minutes" }, /* basta priority to and no storing into database yet */
     ]);
 
+    // Open start time picker
+    const openStartTimePicker = () => {
+        const parsed = parseTimeString(starttimeValue);
+        setTempHour(parsed.hour);
+        setTempMinute(parsed.minute);
+        setTempPeriod(parsed.period);
+        setShowStartTimePicker(true);
+    };
+
+    // Open end time picker
+    const openEndTimePicker = () => {
+        const parsed = parseTimeString(endtimeValue);
+        setTempHour(parsed.hour);
+        setTempMinute(parsed.minute);
+        setTempPeriod(parsed.period);
+        setShowEndTimePicker(true);
+    };
+
+    // Confirm start time selection
+    const confirmStartTime = () => {
+        setStarttimeValue(formatTime(tempHour, tempMinute, tempPeriod));
+        setShowStartTimePicker(false);
+    };
+
+    // Confirm end time selection
+    const confirmEndTime = () => {
+        setEndtimeValue(formatTime(tempHour, tempMinute, tempPeriod));
+        setShowEndTimePicker(false);
+    };
+
     // Helper function to convert time string to minutes for comparison
+    // Handles formats: "2:00 PM", "02:00PM", "2:00PM", "02:00 PM"
     const timeToMinutes = (timeStr: string): number => {
-        const [time, period] = timeStr.split(' ');
-        const [hours, minutes] = time.split(':').map(Number);
-        let totalMinutes = hours * 60 + minutes;
+        if (!timeStr) return 0;
+        
+        // Use regex to handle both "2:00 PM" and "02:00PM" formats
+        const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+        if (!match) return 0;
+        
+        let hours = parseInt(match[1], 10);
+        const minutes = parseInt(match[2], 10);
+        const period = match[3].toUpperCase();
         
         // Convert to 24-hour format
         if (period === 'PM' && hours !== 12) {
-            totalMinutes += 12 * 60;
+            hours += 12;
         } else if (period === 'AM' && hours === 12) {
-            totalMinutes -= 12 * 60;
+            hours = 0;
         }
         
-        return totalMinutes;
+        return hours * 60 + minutes;
     };
 
     // Check if two time ranges overlap
@@ -112,6 +177,75 @@ const EditRemindersScreen = () => {
         
         // Check if ranges overlap
         return start1Min < end2Min && end1Min > start2Min;
+    };
+
+    // Expand day code to array of individual day codes
+    // Handles both short codes (M, T, MW) and full names (Monday, Tuesday)
+    const expandDayCode = (dayCode: string): string[] => {
+        if (!dayCode) return [];
+        const code = dayCode.toUpperCase().trim();
+        
+        // Map full day names to short codes
+        const fullNameMap: { [key: string]: string } = {
+            'MONDAY': 'M',
+            'TUESDAY': 'T',
+            'WEDNESDAY': 'W',
+            'THURSDAY': 'TH',
+            'FRIDAY': 'F',
+            'SATURDAY': 'S',
+            'SUNDAY': 'SUN',
+        };
+        
+        // If it's a full day name, convert to short code
+        if (fullNameMap[code]) {
+            return [fullNameMap[code]];
+        }
+        
+        // Multi-day mappings
+        const multiDayMap: { [key: string]: string[] } = {
+            'MTH': ['M', 'TH'],
+            'TF': ['T', 'F'],
+            'MW': ['M', 'W'],
+            'TTH': ['T', 'TH'],
+            'MWF': ['M', 'W', 'F'],
+            'MTWTH': ['M', 'T', 'W', 'TH'],
+            'MTWTHF': ['M', 'T', 'W', 'TH', 'F'],
+        };
+        
+        if (multiDayMap[code]) {
+            return multiDayMap[code];
+        }
+        
+        // Single day code - return as array
+        return [code];
+    };
+
+    // Check if two day codes share any common day
+    const daysOverlap = (day1: string, day2: string): boolean => {
+        const days1 = expandDayCode(day1);
+        const days2 = expandDayCode(day2);
+        
+        return days1.some(d1 => days2.includes(d1));
+    };
+
+    // Get overlapping days between two day codes (for error message)
+    const getOverlappingDays = (day1: string, day2: string): string[] => {
+        const days1 = expandDayCode(day1);
+        const days2 = expandDayCode(day2);
+        
+        const dayNames: { [key: string]: string } = {
+            'M': 'Monday',
+            'T': 'Tuesday',
+            'W': 'Wednesday',
+            'TH': 'Thursday',
+            'F': 'Friday',
+            'S': 'Saturday',
+            'SUN': 'Sunday',
+        };
+        
+        return days1
+            .filter(d => days2.includes(d))
+            .map(d => dayNames[d] || d);
     };
 
     const handleCancel = () => {
@@ -144,15 +278,15 @@ const EditRemindersScreen = () => {
                 return;
             }
 
-            // Check for conflicts with other courses on the same day (excluding the current course being edited)
+            // Check for conflicts with other courses on overlapping days (excluding the current course being edited)
             const conflictingCourse = activeSchedule.courses.find(course => {
                 // Skip the course being edited
                 if (course.id === Number(id)) {
                     return false;
                 }
                 
-                // Check if same day
-                if (course.day !== dayDropdownValue) {
+                // Check if days overlap (handles multi-day codes like MW, TTH, etc.)
+                if (!daysOverlap(course.day, dayDropdownValue)) {
                     return false;
                 }
                 
@@ -166,9 +300,14 @@ const EditRemindersScreen = () => {
             });
 
             if (conflictingCourse) {
+                const overlappingDays = getOverlappingDays(conflictingCourse.day, dayDropdownValue);
+                const dayText = overlappingDays.length > 1 
+                    ? `on ${overlappingDays.join(' and ')}`
+                    : `on ${overlappingDays[0]}`;
+                    
                 Alert.alert(
                     'Schedule Conflict',
-                    `This time slot conflicts with "${conflictingCourse.subject_code}" (${conflictingCourse.start_time} - ${conflictingCourse.end_time}) on the same day.`,
+                    `This time slot conflicts with "${conflictingCourse.subject_code}" (${conflictingCourse.start_time} - ${conflictingCourse.end_time}) ${dayText}.`,
                     [{ text: 'OK' }]
                 );
                 return;
@@ -246,8 +385,6 @@ const EditRemindersScreen = () => {
                                 Keyboard.dismiss();
                                 setKeyboardFocused(false);
                             }
-                            setStarttimeOpen(false);
-                            setEndtimeOpen(false);
                             setOpenNotification(false);
                             setOpenPriority(false);
                         }}
@@ -288,8 +425,6 @@ const EditRemindersScreen = () => {
                         onFocus={() => {
                             setKeyboardFocused(true);
                             setDayOpen(false);
-                            setStarttimeOpen(false);
-                            setEndtimeOpen(false);
                             setOpenNotification(false);
                             setOpenPriority(false);
                         }}
@@ -297,7 +432,7 @@ const EditRemindersScreen = () => {
                     />
                 </View>
                 
-                <View className='mb-4'>
+                {/* <View className='mb-4'>
                     <Text className="mb-1 font-semibold text-gray-500">Description</Text>
                     <TextInput
                         placeholder='Add Description'
@@ -307,129 +442,36 @@ const EditRemindersScreen = () => {
                         textAlignVertical="top"
                         numberOfLines={4} 
                     />
-                </View>
+                </View> */}
             
                 <View>
                     <Text className="mb-1 font-semibold text-gray-500">Time: </Text>
                     <View className='flex-1 flex-row items-center mb-4'>
-                        <View style={{ zIndex: starttimeOpen ? Z.highest : Z.low,  position: "relative" }}>
-                            <DropDownPicker
-                                open={starttimeOpen}
-                                value={starttimeValue}
-                                items={starttimeItems}
-                                setOpen={setStarttimeOpen}
-                                setValue={setStarttimeValue}
-                                setItems={setStarttimeItems}
-                                placeholder="Select start time"
-                                listMode="SCROLLVIEW"
-                                ArrowDownIconComponent={({ style }) => (
-                                    <History size={20} color="#BF1D1B" />
-                                )}
-                                ArrowUpIconComponent={({ style }) => (
-                                    <History size={20} color="#444" />
-                                )}
-                                onOpen={() => {
-                                // Dismiss keyboard when dropdown opens
-                                if (keyboardfocused) {
-                                    inputRef.current?.blur();
-                                    Keyboard.dismiss();
-                                }
-                                setDayOpen(false);
-                                setEndtimeOpen(false);
-                                setOpenNotification(false);
-                                setOpenPriority(false);
-                                }}
-                                onClose={() => {
-                                // Optional: handle close
-                                }}
-                                style={{
-                                    backgroundColor: "rgba(229, 231, 235)",
-                                    borderColor: "transparent",
-                                    borderRadius: 12,
-                                    paddingVertical: 12,
-                                    width: 130,
-                                }}
-                                dropDownContainerStyle={{
-                                    backgroundColor: "rgba(229, 231, 235)",
-                                    borderColor: "transparent",
-                                    borderRadius: 12,
-                                    width: 130,
-                                    maxHeight: 200,
-                                }}
-                                textStyle={{
-                                    fontSize: 15,
-                                    fontWeight: "500",
-                                    color: "#000",
-                                    paddingLeft: 6,
-                                }}
-                                labelStyle={{
-                                    color: "#000",
-                                    fontWeight: "500",
-                                    fontSize: 15,
-                                    paddingLeft: 6,
-                                }}
-                            />
-                        </View>
+                        {/* Start Time Button */}
+                        <TouchableOpacity 
+                            onPress={openStartTimePicker}
+                            className="bg-gray-200 rounded-xl px-4 py-3 flex-row items-center"
+                            style={{ minWidth: 130 }}
+                        >
+                            <Clock size={20} color="#BF1D1B" />
+                            <Text className="ml-2 font-medium text-black">
+                                {starttimeValue || 'Select start time'}
+                            </Text>
+                        </TouchableOpacity>
+                        
                         <Text className='text-3xl font-semibold text-gray-500'> - </Text>
-                        <View style={{ zIndex: endtimeOpen ? Z.highest : Z.low,  position: "relative" }}>
-                            <DropDownPicker
-                                open={endtimeOpen}
-                                value={endtimeValue}
-                                items={endtimeItems}
-                                setOpen={setEndtimeOpen}
-                                setValue={setEndtimeValue}
-                                setItems={setEndtimeItems}
-                                placeholder="Select end time"
-                                listMode="SCROLLVIEW"
-                                ArrowDownIconComponent={({ style }) => (
-                                    <History size={20} color="#BF1D1B" />
-                                )}
-                                ArrowUpIconComponent={({ style }) => (
-                                    <History size={20} color="#444" />
-                                )}
-                                onOpen={() => {
-                                // Dismiss keyboard when dropdown opens
-                                if (keyboardfocused) {
-                                    setKeyboardFocused(false);
-                                    inputRef.current?.blur();
-                                    Keyboard.dismiss();
-                                }
-                                setDayOpen(false);
-                                setStarttimeOpen(false);
-                                setOpenNotification(false);
-                                setOpenPriority(false);
-                                }}
-                                onClose={() => {
-                                // Optional: handle close
-                                }}
-                                style={{
-                                    backgroundColor: "rgba(229, 231, 235)",
-                                    borderColor: "transparent",
-                                    borderRadius: 12,
-                                    paddingVertical: 12,
-                                    width: 130,
-                                }}
-                                dropDownContainerStyle={{
-                                    backgroundColor: "rgba(229, 231, 235)",
-                                    borderColor: "transparent",
-                                    borderRadius: 12,
-                                    width: 130,
-                                    maxHeight: 200,
-                                }}
-                                textStyle={{
-                                    fontSize: 15,
-                                    fontWeight: "500",
-                                    color: "#000",
-                                    paddingLeft: 6,
-                                }}
-                                labelStyle={{
-                                    color: "#000",
-                                    fontWeight: "500",
-                                    fontSize: 15,
-                                    paddingLeft: 6,
-                                }}
-                            />
-                        </View>
+                        
+                        {/* End Time Button */}
+                        <TouchableOpacity 
+                            onPress={openEndTimePicker}
+                            className="bg-gray-200 rounded-xl px-4 py-3 flex-row items-center"
+                            style={{ minWidth: 130 }}
+                        >
+                            <Clock size={20} color="#BF1D1B" />
+                            <Text className="ml-2 font-medium text-black">
+                                {endtimeValue || 'Select end time'}
+                            </Text>
+                        </TouchableOpacity>
                     </View>
                 </View>
 
@@ -443,8 +485,6 @@ const EditRemindersScreen = () => {
                         onFocus={() => {
                             setKeyboardFocused(true);
                             setDayOpen(false);
-                            setStarttimeOpen(false);
-                            setEndtimeOpen(false);
                             setOpenNotification(false);
                             setOpenPriority(false);
                         }}
@@ -452,7 +492,7 @@ const EditRemindersScreen = () => {
                     />
                 </View> 
                 
-                <View className='mb-4' style={{ zIndex: openNotification ? Z.highest : Z.low,  position: "relative" }}>
+                {/* <View className='mb-4' style={{ zIndex: openNotification ? Z.highest : Z.low,  position: "relative" }}>
                     <Text className="mb-1 font-semibold text-gray-500">Notification</Text>
                     <DropDownPicker
                         open={openNotification}
@@ -471,8 +511,6 @@ const EditRemindersScreen = () => {
                             setKeyboardFocused(false);
                         }
                         setDayOpen(false);
-                        setStarttimeOpen(false);
-                        setEndtimeOpen(false);
                         setOpenPriority(false);
                         }}
                         onClose={() => {
@@ -524,8 +562,6 @@ const EditRemindersScreen = () => {
                             inputRef.current?.blur();  
                         }
                         setDayOpen(false);
-                        setStarttimeOpen(false);
-                        setEndtimeOpen(false);
                         setOpenNotification(false);
                         }}
                         onClose={() => {
@@ -556,7 +592,7 @@ const EditRemindersScreen = () => {
                         }}
                         dropDownDirection='TOP'
                     />
-                </View>
+                </View> */}
             </ScrollView>
 
             <View className=" bg-white px-4 py-3 flex-row justify-between items-center">
@@ -572,6 +608,122 @@ const EditRemindersScreen = () => {
                 <Text className="text-white font-semibold text-center text-base">Save Schedule</Text>
             </TouchableOpacity>
             </View>
+
+            {/* Time Picker Modal */}
+            <Modal
+                visible={showStartTimePicker || showEndTimePicker}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => {
+                    setShowStartTimePicker(false);
+                    setShowEndTimePicker(false);
+                }}
+            >
+                <View className="flex-1 justify-center items-center bg-black/50">
+                    <View className="bg-white rounded-2xl p-6 mx-4 w-80">
+                        <Text className="text-xl font-bold text-center mb-4">
+                            {showStartTimePicker ? 'Select Start Time' : 'Select End Time'}
+                        </Text>
+                        
+                        <View className="flex-row justify-center items-center mb-6">
+                            {/* Hour Picker */}
+                            <View className="items-center mx-2">
+                                <Text className="text-gray-500 mb-2 font-medium">Hour</Text>
+                                <ScrollView 
+                                    className="h-32 w-16" 
+                                    showsVerticalScrollIndicator={false}
+                                    contentContainerStyle={{ paddingVertical: 40 }}
+                                >
+                                    {[12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((hour) => (
+                                        <TouchableOpacity 
+                                            key={hour}
+                                            onPress={() => setTempHour(hour)}
+                                            className={`py-2 px-4 rounded-lg mb-1 ${tempHour === hour ? 'bg-primary-600' : 'bg-gray-100'}`}
+                                        >
+                                            <Text className={`text-center text-lg font-semibold ${tempHour === hour ? 'text-white' : 'text-black'}`}>
+                                                {hour}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </ScrollView>
+                            </View>
+                            
+                            <Text className="text-2xl font-bold">:</Text>
+                            
+                            {/* Minute Picker */}
+                            <View className="items-center mx-2">
+                                <Text className="text-gray-500 mb-2 font-medium">Minute</Text>
+                                <ScrollView 
+                                    className="h-32 w-16" 
+                                    showsVerticalScrollIndicator={false}
+                                    contentContainerStyle={{ paddingVertical: 40 }}
+                                >
+                                    {Array.from({ length: 60 }, (_, i) => i).map((minute) => (
+                                        <TouchableOpacity 
+                                            key={minute}
+                                            onPress={() => setTempMinute(minute)}
+                                            className={`py-2 px-4 rounded-lg mb-1 ${tempMinute === minute ? 'bg-primary-600' : 'bg-gray-100'}`}
+                                        >
+                                            <Text className={`text-center text-lg font-semibold ${tempMinute === minute ? 'text-white' : 'text-black'}`}>
+                                                {minute.toString().padStart(2, '0')}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </ScrollView>
+                            </View>
+                            
+                            {/* AM/PM Picker */}
+                            <View className="items-center mx-2">
+                                <Text className="text-gray-500 mb-2 font-medium">Period</Text>
+                                <View className="h-32 justify-center">
+                                    <TouchableOpacity 
+                                        onPress={() => setTempPeriod('AM')}
+                                        className={`py-3 px-4 rounded-lg mb-2 ${tempPeriod === 'AM' ? 'bg-primary-600' : 'bg-gray-100'}`}
+                                    >
+                                        <Text className={`text-center text-lg font-semibold ${tempPeriod === 'AM' ? 'text-white' : 'text-black'}`}>
+                                            AM
+                                        </Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity 
+                                        onPress={() => setTempPeriod('PM')}
+                                        className={`py-3 px-4 rounded-lg ${tempPeriod === 'PM' ? 'bg-primary-600' : 'bg-gray-100'}`}
+                                    >
+                                        <Text className={`text-center text-lg font-semibold ${tempPeriod === 'PM' ? 'text-white' : 'text-black'}`}>
+                                            PM
+                                        </Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </View>
+                        
+                        {/* Preview */}
+                        <View className="bg-gray-100 rounded-xl py-3 mb-4">
+                            <Text className="text-center text-2xl font-bold text-primary-600">
+                                {formatTime(tempHour, tempMinute, tempPeriod)}
+                            </Text>
+                        </View>
+                        
+                        {/* Buttons */}
+                        <View className="flex-row justify-between">
+                            <TouchableOpacity 
+                                onPress={() => {
+                                    setShowStartTimePicker(false);
+                                    setShowEndTimePicker(false);
+                                }}
+                                className="flex-1 mr-2 border border-gray-300 py-3 rounded-lg"
+                            >
+                                <Text className="text-center font-semibold text-gray-600">Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity 
+                                onPress={showStartTimePicker ? confirmStartTime : confirmEndTime}
+                                className="flex-1 ml-2 bg-primary-600 py-3 rounded-lg"
+                            >
+                                <Text className="text-center font-semibold text-white">Confirm</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
         </>
     );
 };

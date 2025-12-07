@@ -65,6 +65,14 @@ const RemindersScreen = () => {
       'TTH': ['Tuesday', 'Thursday'],
       'MTWTH': ['Monday', 'Tuesday', 'Wednesday', 'Thursday'],
       'MTWTHF': ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+      // Handle full day names that may be in database
+      'MONDAY': ['Monday'],
+      'TUESDAY': ['Tuesday'],
+      'WEDNESDAY': ['Wednesday'],
+      'THURSDAY': ['Thursday'],
+      'FRIDAY': ['Friday'],
+      'SATURDAY': ['Saturday'],
+      'SUNDAY': ['Sunday'],
     };
     return dayMap[dayCode.toUpperCase().trim()] || [];
   };

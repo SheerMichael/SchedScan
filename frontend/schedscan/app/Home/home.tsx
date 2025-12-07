@@ -1,11 +1,19 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Image, ActivityIndicator} from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, TouchableOpacity, ScrollView, Image, ActivityIndicator, StyleSheet } from 'react-native';
 import Svg, { Path, Circle, G, Rect, Polygon } from "react-native-svg";
 import { router } from "expo-router";
 import { useAuth } from '../../context/AuthContext';
 import { Course } from '../../services/courseService';
 import { scheduleStorageService, SavedSchedule } from '../../services/scheduleStorageService';
+import { taskService } from '../../services/taskService';
 import { useFocusEffect } from '@react-navigation/native';
+import { GestureDetector, Gesture } from 'react-native-gesture-handler';
+import Animated, { 
+  useAnimatedStyle, 
+  useSharedValue, 
+  withSpring,
+  runOnJS,
+} from 'react-native-reanimated';
 
 export default function SchedScanApp() {
   const { user } = useAuth();
@@ -23,13 +31,107 @@ export default function SchedScanApp() {
 
   type ScheduleItem = {
     title: string;
+    subjectName: string;
     time: string;
+    startTime: string;
+    endTime: string;
     location: string;
+    day: string;
     priority_level: string;
   };
   
   type WeeklySchedule = {
     [key: number]: ScheduleItem[];
+  };
+
+  // Draggable card component using modern Gesture API
+  const DraggableCard = ({ 
+    item, 
+    index, 
+    onDragEnd, 
+    totalItems
+  }: { 
+    item: ScheduleItem; 
+    index: number; 
+    onDragEnd: (fromIndex: number, toIndex: number) => void;
+    totalItems: number;
+  }) => {
+    const translateY = useSharedValue(0);
+    const scale = useSharedValue(1);
+    const isActive = useSharedValue(false);
+    const cardHeight = 100; // Approximate card height
+
+    const animatedStyle = useAnimatedStyle(() => {
+      return {
+        transform: [
+          { translateY: translateY.value },
+          { scale: withSpring(isActive.value ? 1.03 : 1) }
+        ],
+        zIndex: isActive.value ? 1000 : 0,
+        shadowOpacity: isActive.value ? 0.3 : 0.1,
+      };
+    });
+
+    const panGesture = Gesture.Pan()
+      .onBegin(() => {
+        isActive.value = true;
+      })
+      .onUpdate((event) => {
+        translateY.value = event.translationY;
+      })
+      .onEnd((event) => {
+        const offsetY = event.translationY;
+        const moveBy = Math.round(offsetY / cardHeight);
+        let newIndex = index + moveBy;
+        
+        // Clamp to valid range
+        newIndex = Math.max(0, Math.min(totalItems - 1, newIndex));
+        
+        translateY.value = withSpring(0);
+        isActive.value = false;
+        
+        if (newIndex !== index) {
+          runOnJS(onDragEnd)(index, newIndex);
+        }
+      })
+      .onFinalize(() => {
+        translateY.value = withSpring(0);
+        isActive.value = false;
+      });
+
+    return (
+      <GestureDetector gesture={panGesture}>
+        <Animated.View
+          style={[
+            animatedStyle,
+            {
+              backgroundColor: 'white',
+              padding: 16,
+              marginBottom: 12,
+              borderRadius: 12,
+              borderLeftWidth: 4,
+              borderLeftColor: item.priority_level === "Holiday" ? "#16a34a" : "#ef4444",
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 2 },
+              shadowRadius: 4,
+              elevation: 3,
+            }
+          ]}
+        >
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#000' }}>{item.title}</Text>
+              <Text style={{ fontSize: 14, color: '#666' }}>{item.time}</Text>
+              <Text style={{ fontSize: 14, color: '#666' }}>{item.location}</Text>
+              <Text style={{ fontSize: 14, color: '#666' }}>{item.priority_level}</Text>
+            </View>
+            <View style={{ paddingHorizontal: 8, paddingVertical: 4 }}>
+              <Text style={{ color: '#9ca3af', fontSize: 18 }}>≡</Text>
+            </View>
+          </View>
+        </Animated.View>
+      </GestureDetector>
+    );
   };
 
   interface Star {
@@ -112,6 +214,19 @@ const Attending = ({ size = 24 }) => (
 );
 
   const [daySchedule, setDaySchedule] = useState<ScheduleItem[]>([]);
+  const [taskCounts, setTaskCounts] = useState<Record<string, { total: number; incomplete: number }>>({});
+
+  // Handle drag end and reorder
+  const handleDragEnd = (fromIndex: number, toIndex: number) => {
+    if (fromIndex !== toIndex) {
+      setDaySchedule(prevSchedule => {
+        const newSchedule = [...prevSchedule];
+        const [movedItem] = newSchedule.splice(fromIndex, 1);
+        newSchedule.splice(toIndex, 0, movedItem);
+        return newSchedule;
+      });
+    }
+  };
 
   // Fetch courses from active local schedule when component mounts or comes into focus
   useFocusEffect(
@@ -139,9 +254,17 @@ const Attending = ({ size = 24 }) => (
         if (selectedDay !== null) {
           updateDaySchedule(selectedDay, active.courses);
         }
+        
+        // Load task counts for all subjects
+        const subjectCodes = active.courses.map(c => c.subject_code);
+        if (subjectCodes.length > 0) {
+          const counts = await taskService.getTaskCounts(subjectCodes);
+          setTaskCounts(counts);
+        }
       } else {
         setCourses([]);
         setDaySchedule([]);
+        setTaskCounts({});
         console.log('No active schedule found');
       }
     } catch (error: any) {
@@ -175,6 +298,14 @@ const Attending = ({ size = 24 }) => (
       'THU': 4,
       'FRI': 5,
       'SAT': 6,
+      // Full day names as fallback
+      'MONDAY': 1,
+      'TUESDAY': 2,
+      'WEDNESDAY': 3,
+      'THURSDAY': 4,
+      'FRIDAY': 5,
+      'SATURDAY': 6,
+      'SUNDAY': 0,
     };
 
     // Multi-day combination mappings
@@ -222,6 +353,26 @@ const Attending = ({ size = 24 }) => (
     });
   };
 
+  // Helper function to convert time string to minutes for sorting
+  const timeStringToMinutes = (timeStr: string): number => {
+    if (!timeStr) return 0;
+    const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+    if (!match) return 0;
+    
+    let hours = parseInt(match[1], 10);
+    const minutes = parseInt(match[2], 10);
+    const period = match[3].toUpperCase();
+    
+    // Convert to 24-hour format for proper sorting
+    if (period === 'PM' && hours !== 12) {
+      hours += 12;
+    } else if (period === 'AM' && hours === 12) {
+      hours = 0;
+    }
+    
+    return hours * 60 + minutes;
+  };
+
   // Update day schedule based on selected day
   const updateDaySchedule = (day: number, coursesData: Course[] = courses) => {
     const dateCourses = coursesData.filter(course => {
@@ -230,11 +381,20 @@ const Attending = ({ size = 24 }) => (
       return courseDays.includes(weekday);
     });
 
+    // Sort courses by start time (earliest first)
+    const sortedCourses = [...dateCourses].sort((a, b) => {
+      return timeStringToMinutes(a.start_time) - timeStringToMinutes(b.start_time);
+    });
+
     // Convert Course[] to ScheduleItem[]
-    const scheduleItems: ScheduleItem[] = dateCourses.map(course => ({
+    const scheduleItems: ScheduleItem[] = sortedCourses.map(course => ({
       title: course.subject_code,
+      subjectName: course.subject_name || '',
       time: `${course.start_time} - ${course.end_time}`,
+      startTime: course.start_time,
+      endTime: course.end_time,
       location: course.location || '',
+      day: course.day,
       priority_level: 'Class',
     }));
 
@@ -323,8 +483,12 @@ const Attending = ({ size = 24 }) => (
       })
       .map(course => ({
         title: course.subject_code,
+        subjectName: course.subject_name || '',
         time: `${course.start_time} - ${course.end_time}`,
+        startTime: course.start_time,
+        endTime: course.end_time,
         location: course.location || '',
+        day: course.day,
         priority_level: 'Class',
       }));
 
@@ -376,21 +540,25 @@ const Attending = ({ size = 24 }) => (
           {/* Classes Today */}
           <View className="flex-1 bg-white rounded-xl p-4 items-center border border-red-200 mx-1">
             <Classes_Today size={24}/>
-            <Text className="text-3xl font-bold text-primary-600">0</Text>
+            <Text className="text-3xl font-bold text-primary-600">{daySchedule.length}</Text>
             <Text className="text-sm text-gray-500">Classes Today</Text>
           </View>
 
-          {/* Teaching */}
+          {/* Teaching - shows count for faculty schedules */}
           <View className="flex-1 bg-white rounded-xl p-4 items-center border border-red-200 mx-1">
             <Teaching size={24}/>
-            <Text className="text-3xl font-bold text-primary-600">0</Text>
+            <Text className="text-3xl font-bold text-primary-600">
+              {activeSchedule?.uploadType === 'faculty' ? daySchedule.length : 0}
+            </Text>
             <Text className="text-sm text-gray-500">Teaching</Text>
           </View>
 
-          {/* Attending */}
+          {/* Attending - shows count for student schedules */}
           <View className="flex-1 bg-white rounded-xl p-4 items-center border border-red-200 mx-1">
             <Attending size={24}/>
-            <Text className="text-3xl font-bold text-primary-600">0</Text>
+            <Text className="text-3xl font-bold text-primary-600">
+              {activeSchedule?.uploadType === 'student' ? daySchedule.length : 0}
+            </Text>
             <Text className="text-sm text-gray-500">Attending</Text>
           </View>
         </View>
@@ -509,21 +677,46 @@ const Attending = ({ size = 24 }) => (
             <Text className="text-gray-500">No classes / events today</Text>
           ) : (
             daySchedule.map((item, index) => (
-            <TouchableOpacity
-              onPress={() => {
-                router.push({
-                  pathname: "/Home/Subject/subjectdetails",
-                  params: {
-                    title: item.title
-                  }
-                });
-              }}
-              className="bg-white p-4 mb-3 rounded-xl shadow border-l-4 border-red-500"
-            >
-              <Text className="font-bold text-base text-black">{item.title}</Text>
-              <Text className="text-sm text-gray-600">{item.time}</Text>
-              <Text className="text-sm text-gray-600">{item.location}</Text>
-            </TouchableOpacity>
+              <TouchableOpacity
+                key={`${item.title}-${index}`}
+                onPress={() => {
+                  router.push({
+                    pathname: "/Home/Subject/subjectdetails",
+                    params: {
+                      title: item.title,
+                      subjectName: item.subjectName,
+                      time: item.time,
+                      startTime: item.startTime,
+                      endTime: item.endTime,
+                      location: item.location,
+                      day: item.day,
+                    }
+                  });
+                }}
+                className="bg-white p-4 mb-3 rounded-xl shadow border-l-4 border-red-500"
+              >
+                <View className="flex-row justify-between items-start">
+                  <View className="flex-1">
+                    <Text className="font-bold text-base text-black">{item.title}</Text>
+                    {/* Subject name hidden until OCR properly extracts it */}
+                    <Text className="text-sm text-gray-600">{item.time}</Text>
+                    <Text className="text-sm text-gray-600">{item.location}</Text>
+                  </View>
+                  {taskCounts[item.title]?.total > 0 && (
+                    <View className="flex-row items-center bg-amber-100 px-2 py-1 rounded-full">
+                      <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2">
+                        <Path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                        <Path d="M9 12l2 2 4-4" />
+                      </Svg>
+                      <Text className="text-xs font-semibold text-amber-700 ml-1">
+                        {taskCounts[item.title]?.incomplete > 0 
+                          ? `${taskCounts[item.title].incomplete}` 
+                          : '✓'}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </TouchableOpacity>
             ))
           )}
         </View>

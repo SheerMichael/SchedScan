@@ -17,9 +17,12 @@ from .serializers import (
     LoginSerializer,
     UserSerializer,
     UserWithTokenSerializer,
-    CourseSerializer
+    CourseSerializer,
+    ScheduleSerializer,
+    ScheduleListSerializer,
+    TaskSerializer
 )
-from .models import Course
+from .models import Course, Schedule, Task
 from .utils.ocr import get_cor_extractor
 
 User = get_user_model()
@@ -432,5 +435,438 @@ class DeleteAllCoursesView(APIView):
                     "error": "Failed to delete courses",
                     "details": str(e)
                 },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# ============== Schedule CRUD Views ==============
+
+class ScheduleListCreateView(generics.ListCreateAPIView):
+    """
+    API endpoint to list all schedules or create a new schedule.
+    
+    GET /api/schedules/
+    Headers: Authorization: Bearer <access_token>
+    Query params:
+        - upload_type: Filter by 'student' or 'faculty' (optional)
+    
+    Response: [
+        {
+            "id": 1,
+            "title": "1st Semester 2025",
+            "upload_type": "student",
+            "is_active": true,
+            "course_count": 8,
+            "created_at": "2025-12-01T...",
+            "updated_at": "2025-12-01T..."
+        },
+        ...
+    ]
+    
+    POST /api/schedules/
+    Headers: Authorization: Bearer <access_token>
+    Request body: {
+        "title": "1st Semester 2025",
+        "upload_type": "student",
+        "is_active": true,
+        "courses": [
+            {
+                "subject_code": "BSCS125781",
+                "subject_name": "SOFTWARE ENGINEERING",
+                "start_time": "07:00AM",
+                "end_time": "09:00AM",
+                "day": "M",
+                "location": "LR7"
+            },
+            ...
+        ]
+    }
+    
+    Response: {
+        "id": 1,
+        "title": "1st Semester 2025",
+        "upload_type": "student",
+        "is_active": true,
+        "courses": [...],
+        "created_at": "2025-12-01T...",
+        "updated_at": "2025-12-01T..."
+    }
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return ScheduleSerializer
+        return ScheduleListSerializer
+    
+    def get_queryset(self):
+        queryset = Schedule.objects.filter(user=self.request.user)
+        upload_type = self.request.query_params.get('upload_type', None)
+        if upload_type:
+            queryset = queryset.filter(upload_type=upload_type)
+        return queryset
+
+
+class ScheduleDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    API endpoint to retrieve, update, or delete a specific schedule.
+    
+    GET /api/schedules/<id>/
+    Headers: Authorization: Bearer <access_token>
+    
+    Response: {
+        "id": 1,
+        "title": "1st Semester 2025",
+        "upload_type": "student",
+        "is_active": true,
+        "courses": [...],
+        "created_at": "2025-12-01T...",
+        "updated_at": "2025-12-01T..."
+    }
+    
+    PUT/PATCH /api/schedules/<id>/
+    Headers: Authorization: Bearer <access_token>
+    Request body: { "title": "Updated Title", "is_active": true, ... }
+    
+    DELETE /api/schedules/<id>/
+    Headers: Authorization: Bearer <access_token>
+    """
+    serializer_class = ScheduleSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        return Schedule.objects.filter(user=self.request.user)
+
+
+class ScheduleSetActiveView(APIView):
+    """
+    API endpoint to set a schedule as active (deactivates all others).
+    
+    POST /api/schedules/<id>/set-active/
+    Headers: Authorization: Bearer <access_token>
+    
+    Response: {
+        "message": "Schedule set as active",
+        "schedule": { ... }
+    }
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, pk):
+        try:
+            schedule = Schedule.objects.get(pk=pk, user=request.user)
+            
+            # Deactivate all other schedules
+            Schedule.objects.filter(user=request.user, is_active=True).update(is_active=False)
+            
+            # Activate this schedule
+            schedule.is_active = True
+            schedule.save()
+            
+            serializer = ScheduleSerializer(schedule)
+            
+            return Response(
+                {
+                    "message": "Schedule set as active",
+                    "schedule": serializer.data
+                },
+                status=status.HTTP_200_OK
+            )
+        except Schedule.DoesNotExist:
+            return Response(
+                {"error": "Schedule not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+
+class ScheduleActiveView(APIView):
+    """
+    API endpoint to get the currently active schedule.
+    
+    GET /api/schedules/active/
+    Headers: Authorization: Bearer <access_token>
+    
+    Response: {
+        "id": 1,
+        "title": "1st Semester 2025",
+        "upload_type": "student",
+        "is_active": true,
+        "courses": [...],
+        ...
+    }
+    
+    Returns null/empty if no active schedule.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        try:
+            schedule = Schedule.objects.get(user=request.user, is_active=True)
+            serializer = ScheduleSerializer(schedule)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Schedule.DoesNotExist:
+            return Response(None, status=status.HTTP_200_OK)
+
+
+class ScheduleClearActiveView(APIView):
+    """
+    API endpoint to clear the active schedule (deactivate current).
+    
+    POST /api/schedules/clear-active/
+    Headers: Authorization: Bearer <access_token>
+    
+    Response: {
+        "message": "Active schedule cleared"
+    }
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        Schedule.objects.filter(user=request.user, is_active=True).update(is_active=False)
+        return Response(
+            {"message": "Active schedule cleared"},
+            status=status.HTTP_200_OK
+        )
+
+
+class ScheduleTimetableDownloadView(APIView):
+    """
+    API endpoint to download the generated timetable image for a schedule.
+    
+    GET /api/schedules/<id>/timetable/
+    Headers: Authorization: Bearer <access_token>
+    
+    Response: PNG image file download
+    
+    If timetable doesn't exist, it will be generated on-demand.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, pk):
+        from django.http import FileResponse, HttpResponse
+        from .utils.timetable_generator import generate_timetable_image
+        
+        try:
+            schedule = Schedule.objects.get(pk=pk, user=request.user)
+        except Schedule.DoesNotExist:
+            return Response(
+                {"error": "Schedule not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check if timetable image exists
+        if schedule.timetable_image and schedule.timetable_image.name:
+            try:
+                # Return existing file
+                response = FileResponse(
+                    schedule.timetable_image.open('rb'),
+                    content_type='image/png'
+                )
+                filename = f"timetable_{schedule.title.replace(' ', '_')}.png"
+                response['Content-Disposition'] = f'attachment; filename="{filename}"'
+                return response
+            except Exception as e:
+                logger.warning(f"Could not open existing timetable file: {e}")
+        
+        # Generate on-demand if not exists
+        try:
+            courses_data = list(schedule.courses.values(
+                'subject_code', 'subject_name', 'start_time', 
+                'end_time', 'day', 'location'
+            ))
+            
+            image_buffer = generate_timetable_image(
+                courses=courses_data,
+                title=schedule.title,
+                upload_type=schedule.upload_type,
+                user_name=request.user.get_full_name()
+            )
+            
+            response = HttpResponse(image_buffer.getvalue(), content_type='image/png')
+            filename = f"timetable_{schedule.title.replace(' ', '_')}.png"
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            return response
+            
+        except Exception as e:
+            logger.error(f"Error generating timetable: {str(e)}")
+            return Response(
+                {"error": "Failed to generate timetable", "details": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# =============================================================================
+# Task Management Views
+# =============================================================================
+
+class TaskListCreateView(generics.ListCreateAPIView):
+    """
+    API endpoint to list and create tasks for a specific subject code.
+    
+    GET /api/tasks/?subject_code=CS101
+    Headers: Authorization: Bearer <access_token>
+    
+    Response: [
+        {
+            "id": 1,
+            "subject_code": "CS101",
+            "text": "Complete assignment 1",
+            "is_completed": false,
+            "created_at": "2025-12-02T...",
+            "updated_at": "2025-12-02T..."
+        }
+    ]
+    
+    POST /api/tasks/
+    Headers: Authorization: Bearer <access_token>
+    Request body: {
+        "subject_code": "CS101",
+        "text": "Complete assignment 1"
+    }
+    """
+    serializer_class = TaskSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        """
+        Filter tasks by subject_code query param.
+        """
+        queryset = Task.objects.filter(user=self.request.user)
+        subject_code = self.request.query_params.get('subject_code', None)
+        if subject_code:
+            queryset = queryset.filter(subject_code=subject_code)
+        return queryset.order_by('-created_at')
+
+
+class TaskDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    API endpoint to retrieve, update, or delete a specific task.
+    
+    GET /api/tasks/<id>/
+    PATCH /api/tasks/<id>/
+    DELETE /api/tasks/<id>/
+    
+    Headers: Authorization: Bearer <access_token>
+    
+    PATCH Request body (to mark as completed):
+    {
+        "is_completed": true
+    }
+    """
+    serializer_class = TaskSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        """
+        Only allow access to user's own tasks.
+        """
+        return Task.objects.filter(user=self.request.user)
+
+
+# =============================================================================
+# Account Management Views
+# =============================================================================
+
+class ChangePasswordView(APIView):
+    """
+    API endpoint to change user password.
+    
+    POST /api/auth/change-password/
+    Headers: Authorization: Bearer <access_token>
+    Request body: {
+        "current_password": "oldpassword",
+        "new_password": "newpassword"
+    }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        current_password = request.data.get('current_password')
+        new_password = request.data.get('new_password')
+
+        # Validate required fields
+        if not current_password or not new_password:
+            return Response(
+                {"error": "Both current_password and new_password are required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Verify current password
+        if not user.check_password(current_password):
+            return Response(
+                {"error": "Current password is incorrect"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Validate new password length
+        if len(new_password) < 8:
+            return Response(
+                {"error": "New password must be at least 8 characters long"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Set new password
+        user.set_password(new_password)
+        user.save()
+
+        return Response(
+            {"message": "Password changed successfully"},
+            status=status.HTTP_200_OK
+        )
+
+
+class DeleteAccountView(APIView):
+    """
+    API endpoint to delete user account.
+    Requires password confirmation for security.
+    
+    POST /api/auth/delete-account/
+    Headers: Authorization: Bearer <access_token>
+    Request body: {
+        "password": "userpassword",
+        "confirmation": "DELETE"
+    }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        password = request.data.get('password')
+        confirmation = request.data.get('confirmation')
+
+        # Validate required fields
+        if not password:
+            return Response(
+                {"error": "Password is required to delete account"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if confirmation != "DELETE":
+            return Response(
+                {"error": "Please type 'DELETE' to confirm account deletion"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Verify password
+        if not user.check_password(password):
+            return Response(
+                {"error": "Incorrect password"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Delete user account (this will cascade delete related data)
+        try:
+            user_email = user.email
+            user.delete()
+            logger.info(f"User account deleted: {user_email}")
+            return Response(
+                {"message": "Account deleted successfully"},
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            logger.error(f"Error deleting account: {str(e)}")
+            return Response(
+                {"error": "Failed to delete account"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

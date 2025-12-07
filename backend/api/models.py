@@ -81,6 +81,65 @@ class User(AbstractUser):
         return self.first_name
 
 
+class Schedule(models.Model):
+    """
+    Model to group courses into named schedules.
+    Each schedule represents a saved COR upload with a user-defined title.
+    Users can have multiple schedules but only one can be active at a time.
+    """
+    UPLOAD_TYPE_CHOICES = [
+        ('student', 'Student'),
+        ('faculty', 'Faculty'),
+    ]
+    
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='schedules',
+        help_text="The user who owns this schedule"
+    )
+    title = models.CharField(
+        max_length=255,
+        help_text="User-defined name for this schedule"
+    )
+    upload_type = models.CharField(
+        max_length=10,
+        choices=UPLOAD_TYPE_CHOICES,
+        help_text="Type of schedule: student or faculty"
+    )
+    is_active = models.BooleanField(
+        default=False,
+        help_text="Whether this is the currently active schedule for the user"
+    )
+    timetable_image = models.ImageField(
+        upload_to='timetables/',
+        null=True,
+        blank=True,
+        help_text="Auto-generated timetable image for this schedule"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = 'Schedule'
+        verbose_name_plural = 'Schedules'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'upload_type']),
+            models.Index(fields=['user', 'is_active']),
+        ]
+    
+    def __str__(self):
+        active_str = " (Active)" if self.is_active else ""
+        return f"{self.title} - {self.upload_type}{active_str}"
+    
+    def save(self, *args, **kwargs):
+        # If this schedule is being set as active, deactivate all other schedules for this user
+        if self.is_active:
+            Schedule.objects.filter(user=self.user, is_active=True).exclude(pk=self.pk).update(is_active=False)
+        super().save(*args, **kwargs)
+
+
 class Course(models.Model):
     """
     Model to store course schedule information extracted from COR documents.
@@ -103,6 +162,14 @@ class Course(models.Model):
         on_delete=models.CASCADE,
         related_name='courses',
         help_text="The user who owns this course schedule"
+    )
+    schedule = models.ForeignKey(
+        Schedule,
+        on_delete=models.CASCADE,
+        related_name='courses',
+        null=True,
+        blank=True,
+        help_text="The schedule this course belongs to"
     )
     subject_code = models.CharField(
         max_length=50,
@@ -146,3 +213,43 @@ class Course(models.Model):
     
     def __str__(self):
         return f"{self.subject_code} - {self.subject_name or 'N/A'} ({self.day} {self.start_time}-{self.end_time})"
+
+
+class Task(models.Model):
+    """
+    Model to store tasks associated with a subject code.
+    Tasks are shared across schedules - if you have the same subject code
+    in multiple schedules, they share the same tasks.
+    """
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='tasks',
+        help_text="The user who owns this task"
+    )
+    subject_code = models.CharField(
+        max_length=50,
+        help_text="Subject code this task is associated with"
+    )
+    text = models.CharField(
+        max_length=500,
+        help_text="Task description/content"
+    )
+    is_completed = models.BooleanField(
+        default=False,
+        help_text="Whether this task has been completed"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Task'
+        verbose_name_plural = 'Tasks'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'subject_code']),
+        ]
+
+    def __str__(self):
+        status = "✓" if self.is_completed else "○"
+        return f"[{status}] {self.subject_code}: {self.text[:50]}"

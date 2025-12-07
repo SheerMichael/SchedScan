@@ -1,7 +1,11 @@
 import React, { useState, useCallback } from "react";
-import { View, Text, TouchableOpacity, ScrollView, Image, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Image, Alert, Platform } from 'react-native';
 import { router, useFocusEffect } from "expo-router";
 import Svg, { Path } from 'react-native-svg';
+import { File, Paths } from 'expo-file-system';
+import { fetch } from 'expo/fetch';
+import * as Sharing from 'expo-sharing';
+import * as SecureStore from 'expo-secure-store';
 import SchedulePreviewCard from '../../../components/schedulepreviewcard';
 import { scheduleStorageService, SavedSchedule } from '../../../services/scheduleStorageService';
 import { useAuth } from '../../../context/AuthContext';
@@ -43,7 +47,7 @@ const FacultySchedule = () => {
     </Svg>
   );
 
-  const handleApplyReminders = async (scheduleId: string) => {
+  const handleApplyReminders = async (scheduleId: string | number) => {
     if (!user?.id) {
       Alert.alert('Error', 'User not authenticated');
       return;
@@ -75,9 +79,91 @@ const FacultySchedule = () => {
     }
   };
 
-  const handleDownload = (scheduleId: string) => {
-    console.log(`Downloading schedule ${scheduleId}`);
-    Alert.alert('Download', 'Download functionality coming soon!');
+  const handleDeleteSchedule = async (schedule: SavedSchedule) => {
+    Alert.alert(
+      'Delete Schedule',
+      `Are you sure you want to delete "${schedule.title}"?${schedule.isActive ? '\n\nThis is your currently active schedule. Deleting it will remove it from your calendar.' : ''}`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await scheduleStorageService.deleteSchedule(schedule.id, 'faculty', user!.id);
+              
+              // Reload schedules to update UI
+              await loadSchedules();
+              
+              Alert.alert('Success', 'Schedule deleted successfully');
+            } catch (error) {
+              console.error('Error deleting schedule:', error);
+              Alert.alert('Error', 'Failed to delete schedule. Please try again.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleDownload = async (scheduleId: string | number, scheduleTitle: string = 'schedule') => {
+    console.log(`Downloading timetable for schedule ${scheduleId}`);
+    
+    try {
+      // Get the download URL
+      const downloadUrl = scheduleStorageService.getTimetableDownloadUrl(scheduleId);
+      console.log('Download URL:', downloadUrl);
+      
+      // Create a safe filename
+      const safeTitle = scheduleTitle.replace(/[^a-zA-Z0-9]/g, '_');
+      const filename = `timetable_${safeTitle}_${Date.now()}.png`;
+
+      // Get the access token for authenticated request
+      const token = await SecureStore.getItemAsync('access_token');
+      if (!token) {
+        Alert.alert('Error', 'Authentication token not found. Please log in again.');
+        return;
+      }
+      
+      // Download using expo/fetch with auth headers
+      console.log('Downloading file...');
+      const response = await fetch(downloadUrl, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Download failed with status ${response.status}`);
+      }
+
+      // Create file and write the downloaded bytes
+      const file = new File(Paths.cache, filename);
+      const bytes = await response.bytes();
+      file.write(bytes);
+      
+      console.log('File saved to cache:', file.uri);
+
+      // Open share sheet - user can save to gallery from there
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(file.uri, {
+          mimeType: 'image/png',
+          dialogTitle: 'Save Timetable',
+          UTI: 'public.png',
+        });
+        
+        // Clean up after sharing dialog closes
+        try { file.delete(); } catch (e) {}
+      } else {
+        Alert.alert('Error', 'Sharing is not available on this device');
+      }
+    } catch (error: any) {
+      console.error('Error downloading timetable:', error);
+      Alert.alert('Error', `Failed to download timetable: ${error.message}`);
+    }
   };
 
   return (
@@ -110,7 +196,8 @@ const FacultySchedule = () => {
               uploadDate={schedule.uploadDate}
               isActive={schedule.isActive}
               onApplyReminders={() => handleApplyReminders(schedule.id)}
-              onDownload={() => handleDownload(schedule.id)}
+              onDownload={() => handleDownload(schedule.id, schedule.title)}
+              onDelete={() => handleDeleteSchedule(schedule)}
             />
           ))} 
         </ScrollView>

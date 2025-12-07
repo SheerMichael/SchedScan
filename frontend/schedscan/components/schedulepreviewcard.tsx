@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
-import { Download } from 'lucide-react-native';
+import { Download, Trash2 } from 'lucide-react-native';
 import { Course } from '../services/courseService';
 
 interface SchedulePreviewCardProps {
@@ -11,6 +11,7 @@ interface SchedulePreviewCardProps {
   isActive: boolean;
   onApplyReminders: () => void;
   onDownload: () => void;
+  onDelete?: () => void;
 }
 
 const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
@@ -21,24 +22,39 @@ const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
   isActive,
   onApplyReminders,
   onDownload,
+  onDelete,
 }) => {
   // Create weekly grid structure
   const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thurs', 'Fri', 'Sat'];
   
-  // Map day codes to grid columns
+  // Map day codes to grid columns (handle various formats)
   const dayCodeToIndex = (dayCode: string): number[] => {
+    if (!dayCode) return [];
+    
+    const code = dayCode.toUpperCase().trim();
+    
+    // Single day mappings
     const dayMap: { [key: string]: number } = {
-      'SUN': 0, 'MON': 1, 'TUE': 2, 'WED': 3, 'THU': 4, 'FRI': 5, 'SAT': 6,
+      'SUN': 0, 'SUNDAY': 0, 'S': 0,
+      'MON': 1, 'MONDAY': 1, 'M': 1,
+      'TUE': 2, 'TUESDAY': 2, 'T': 2,
+      'WED': 3, 'WEDNESDAY': 3, 'W': 3,
+      'THU': 4, 'THURSDAY': 4, 'TH': 4, 'R': 4,
+      'FRI': 5, 'FRIDAY': 5, 'F': 5,
+      'SAT': 6, 'SATURDAY': 6,
     };
 
-    if (dayCode === 'MTH') return [1, 2, 3, 4];
-    if (dayCode === 'MW') return [1, 3];
-    if (dayCode === 'TTH') return [2, 4];
+    // Multi-day patterns
+    if (code === 'MTH' || code === 'MWTH' || code === 'MTWHF') return [1, 2, 3, 4, 5];
+    if (code === 'MWF') return [1, 3, 5];
+    if (code === 'MW') return [1, 3];
+    if (code === 'TTH' || code === 'TR') return [2, 4];
+    if (code === 'MTWTHF' || code === 'MTWTF') return [1, 2, 3, 4, 5];
     
-    return dayMap[dayCode] !== undefined ? [dayMap[dayCode]] : [];
+    return dayMap[code] !== undefined ? [dayMap[code]] : [];
   };
 
-  // Group courses by time slots for display
+  // Group courses by day
   const getCoursesForDay = (dayIndex: number) => {
     return courses.filter(course => {
       const courseDays = dayCodeToIndex(course.day);
@@ -46,10 +62,35 @@ const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
     });
   };
 
-  // Find unique time slots
-  const timeSlots = Array.from(
-    new Set(courses.map(c => `${c.start_time}-${c.end_time}`))
-  ).slice(0, 4); // Limit to 4 rows for preview
+  // Create simple time-based rows (limit to 4 for preview)
+  const getPreviewRows = () => {
+    // Get unique courses with valid data
+    const validCourses = courses.filter(c => c.start_time || c.subject_code);
+    
+    // If no valid courses, show empty rows
+    if (validCourses.length === 0) {
+      return [null, null, null, null];
+    }
+    
+    // Group by time slot and take first 4
+    const timeGroups = new Map<string, Course[]>();
+    validCourses.forEach(course => {
+      const key = course.start_time || 'unknown';
+      if (!timeGroups.has(key)) {
+        timeGroups.set(key, []);
+      }
+      timeGroups.get(key)!.push(course);
+    });
+    
+    const rows = Array.from(timeGroups.keys()).slice(0, 4);
+    // Pad to 4 rows if needed
+    while (rows.length < 4) {
+      rows.push(null as any);
+    }
+    return rows;
+  };
+
+  const previewRows = getPreviewRows();
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -78,9 +119,16 @@ const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
           <Text className="text-sm text-gray-600 mt-1">{title}</Text>
           <Text className="text-xs text-gray-400">{formatDate(uploadDate)}</Text>
         </View>
-        <TouchableOpacity onPress={onDownload}>
-          <Download size={28} color="#990100" />
-        </TouchableOpacity>
+        <View className="flex-row items-center gap-3">
+          <TouchableOpacity onPress={onDownload}>
+            <Download size={26} color="#990100" />
+          </TouchableOpacity>
+          {onDelete && (
+            <TouchableOpacity onPress={onDelete}>
+              <Trash2 size={24} color="#dc2626" />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {/* Calendar Grid Preview */}
@@ -97,12 +145,12 @@ const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
         </View>
 
         {/* Course grid - 4 rows max for preview */}
-        {timeSlots.map((timeSlot, rowIdx) => (
+        {previewRows.map((timeKey, rowIdx) => (
           <View key={rowIdx} className="flex-row border-b border-gray-200">
             {daysOfWeek.map((_, dayIdx) => {
-              const dayCourses = getCoursesForDay(dayIdx).filter(
-                c => `${c.start_time}-${c.end_time}` === timeSlot
-              );
+              const dayCourses = timeKey 
+                ? getCoursesForDay(dayIdx).filter(c => (c.start_time || 'unknown') === timeKey)
+                : [];
               
               return (
                 <View 
@@ -130,11 +178,11 @@ const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
           </View>
         ))}
 
-        {/* Show total courses if more than what's displayed */}
-        {courses.length > timeSlots.length * 7 && (
+        {/* Show total courses count */}
+        {courses.length > 0 && (
           <View className="p-2 bg-gray-50">
             <Text className="text-xs text-gray-500 text-center">
-              + {courses.length - (timeSlots.length * 7)} more courses
+              {courses.length} course{courses.length !== 1 ? 's' : ''} total
             </Text>
           </View>
         )}
