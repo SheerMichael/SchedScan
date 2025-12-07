@@ -519,7 +519,9 @@ const Attending = ({ size = 24 }) => (
           </View>
         </View>
         <View className='flex-row justify-center items-center mr-4'>
-        <StarBadge value={5} />
+        <TouchableOpacity onPress={() => router.push("../Parent/home")}>    
+          <StarBadge value={5} />
+        </TouchableOpacity>
         <TouchableOpacity
           onPress={() => router.push('/Home/notification')}>
           <Bell size={24} color="#4D4D4D"/>
