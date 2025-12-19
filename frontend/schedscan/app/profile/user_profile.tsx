@@ -2,17 +2,23 @@ import React, { useState } from "react";
 import { View, Text, TouchableOpacity, ScrollView, Image, Modal, Alert, TextInput, ActivityIndicator } from 'react-native';
 import { router } from "expo-router";
 import Svg, { Path, Circle } from 'react-native-svg';
-import { Gem, ScrollText, BellRing, CalendarDays, FileText, EyeOff, Trash2 } from "lucide-react-native";
+import { Gem, ScrollText, BellRing, CalendarDays, FileText, EyeOff, Trash2, Users, X, Copy} from "lucide-react-native";
 import { useAuth } from '../../context/AuthContext';
 import { scheduleStorageService } from '../../services/scheduleStorageService';
+import * as ExpoClipboard from 'expo-clipboard';
 import api from '@/services/api';
 
 const UserProfile = () => {
     const [modallogout, setModalLogout] = useState(false);
     const [modaldeleteaccount, setModalDeleteAccount] = useState(false);
+    // PARENTAL MODAL
+    const [modalParentalCode, setModalParentalCode] = useState(false);
     const { user, logout } = useAuth();
     const [premiumuser, setPremiumUser] = useState(false);
     
+    // MOCK PARENTAL CODE
+    const parentalCode = "XYZ-123-ABC"; 
+
     // Delete account states
     const [deletePassword, setDeletePassword] = useState('');
     const [deleteConfirmation, setDeleteConfirmation] = useState('');
@@ -105,8 +111,25 @@ const UserProfile = () => {
     const is_premiumuser = () => {
         if (!premiumuser) {
             router.push('/profile/premium_pay');
+        } else {
+            console.log("Open Calendar Sync settings...");
         }
     }
+
+    const handleParentalCodeAccess = () => {
+        if (premiumuser) {
+            // If premium, show the code
+            setModalParentalCode(true);
+        } else {
+            // If not premium, go to paywall
+            router.push('/profile/premium_pay');
+        }
+    };
+
+    const copyToClipboard = async () => {
+        await ExpoClipboard.setStringAsync(parentalCode);
+        alert("Code copied to clipboard!"); 
+    };
 
     return (
         <>
@@ -142,6 +165,30 @@ const UserProfile = () => {
                             <Gem/>
                             <Text className="text-base">Upgrade to Premium</Text>
                         </TouchableOpacity>
+                        <TouchableOpacity 
+                            className="p-4 flex-row items-center gap-2" 
+                            onPress={handleParentalCodeAccess}>
+                            <Users/>
+                            <Text className="text-base">Parental Code</Text>
+                            
+                            {/* Optional: Show PRO badge if they don't have it yet */}
+                            {!premiumuser && (
+                                <View className="bg-red-400 rounded-full p-1 px-2 ml-auto">
+                                    <Text className="text-white font-semibold text-xs">PRO</Text>
+                                </View>
+                            )}
+                        </TouchableOpacity>
+                            {premiumuser && (
+                                <TouchableOpacity
+                                    className="p-4 flex-row items-center gap-2"
+                                    onPress={() => 
+                                        router.push({
+                                            pathname: '../intro/signup',
+                                            params: { isParent: 'true' }})}>
+                                    <Users />
+                                    <Text className="text-base">Create Parent Account</Text>
+                                </TouchableOpacity>
+                            )}
                     </View>
                 </View>
 
@@ -184,6 +231,43 @@ const UserProfile = () => {
                     </TouchableOpacity>
                 </View>
                 
+                <Modal 
+                    animationType="fade"
+                    transparent={true}
+                    visible={modalParentalCode}
+                    onRequestClose={() => setModalParentalCode(false)}>
+
+                    <View className="flex-1 bg-black/50 justify-center items-center">
+                        <View className="bg-white rounded-xl p-6 w-4/5 max-w-sm shadow-lg relative">
+                            
+                            <View className="flex-row justify-between items-center mb-4">
+                                <Text className="text-xl font-bold text-gray-800">Parental Link Code</Text>
+                                <TouchableOpacity onPress={() => setModalParentalCode(false)}>
+                                    <X color="#4b5563" size={24}/> 
+                                </TouchableOpacity>
+                            </View>
+
+                            <Text className="text-gray-500 text-center mb-6">
+                                Share this code with a parent account to link profiles.
+                            </Text>
+
+                            <View className="bg-gray-100 rounded-lg p-4 mb-6 flex-row justify-between items-center border border-gray-300 border-dashed">
+                                <Text className="text-2xl font-bold text-primary-700 tracking-widest text-center flex-1">
+                                    {parentalCode}
+                                </Text>
+                            </View>
+
+                            <TouchableOpacity 
+                                className="bg-primary-500 py-3 rounded-lg flex-row justify-center items-center gap-2"
+                                onPress={copyToClipboard}
+                            >
+                                <Copy color="white" size={20} />
+                                <Text className="text-white font-semibold text-base">Copy Code</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </Modal>
+
                     <Modal 
                         animationType="fade"
                         transparent={true}

@@ -65,7 +65,7 @@ type SignUp3Props = {
     pickImageOption
   }: SignUp1Props) => (
     <SafeAreaView className="flex-1 bg-white px-4 m-2">
-      <TouchableOpacity onPress={() => router.push('/intro/getstarted')} className="mb-5 w-4">
+      <TouchableOpacity onPress={() => router.back()} className="mb-5 w-4">
         <ChevronRightIcon size={30} color="#000000" />
       </TouchableOpacity>
       
