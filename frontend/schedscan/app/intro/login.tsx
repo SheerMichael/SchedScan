@@ -133,7 +133,11 @@ const LoginScreen = () => {
           {/* Login Button */}
           <TouchableOpacity 
             className={`bg-primary-900 rounded-lg py-4 mb-8 shadow-sm ${isLoading ? 'opacity-50' : ''}`}
-            onPress={handleLogin}
+
+            // For frontend test
+            onPress={() => router.push('/Home/home')}
+            // For backend test
+            // onPress={handleLogin}
             disabled={isLoading}
           >
             {isLoading ? (
@@ -166,7 +170,6 @@ const LoginScreen = () => {
               <Text className="text-yellow-600 font-semibold">Sign up</Text>
             </TouchableOpacity>
           </View>
-
 
       </ScrollView>
     </SafeAreaView>

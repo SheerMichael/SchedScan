@@ -3,9 +3,13 @@ import { View, Text, TouchableOpacity, StatusBar } from "react-native";
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from "expo-router";
 import { Image } from 'react-native';
+import { usePushNotification } from "../../usePushNotification";
 
 const AuthFlow = () => {
   const [screen, setScreen] = useState("getStarted");
+
+  const { expoPushToken } = usePushNotification();
+  console.log("Expo Tokens:", expoPushToken);
 
   const GetStartedScreen = () => (
     <SafeAreaView className="flex-1 bg-white">

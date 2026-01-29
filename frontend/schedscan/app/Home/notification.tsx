@@ -1,9 +1,10 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { router } from "expo-router";
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import NotificationItem from "../../components/notifitem";
+import { usePushNotification } from "../../usePushNotification";
 
 const notificationscreen = () => {
     const [notifications, setNotifications] = useState([
@@ -23,7 +24,28 @@ const notificationscreen = () => {
             date: "3h ago",
             isDismissed: false,
         }
+        
     ]);
+
+    const { notification, expoPushToken } = usePushNotification();
+
+    useEffect(() => {
+        if (notification) {
+            const newNotif = {
+                id: Date.now(), // simple unique id
+                title: notification.request.content.title || "SchedScan Alert",
+                message: notification.request.content.body || "",
+                time: "Now",
+                date: "Just now",
+                isDismissed: false,
+            };
+
+            setNotifications(prev => [newNotif, ...prev]);
+
+            // Optional: save to DB
+            // fetch('/api/save-notification', { method: 'POST', body: JSON.stringify(newNotif) });
+        }
+    }, [notification]);
 
     const LeftPointingArrow = ({ size = 24, color = '#ffffff' }) => (
         <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
