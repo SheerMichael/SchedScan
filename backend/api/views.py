@@ -23,7 +23,7 @@ from .serializers import (
     TaskSerializer
 )
 from .models import Course, Schedule, Task
-from .utils.ocr import get_cor_extractor
+from .utils.extraction_manager import ExtractionManager
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -243,11 +243,20 @@ class BaseCORUploadView(APIView):
             
             logger.info(f"Processing {self.upload_type.upper()} COR for user {request.user.id}: {temp_file_name}")
             
-            # Get appropriate OCR extractor based on upload type
-            extractor = get_cor_extractor(self.upload_type)
+            # Use ExtractionManager for hybrid PDF/OCR extraction
+            manager = ExtractionManager()
+            result = manager.extract_schedule(full_temp_path, self.upload_type)
             
-            # Extract course information
-            courses_data = extractor.extract_from_document(full_temp_path)
+            courses_data = result['courses']
+            extraction_metadata = {
+                'method': result['extraction_method'],
+                'confidence': result['confidence'],
+                'processing_time_seconds': result['processing_time'],
+                'attempts': result.get('attempts', [])
+            }
+            
+            logger.info(f"Extraction completed using {result['extraction_method']} method "
+                       f"(confidence: {result['confidence']}, time: {result['processing_time']}s)")
             
             if not courses_data:
                 return Response(
@@ -255,7 +264,8 @@ class BaseCORUploadView(APIView):
                         "warning": "No courses found in the document",
                         "message": f"The document was processed but no course information could be extracted. Please check if the document is a valid {self.upload_type.upper()} COR.",
                         "courses": [],
-                        "total_courses": 0
+                        "total_courses": 0,
+                        "extraction_metadata": extraction_metadata
                     },
                     status=status.HTTP_200_OK
                 )
@@ -284,7 +294,8 @@ class BaseCORUploadView(APIView):
                     "message": f"Successfully processed {self.upload_type.upper()} COR and created {len(created_courses)} courses",
                     "courses": serializer.data,
                     "total_courses": len(created_courses),
-                    "upload_type": self.upload_type
+                    "upload_type": self.upload_type,
+                    "extraction_metadata": extraction_metadata
                 },
                 status=status.HTTP_201_CREATED
             )
