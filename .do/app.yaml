@@ -1,0 +1,38 @@
+name: schedscan
+region: sgp
+
+services:
+  - name: schedscan-api
+    source_dir: /backend
+    github:
+      repo: SheerMichael/SchedScan
+      branch: main
+      deploy_on_push: true
+    run_command: gunicorn core.wsgi:application --bind 0.0.0.0:$PORT
+    build_command: pip install -r requirements.txt && python manage.py collectstatic --noinput
+    environment_slug: python
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    instance_count: 1
+    http_port: 8080
+    envs:
+      - key: DJANGO_SECRET_KEY
+        scope: RUN_AND_BUILD_TIME
+        type: SECRET
+      - key: DJANGO_DEBUG
+        value: "False"
+      - key: DJANGO_ALLOWED_HOSTS
+        scope: RUN_TIME
+        value: ${APP_DOMAIN}
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        value: ${db.DATABASE_URL}
+      - key: CORS_ALLOW_ALL
+        value: "False"
+    routes:
+      - path: /
+
+databases:
+  - name: db
+    engine: PG
+    production: false
+    cluster_name: schedscan-db
