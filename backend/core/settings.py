@@ -209,6 +209,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:8081",
     "http://127.0.0.1:8081",
     "http://192.168.1.15:8081",
+    "https://schedscan-5gfy.ondigitalocean.app",
 ]
 
 # For development, allow all origins from Expo
