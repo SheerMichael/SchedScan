@@ -14,7 +14,13 @@ import time
 import logging
 from typing import Dict, List
 from .pdf_extractor import get_pdf_extractor, calculate_quality_score
-from .ocr import get_cor_extractor
+
+# Try to import OCR module - it's optional and requires heavy dependencies
+try:
+    from .ocr import get_cor_extractor
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +156,13 @@ class ExtractionManager:
         logger.info("Image file detected, using OCR extraction")
         attempts.append('ocr')
         
+        if not OCR_AVAILABLE:
+            logger.error("OCR dependencies not installed. Image extraction not available.")
+            raise ImportError(
+                "OCR extraction requires additional dependencies (python-doctr, torch, opencv). "
+                "Please use PDF files or install OCR dependencies locally."
+            )
+        
         try:
             ocr_extractor = get_cor_extractor(upload_type)
             courses = ocr_extractor.extract_from_document(file_path)
@@ -179,6 +192,15 @@ class ExtractionManager:
         Returns:
             Extraction result dictionary
         """
+        if not OCR_AVAILABLE:
+            logger.warning("OCR dependencies not installed. OCR fallback not available. "
+                         "Returning empty results from PDF extraction.")
+            return {
+                'courses': [],
+                'extraction_method': 'pdf_text_only',
+                'confidence': 0.0,
+            }
+        
         logger.info("Using OCR fallback extraction...")
         attempts.append('ocr_fallback')
         
