@@ -220,7 +220,9 @@ class BaseCORExtractor(ABC):
         
         logger.info(f"Extracting from image: {file_path}")
         image = Image.open(file_path)
-        text = pytesseract.image_to_string(image)
+        
+        # Use psm 6 for better table/block detection
+        text = pytesseract.image_to_string(image, config='--psm 6')
         
         return self._parse_text(text)
 
@@ -353,15 +355,284 @@ class StudentCORExtractor(BaseCORExtractor):
 
 class FacultyCORExtractor(BaseCORExtractor):
     """
-    Extractor for Faculty Certificate of Registration documents.
+    Extractor for Faculty Individual Daily Program (IDP) documents.
     
-    Note: This is a placeholder implementation.
+    Parses faculty schedules from OCR text, handling common OCR errors
+    and extracting:
+    - Day of week (MON, TUE, WED, THU, FRI, SAT)
+    - Subject codes (e.g., OS137-BSCS-3A)
+    - Time ranges (e.g., 9:00-11:00)
+    - Room/Location (e.g., LR 3, TBA)
     """
     
+    # Day patterns for row identification
+    DAY_LABELS = {
+        'MON': 'M', 'MONDAY': 'M',
+        'TUE': 'T', 'TUESDAY': 'T',
+        'WED': 'W', 'WEDNESDAY': 'W',
+        'THU': 'TH', 'THURSDAY': 'TH',
+        'FRI': 'F', 'FRIDAY': 'F',
+        'SAT': 'S', 'SATURDAY': 'S',
+    }
+    
+    # Subject pattern: "OS137-BSCS-3A" or "05137 - BSCS-3A" or "MIT204-MIT-1"
+    IDP_SUBJECT_PATTERN = re.compile(
+        r'([A-Z0-9]{2,}\d{2,4})\s*[-–=]\s*([A-Z]{2,})\s*(?:[-–]\s*)?(\d*[A-Z]*)',
+        re.IGNORECASE
+    )
+    
+    # Alternative pattern for schedule codes like "(BSCS125870)"
+    SCHEDULE_CODE_PATTERN = re.compile(r'\(([A-Z]{3,4}\d{5,6})\)', re.IGNORECASE)
+    
+    # Time pattern: find pairs of times like "9:00-11:00" or "1:00-4:00"
+    # More flexible to handle OCR noise
+    IDP_TIME_PATTERN = re.compile(r'(\d{1,2}:\d{2})\s*[-–/]\s*(\d{1,2}:\d{2})')
+    
+    # Room/Location pattern - handles OCR variations like iR3 -> LR3, CLA
+    IDP_ROOM_PATTERN = re.compile(
+        r'\b([iIlL][Rr]\s*\d+|CLA\s*\d*|COM\s*LAB(?:\s*\d+)?|TBA|GYM|FIELD|LAB\d*)\b',
+        re.IGNORECASE
+    )
+    
+    # Keywords to skip (lines with these but no subject pattern)
+    SKIP_KEYWORDS = [
+        'ADMIN FUNCTION', 'STUDENT CONSULTATION', 'LESSON PREPARATION',
+        'PRODUCTION', 'EXTENSION', 'ADVISING', 'DTR', 'ATTENDANCE',
+        'QUASI', 'OVERLOAD', 'CONTACT HOURS', 'ACTIVITIES', 'TOTAL'
+    ]
+    
+    def _extract_from_image(self, file_path: str) -> List[Dict]:
+        """
+        Extract courses from image using pytesseract with preprocessing.
+        Overrides base method to add image scaling for better OCR.
+        
+        Args:
+            file_path: Path to image file
+            
+        Returns:
+            List of course dictionaries
+        """
+        if not PYTESSERACT_AVAILABLE:
+            raise ImportError("pytesseract is required for image OCR")
+        
+        logger.info(f"Extracting from faculty IDP image: {file_path}")
+        image = Image.open(file_path)
+        
+        # Try multiple OCR attempts and combine results
+        all_courses = []
+        seen_courses = set()  # Track unique courses by (subject, day, start_time)
+        
+        # Attempt 1: Original size with psm 6
+        text1 = pytesseract.image_to_string(image, config='--psm 6')
+        courses1 = self._parse_text(text1)
+        for c in courses1:
+            key = (c['subject_code'], c['day'], c['start_time'])
+            if key not in seen_courses:
+                seen_courses.add(key)
+                all_courses.append(c)
+        
+        # Attempt 2: Scaled 2x for small images
+        width, height = image.size
+        if width < 3000:
+            scaled = image.resize((width * 2, height * 2), Image.LANCZOS)
+            text2 = pytesseract.image_to_string(scaled, config='--psm 6')
+            courses2 = self._parse_text(text2)
+            for c in courses2:
+                key = (c['subject_code'], c['day'], c['start_time'])
+                if key not in seen_courses:
+                    seen_courses.add(key)
+                    all_courses.append(c)
+        
+        logger.info(f"Combined OCR extracted {len(all_courses)} unique courses")
+        return all_courses
+    
     def _parse_text(self, text: str) -> List[Dict]:
-        """Parse faculty COR text."""
-        logger.warning("Faculty COR extraction not yet implemented")
-        return []
+        """
+        Parse faculty IDP text extracted via OCR.
+        
+        Args:
+            text: Full text extracted from document
+            
+        Returns:
+            List of course dictionaries
+        """
+        courses = []
+        lines = text.split('\n')
+        current_day = None
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Skip header rows and non-teaching sections
+            upper_line = line.upper()
+            if any(keyword in upper_line for keyword in self.SKIP_KEYWORDS):
+                if not self.IDP_SUBJECT_PATTERN.search(line):
+                    continue
+            
+            # Check if this line starts with a day label
+            day_found = self._extract_day_from_line(line)
+            if day_found:
+                current_day = day_found
+            
+            # Try to parse course from this line
+            course = self._parse_idp_line(line, current_day)
+            if course:
+                # Split multi-day courses
+                split_courses = split_course_by_days(course)
+                courses.extend(split_courses)
+        
+        logger.info(f"Extracted {len(courses)} courses from Faculty IDP (OCR)")
+        return courses
+    
+    def _extract_day_from_line(self, line: str) -> Optional[str]:
+        """
+        Extract day code from the beginning of a line.
+        Handles OCR variations like 'rmon', 'THu', etc.
+        
+        Args:
+            line: Line of text
+            
+        Returns:
+            Day code (M, T, W, TH, F, S) or None
+        """
+        # Clean up common OCR errors
+        clean_line = line.upper().strip()
+        
+        # Handle OCR variations
+        ocr_day_variations = {
+            'RMON': 'MON', 'RMON|': 'MON', 'MON|': 'MON', '|MON': 'MON',
+            '|TUE': 'TUE', 'ITUE': 'TUE',
+            '|WED': 'WED', 'IWED': 'WED',
+            '|THU': 'THU', 'ITHU': 'THU', 'THU|': 'THU',
+            '|FRI': 'FRI', 'IFRI': 'FRI',
+            '|SAT': 'SAT', 'ISAT': 'SAT',
+        }
+        
+        for ocr_var, correct in ocr_day_variations.items():
+            if clean_line.startswith(ocr_var):
+                clean_line = correct + clean_line[len(ocr_var):]
+                break
+        
+        for label, code in self.DAY_LABELS.items():
+            if clean_line.startswith(label):
+                return code
+        
+        return None
+    
+    def _parse_idp_line(self, line: str, current_day: Optional[str]) -> Optional[Dict]:
+        """
+        Parse an IDP line to extract course information.
+        
+        Args:
+            line: Line of text from OCR
+            current_day: Current day context from previous lines
+            
+        Returns:
+            Course dictionary or None if parsing fails
+        """
+        # Look for subject code pattern
+        subject_match = self.IDP_SUBJECT_PATTERN.search(line)
+        if not subject_match:
+            return None
+        
+        # Build subject code
+        subj_prefix = subject_match.group(1).upper()
+        # Fix common OCR errors: O -> 0, but keep OS as OS
+        if subj_prefix.startswith('O') and len(subj_prefix) > 1 and subj_prefix[1].isdigit():
+            subj_prefix = '0' + subj_prefix[1:]
+        subj_prefix = subj_prefix.replace('0S', 'OS')
+        
+        subj_program = subject_match.group(2).upper()
+        subj_section = subject_match.group(3).upper() if subject_match.group(3) else ''
+        
+        # Build subject code - include section if present
+        if subj_section:
+            subject_code = f"{subj_prefix}-{subj_program}-{subj_section}"
+        else:
+            subject_code = f"{subj_prefix}-{subj_program}"
+        
+        # Check if this is a lab section
+        if 'LAB' in line.upper():
+            subject_code += " Lab"
+        
+        # Extract time range - try multiple patterns
+        time_match = self.IDP_TIME_PATTERN.search(line)
+        
+        if not time_match:
+            # Try finding individual times and pair them
+            times = re.findall(r'(\d{1,2}:\d{2})', line)
+            if len(times) >= 2:
+                # Use first two times found
+                start_time = self._convert_to_12hr(times[0])
+                end_time = self._convert_to_12hr(times[1])
+            else:
+                # Can't find valid time - skip this entry
+                return None
+        else:
+            start_time = self._convert_to_12hr(time_match.group(1))
+            end_time = self._convert_to_12hr(time_match.group(2))
+        
+        # Extract room/location
+        room_match = self.IDP_ROOM_PATTERN.search(line)
+        location = ''
+        if room_match:
+            loc = room_match.group(1).upper()
+            # Fix OCR errors: iR -> LR, IR -> LR, lR -> LR
+            loc = re.sub(r'^[iIlL][Rr]', 'LR', loc)
+            location = loc.replace(' ', '')
+        
+        # Get day from line or use current context
+        day = self._extract_day_from_line(line) or current_day or ''
+        
+        course = {
+            'subject_code': subject_code,
+            'subject_name': '',  # IDP doesn't include full subject names
+            'start_time': start_time,
+            'end_time': end_time,
+            'day': day,
+            'location': location
+        }
+        
+        logger.debug(f"Parsed IDP course (OCR): {course}")
+        return course
+    
+    def _convert_to_12hr(self, time_str: str) -> str:
+        """
+        Convert time string to 12-hour format.
+        Handles OCR variations like "9.00" instead of "9:00".
+        
+        Args:
+            time_str: Time like "9:00", "13:00", "1.00"
+            
+        Returns:
+            Time in format "09:00AM" or "01:00PM"
+        """
+        try:
+            # Normalize separator (handle . instead of :)
+            time_str = time_str.replace('.', ':')
+            
+            parts = time_str.split(':')
+            hour = int(parts[0])
+            minute = parts[1] if len(parts) > 1 else '00'
+            
+            # Handle 24-hour format (13:00 - 23:00)
+            if hour >= 13:
+                return f"{hour - 12:02d}:{minute}PM"
+            elif hour == 12:
+                return f"12:{minute}PM"
+            elif hour == 0:
+                return f"12:{minute}AM"
+            else:
+                # Ambiguous times (1-11): use context
+                # Assume times < 7 are PM (afternoon classes)
+                if hour < 7:
+                    return f"{hour:02d}:{minute}PM"
+                else:
+                    return f"{hour:02d}:{minute}AM"
+        except Exception:
+            return time_str
 
 
 # Factory function to get the appropriate extractor

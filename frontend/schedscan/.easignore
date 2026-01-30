@@ -1,0 +1,27 @@
+# Ignore node_modules - EAS will install dependencies
+node_modules/
+
+# Ignore .expo folder
+.expo/
+
+# Ignore git
+.git/
+
+# Ignore test files
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+
+# Ignore build outputs
+dist/
+build/
+android/
+ios/
+
+# Ignore IDE files
+.vscode/
+.idea/
+
+# Ignore macOS files
+.DS_Store
