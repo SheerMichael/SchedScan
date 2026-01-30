@@ -532,16 +532,52 @@ class StudentPDFExtractor(BasePDFExtractor):
 
 class FacultyPDFExtractor(BasePDFExtractor):
     """
-    Extractor for Faculty Certificate of Registration documents.
+    Extractor for Faculty Individual Daily Program (IDP) documents.
     
-    Note: This is a placeholder implementation. Faculty COR extraction logic
-    will be implemented in a future update as faculty documents have different
-    formats and validation rules.
+    Parses the CONTACT HOURS / ACTUAL TEACHING LOAD table to extract:
+    - Subject codes (e.g., OS137-BSCS-3A)
+    - Time ranges (e.g., 9:00-11:00 → 09:00AM-11:00AM)
+    - Room/Location (e.g., LR 3, TBA)
+    - Day of week (MON, TUE, WED, THU, FRI, SAT)
+    
+    Skips OVERLOAD and QUASI TEACHING sections.
     """
+    
+    # Regex patterns for IDP parsing
+    # Subject pattern: "OS137-BSCS-3A (BSCS125870)" or "MIT204-MIT-1 (MIT125173)"
+    IDP_SUBJECT_PATTERN = re.compile(
+        r'([A-Z]{2,}\d+)-([A-Z]+)-(\d+[A-Z]?)\s*\(([A-Z]{3,4}\d+)\)',
+        re.IGNORECASE
+    )
+    
+    # Alternative subject pattern for simpler codes
+    SIMPLE_SUBJECT_PATTERN = re.compile(
+        r'([A-Z]{2,}\d+)-([A-Z]+)-(\d+[A-Z]?)',
+        re.IGNORECASE
+    )
+    
+    # Time range pattern: "9:00-11:00" or "1:00-4:00" or "2:30-5:30"
+    IDP_TIME_PATTERN = re.compile(r'(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})')
+    
+    # Room/Location pattern - prioritize LR rooms before LAB to avoid conflicts
+    IDP_ROOM_PATTERN = re.compile(
+        r'\b(LR\s*\d+|COM\s*LAB(?:\s*\d+)?|TBA|GYM|FIELD)\b',
+        re.IGNORECASE
+    )
+    
+    # Day patterns for row identification
+    DAY_LABELS = {
+        'MON': 'M', 'MONDAY': 'M',
+        'TUE': 'T', 'TUESDAY': 'T',
+        'WED': 'W', 'WEDNESDAY': 'W',
+        'THU': 'TH', 'THURSDAY': 'TH',
+        'FRI': 'F', 'FRIDAY': 'F',
+        'SAT': 'S', 'SATURDAY': 'S',
+    }
     
     def _extract_from_page(self, page) -> List[Dict]:
         """
-        Extract courses from a faculty COR page.
+        Extract courses from a faculty IDP page.
         
         Args:
             page: pdfplumber page object
@@ -549,9 +585,289 @@ class FacultyPDFExtractor(BasePDFExtractor):
         Returns:
             List of course dictionaries
         """
-        # TODO: Implement faculty-specific extraction logic
-        logger.warning("Faculty PDF extraction not yet implemented")
-        return []
+        courses = []
+        
+        # Strategy 1: Try table extraction (most reliable)
+        table_courses = self._extract_from_tables(page)
+        if table_courses:
+            logger.info(f"Extracted {len(table_courses)} courses from IDP tables")
+            return table_courses
+        
+        # Strategy 2: Fallback to text-based extraction
+        logger.info("No tables detected in IDP, using text-based extraction")
+        text_courses = self._extract_from_text(page)
+        if text_courses:
+            logger.info(f"Extracted {len(text_courses)} courses from IDP text")
+            return text_courses
+        
+        logger.warning("No courses found on this IDP page")
+        return courses
+    
+    def _extract_from_tables(self, page) -> List[Dict]:
+        """
+        Extract courses from IDP table structures.
+        
+        Args:
+            page: pdfplumber page object
+            
+        Returns:
+            List of course dictionaries
+        """
+        courses = []
+        
+        try:
+            # Use line-based table detection for structured IDP forms
+            table_settings = {
+                "vertical_strategy": "lines",
+                "horizontal_strategy": "lines",
+                "snap_tolerance": 5,
+            }
+            
+            tables = page.extract_tables(table_settings)
+            
+            if not tables:
+                # Try with text strategy as fallback
+                tables = page.extract_tables()
+            
+            if not tables:
+                return courses
+            
+            current_day = None
+            
+            for table in tables:
+                if not table or len(table) < 2:
+                    continue
+                
+                for row in table:
+                    if not row or not any(cell for cell in row if cell):
+                        continue
+                    
+                    # Join row cells for analysis
+                    row_text = ' '.join([str(cell) if cell else '' for cell in row])
+                    
+                    # Skip header rows and non-teaching sections
+                    if self._is_header_or_skip_row(row_text):
+                        continue
+                    
+                    # Check if this row starts with a day label
+                    day_from_row = self._extract_day_from_row(row)
+                    if day_from_row:
+                        current_day = day_from_row
+                    
+                    # Try to parse course from this row
+                    course = self._parse_idp_row(row, current_day)
+                    if course:
+                        courses.append(course)
+        
+        except Exception as e:
+            logger.warning(f"Error extracting IDP tables: {str(e)}")
+        
+        return courses
+    
+    def _is_header_or_skip_row(self, row_text: str) -> bool:
+        """
+        Check if row is a header or should be skipped.
+        
+        Args:
+            row_text: Combined text from row cells
+            
+        Returns:
+            True if row should be skipped
+        """
+        skip_keywords = [
+            'CONTACT HOURS', 'ACTUAL TEACHING', 'OVERLOAD',
+            'QUASI TEACHING', 'ACTIVITIES', 'SUBJECT', 'TIME', 'ROOM', 'HRS',
+            'NO. OF', 'STUD', 'ADMIN FUNCTION', 'STUDENT CONSULTATION',
+            'LESSON PREPARATION', 'PRODUCTION', 'EXTENSION', 'ADVISING',
+            'DTR', 'ATTENDANCE', 'TOTAL'
+        ]
+        
+        upper_text = row_text.upper()
+        
+        # Skip if row contains header keywords but no subject pattern
+        for keyword in skip_keywords:
+            if keyword in upper_text and not self.IDP_SUBJECT_PATTERN.search(row_text):
+                return True
+        
+        return False
+    
+    def _extract_day_from_row(self, row: List[str]) -> Optional[str]:
+        """
+        Extract day code from the first cell of a row.
+        
+        Args:
+            row: List of cell values
+            
+        Returns:
+            Day code (M, T, W, TH, F, S) or None
+        """
+        if not row or not row[0]:
+            return None
+        
+        first_cell = str(row[0]).strip().upper()
+        
+        for label, code in self.DAY_LABELS.items():
+            if first_cell == label or first_cell.startswith(label):
+                return code
+        
+        return None
+    
+    def _parse_idp_row(self, row: List[str], current_day: Optional[str]) -> Optional[Dict]:
+        """
+        Parse an IDP table row to extract course information.
+        
+        Args:
+            row: List of cell values from table row
+            current_day: Current day context from previous rows
+            
+        Returns:
+            Course dictionary or None if parsing fails
+        """
+        row_text = ' '.join([str(cell) if cell else '' for cell in row])
+        
+        # Look for subject code pattern
+        subject_match = self.IDP_SUBJECT_PATTERN.search(row_text)
+        if not subject_match:
+            subject_match = self.SIMPLE_SUBJECT_PATTERN.search(row_text)
+        
+        if not subject_match:
+            return None
+        
+        # Build subject code: "OS137-BSCS-3A"
+        subject_code = f"{subject_match.group(1)}-{subject_match.group(2)}-{subject_match.group(3)}"
+        
+        # Check if this is a lab section
+        if 'LAB' in row_text.upper():
+            subject_code += " Lab"
+        
+        # Extract time range
+        time_match = self.IDP_TIME_PATTERN.search(row_text)
+        if not time_match:
+            return None
+        
+        start_time = self._convert_to_12hr(time_match.group(1))
+        end_time = self._convert_to_12hr(time_match.group(2))
+        
+        # Extract room/location
+        room_match = self.IDP_ROOM_PATTERN.search(row_text)
+        location = room_match.group(1).upper().replace(' ', '') if room_match else ''
+        
+        # Get day from row or use current context
+        day = self._extract_day_from_row(row) or current_day or ''
+        
+        course = {
+            'subject_code': subject_code.upper(),
+            'subject_name': '',  # IDP doesn't include full subject names
+            'start_time': start_time,
+            'end_time': end_time,
+            'day': day,
+            'location': location
+        }
+        
+        logger.debug(f"Parsed IDP course: {course}")
+        return course
+    
+    def _convert_to_12hr(self, time_str: str) -> str:
+        """
+        Convert 24-hour or ambiguous time to 12-hour format.
+        
+        Args:
+            time_str: Time like "9:00", "13:00", "1:00"
+            
+        Returns:
+            Time in format "09:00AM" or "01:00PM"
+        """
+        try:
+            parts = time_str.split(':')
+            hour = int(parts[0])
+            minute = parts[1] if len(parts) > 1 else '00'
+            
+            # Handle 24-hour format (13:00 - 23:00)
+            if hour >= 13:
+                return f"{hour - 12:02d}:{minute}PM"
+            elif hour == 12:
+                return f"12:{minute}PM"
+            elif hour == 0:
+                return f"12:{minute}AM"
+            else:
+                # Ambiguous times (1-11): use context
+                # Assume times < 7 are PM (afternoon classes)
+                if hour < 7:
+                    return f"{hour:02d}:{minute}PM"
+                else:
+                    return f"{hour:02d}:{minute}AM"
+        except Exception:
+            return time_str
+    
+    def _extract_from_text(self, page) -> List[Dict]:
+        """
+        Extract courses from IDP page text when table detection fails.
+        
+        Args:
+            page: pdfplumber page object
+            
+        Returns:
+            List of course dictionaries
+        """
+        courses = []
+        
+        try:
+            text = page.extract_text()
+            if not text:
+                return courses
+            
+            lines = text.split('\n')
+            current_day = None
+            
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # Skip headers and quasi teaching sections
+                if self._is_header_or_skip_row(line):
+                    continue
+                
+                # Check for day at start of line
+                for label, code in self.DAY_LABELS.items():
+                    if line.upper().startswith(label):
+                        current_day = code
+                        break
+                
+                # Look for subject pattern
+                subject_match = self.IDP_SUBJECT_PATTERN.search(line)
+                if not subject_match:
+                    subject_match = self.SIMPLE_SUBJECT_PATTERN.search(line)
+                
+                if not subject_match:
+                    continue
+                
+                # Parse this line as a course
+                time_match = self.IDP_TIME_PATTERN.search(line)
+                if not time_match:
+                    continue
+                
+                subject_code = f"{subject_match.group(1)}-{subject_match.group(2)}-{subject_match.group(3)}"
+                if 'LAB' in line.upper():
+                    subject_code += " Lab"
+                
+                room_match = self.IDP_ROOM_PATTERN.search(line)
+                
+                course = {
+                    'subject_code': subject_code.upper(),
+                    'subject_name': '',
+                    'start_time': self._convert_to_12hr(time_match.group(1)),
+                    'end_time': self._convert_to_12hr(time_match.group(2)),
+                    'day': current_day or '',
+                    'location': room_match.group(1).upper().replace(' ', '') if room_match else ''
+                }
+                
+                courses.append(course)
+        
+        except Exception as e:
+            logger.warning(f"Error extracting from IDP text: {str(e)}")
+        
+        return courses
 
 
 # Factory function to get the appropriate PDF extractor
