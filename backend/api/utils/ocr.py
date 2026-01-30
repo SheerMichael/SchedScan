@@ -1,17 +1,29 @@
 """
 OCR Utility for extracting course information from Certificate of Registration (COR) documents.
-Uses the doctr library for document processing and text extraction.
 
-This module provides separate extractors for Student and Faculty COR documents,
-as they have different formats and validation rules.
+This module provides a hybrid approach:
+1. For PDFs: Uses pdfplumber text extraction (fast and accurate for digital PDFs)
+2. For Images: Uses pytesseract OCR with line-based text extraction
+
+Provides separate extractors for Student and Faculty COR documents.
 """
 
-from doctr.io import DocumentFile
-from doctr.models import kie_predictor
 import re
-from typing import List, Dict
+from typing import List, Dict, Optional
 import logging
 from abc import ABC, abstractmethod
+
+# PDF text extraction
+import pdfplumber
+
+# Image OCR (optional - for scanned documents)
+try:
+    import pytesseract
+    from PIL import Image
+    from pdf2image import convert_from_path
+    PYTESSERACT_AVAILABLE = True
+except ImportError:
+    PYTESSERACT_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +37,14 @@ DAY_CODE_EXPANSION = {
     'TH': ['TH'],
     'F': ['F'],
     'S': ['S'],
+    'SU': ['SU'],
+    'SUN': ['SUN'],
     # Two-day combinations
     'TF': ['T', 'F'],
     'MW': ['M', 'W'],
     'MTH': ['M', 'TH'],
     'TTH': ['T', 'TH'],
+    'WS': ['W', 'S'],
     # Three-day combinations
     'MWF': ['M', 'W', 'F'],
     # Four-day combinations
@@ -86,31 +101,44 @@ class BaseCORExtractor(ABC):
     """
     Base class for extracting course information from Certificate of Registration (COR) documents.
     Supports both PDF and image formats.
-    
-    Subclasses must implement the _group_into_courses method for specific document formats.
     """
     
-    def __init__(self, model=None):
+    # Regex patterns for WMSU COR format
+    # Schedule ID: 3-4 letters + 5-6 digits + optional letter (e.g., BSCS222285, BPE122026P)
+    SCHEDULE_ID_PATTERN = re.compile(r'([A-Z]{3,4}\d{5,6}[A-Z]?)')
+    
+    # Subject Code: 2-7 letters + optional space + 1-3 digits (e.g., CC 102, MATH 103, PATHFIT 2)
+    SUBJECT_CODE_PATTERN = re.compile(r'([A-Z]{2,7})\s*(\d{1,3})?')
+    
+    # Time patterns
+    TIME_PATTERN = re.compile(r'(\d{1,2}:\d{2}[AP]M)', re.IGNORECASE)
+    TIME_RANGE_PATTERN = re.compile(r'(\d{1,2}:\d{2}[AP]M)\s*-\s*(\d{1,2}:\d{2}[AP]M)', re.IGNORECASE)
+    
+    # Day pattern
+    DAY_PATTERN = re.compile(r'\b(SUN|SU|M|T|W|TH|F|S|TF|MW|MWF|MTH|TTH|WS|MTWTH|MTWTHF)\b', re.IGNORECASE)
+    
+    # Location pattern
+    LOCATION_PATTERN = re.compile(
+        r'\b(LR\s*\d+|LAB\s*\d*|CLA|CSM\s*\w*|COM\s*\d*|GYM|FIELD|EUTH\s*RM|WMSU)\b', 
+        re.IGNORECASE
+    )
+
+    def __init__(self, dpi: int = 300):
         """
-        Initialize the CORExtractor with a doctr KIE predictor model.
+        Initialize the CORExtractor.
         
         Args:
-            model: Pre-loaded doctr KIE predictor model. If None, will load default model.
+            dpi: DPI for PDF to image conversion (used for scanned PDFs)
         """
-        if model is None:
-            logger.info("Loading KIE predictor model...")
-            self.model = kie_predictor(
-                det_arch='db_resnet50', 
-                reco_arch='crnn_vgg16_bn',
-                pretrained=True
-            )
-            logger.info("Model loaded successfully!")
-        else:
-            self.model = model
+        self.dpi = dpi
+        logger.info(f"Initialized {self.__class__.__name__}")
 
     def extract_from_document(self, file_path: str) -> List[Dict]:
         """
         Extract course information from a document (PDF or image).
+        
+        For PDFs: Uses pdfplumber text extraction
+        For Images: Uses pytesseract OCR
         
         Args:
             file_path: Path to the document file
@@ -119,352 +147,219 @@ class BaseCORExtractor(ABC):
             List of dictionaries containing course information
         """
         try:
-            # Load document with appropriate method
             if file_path.lower().endswith('.pdf'):
-                logger.info("Loading PDF at 300 DPI (higher quality)...")
-                scale_factor = 300 / 72  # Calculate scale for 300 DPI
-                doc = DocumentFile.from_pdf(file_path, scale=scale_factor)
+                return self._extract_from_pdf(file_path)
             else:
-                doc = DocumentFile.from_images(file_path)
-            
-            # Process document with model
-            result = self.model(doc)
-            
-            # Parse and return results
-            return self._parse_document_elements(result)
+                return self._extract_from_image(file_path)
         
         except Exception as e:
             logger.error(f"Error extracting from document: {str(e)}")
             raise
 
-    def _parse_document_elements(self, result) -> List[Dict]:
+    def _extract_from_pdf(self, file_path: str) -> List[Dict]:
         """
-        Parse the model output into structured elements.
+        Extract courses from PDF using pdfplumber.
         
         Args:
-            result: Output from the doctr model
+            file_path: Path to PDF file
             
         Returns:
             List of course dictionaries
         """
-        all_elements = []
+        logger.info(f"Extracting from PDF: {file_path}")
         
-        # Extract all text elements from all pages
-        for page in result.pages:
-            predictions = page.predictions
-            for class_name, pred_list in predictions.items():
-                for pred in pred_list:
-                    all_elements.append({
-                        'text': pred.value.strip(),
-                        'geometry': pred.geometry
-                    })
+        all_text = ""
+        with pdfplumber.open(file_path) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text:
+                    all_text += text + "\n"
         
-        # Sort elements by position (Y coordinate first, then X)
-        all_elements.sort(
-            key=lambda x: (x['geometry'][0][1], x['geometry'][0][0]) 
-            if x['geometry'] else (0, 0)
-        )
+        if not all_text.strip():
+            logger.warning("No text extracted from PDF, trying OCR fallback...")
+            if PYTESSERACT_AVAILABLE:
+                return self._extract_from_pdf_with_ocr(file_path)
+            else:
+                logger.error("Pytesseract not available for OCR fallback")
+                return []
         
-        # Group elements into courses (implemented by subclass)
-        return self._group_into_courses(all_elements)
+        return self._parse_text(all_text)
+
+    def _extract_from_pdf_with_ocr(self, file_path: str) -> List[Dict]:
+        """
+        Extract from PDF using OCR (for scanned documents).
+        
+        Args:
+            file_path: Path to PDF file
+            
+        Returns:
+            List of course dictionaries
+        """
+        logger.info("Using OCR for scanned PDF...")
+        images = convert_from_path(file_path, dpi=self.dpi)
+        
+        all_text = ""
+        for i, image in enumerate(images):
+            text = pytesseract.image_to_string(image)
+            all_text += text + "\n"
+        
+        return self._parse_text(all_text)
+
+    def _extract_from_image(self, file_path: str) -> List[Dict]:
+        """
+        Extract courses from image using pytesseract.
+        
+        Args:
+            file_path: Path to image file
+            
+        Returns:
+            List of course dictionaries
+        """
+        if not PYTESSERACT_AVAILABLE:
+            raise ImportError("pytesseract is required for image OCR")
+        
+        logger.info(f"Extracting from image: {file_path}")
+        image = Image.open(file_path)
+        text = pytesseract.image_to_string(image)
+        
+        return self._parse_text(text)
 
     @abstractmethod
-    def _group_into_courses(self, elements: List[Dict]) -> List[Dict]:
+    def _parse_text(self, text: str) -> List[Dict]:
         """
-        Group text elements into structured course information.
-        Uses geometric/spatial parsing approach:
-        1. Find anchors (subject codes)
-        2. Find subject name spatially (to the right of anchor on same row)
-        3. Collect details vertically below anchor (until next anchor)
-        4. Parse details blob with regex
+        Parse extracted text into course dictionaries.
+        Must be implemented by subclasses.
         
         Args:
-            elements: Sorted list of text elements with geometry
+            text: Full text extracted from document
             
         Returns:
             List of course dictionaries
         """
-        courses = []
-        
-        # Define regex patterns for parsing
-        subject_code_pattern = re.compile(r'^[A-Z]{4,}\d{5,}$')
-        time_pattern = re.compile(r'([0-9]{2}:[0-9]{2}[AP]M)')
-        day_pattern = re.compile(r'\b(M|T|W|TH|F|S|TF|MW|MWF|MTH|TTH)\b')
-        location_pattern = re.compile(r'\b(LR\d*|LAB\d*|CLA\d*|COM\s?LAB\d*)\b', re.IGNORECASE)
-        is_number_pattern = re.compile(r'^\d+(\.\d{1,2})?$')
-        
-        # Geometric tolerance for matching elements on same row
-        Y_TOLERANCE = 0.02
-        
-        # Find all subject code anchors
-        anchors = []
-        for i, elem in enumerate(elements):
-            if subject_code_pattern.match(elem['text']):
-                anchors.append({
-                    'index': i,
-                    'text': elem['text'],
-                    'geometry': elem['geometry']
-                })
-        
-        # Memory for repeated subject codes
-        subject_name_map = {}
-        
-        # Process each anchor
-        for anchor_idx, anchor in enumerate(anchors):
-            subject_code = anchor['text']
-            anchor_geom = anchor['geometry']
-            anchor_y = anchor_geom[0][1]  # min_y of anchor
-            anchor_x_max = anchor_geom[1][0]  # max_x of anchor
-            
-            # Determine the range of elements for this anchor
-            start_index = anchor['index']
-            end_index = anchors[anchor_idx + 1]['index'] if anchor_idx + 1 < len(anchors) else len(elements)
-            
-            # STEP 1: Find Subject Name Spatially
-            current_subject_name = ''
-            subject_name_parts = []
-            
-            for i in range(start_index + 1, end_index):
-                elem = elements[i]
-                elem_geom = elem['geometry']
-                elem_y = elem_geom[0][1]
-                elem_x = elem_geom[0][0]
-                
-                # Check if on same row (Y overlaps)
-                if abs(elem_y - anchor_y) < Y_TOLERANCE:
-                    # Check if to the right of anchor
-                    if elem_x > anchor_x_max:
-                        text = elem['text']
-                        
-                        # Stop collecting if we hit time/location/day patterns
-                        if time_pattern.match(text):
-                            break
-                        if is_number_pattern.match(text):
-                            continue
-                        if location_pattern.match(text):
-                            break
-                        if day_pattern.match(text):
-                            break
-                        
-                        # Collect this text as part of subject name
-                        subject_name_parts.append(text)
-            
-            # Join collected parts to form complete subject name
-            if subject_name_parts:
-                current_subject_name = ' '.join(subject_name_parts)
-            
-            # Fallback to memory if no name found
-            if not current_subject_name:
-                current_subject_name = subject_name_map.get(subject_code, '')
-            else:
-                subject_name_map[subject_code] = current_subject_name
-            
-            # STEP 2: Collect Details Blob (vertically below anchor)
-            details_blob = []
-            for i in range(start_index + 1, end_index):
-                elem = elements[i]
-                if elem['text'] != current_subject_name:
-                    details_blob.append(elem['text'])
-            
-            # STEP 3: Parse Details Blob with Regex
-            blob_text = ' '.join(details_blob)
-            
-            time_matches = time_pattern.findall(blob_text)
-            day_matches = day_pattern.findall(blob_text)
-            location_matches = location_pattern.findall(blob_text)
-            
-            # Clean up locations (remove spaces, uppercase)
-            location_list = [re.sub(r'\s+', '', loc.upper()) for loc in location_matches]
-            
-            # STEP 4: Build Time Pairs
-            pairs = []
-            for j in range(len(time_matches) // 2):
-                pairs.append((time_matches[j*2], time_matches[j*2+1]))
-            if not pairs and len(time_matches) >= 2:
-                pairs.append((time_matches[0], time_matches[1]))
-            
-            if not pairs:  # No time found, skip this entry
-                continue
-            
-            # STEP 5: Assemble Course Entries
-            for idx_pair, (start_time, end_time) in enumerate(pairs):
-                course = {
-                    'subject_code': subject_code,
-                    'subject_name': current_subject_name,
-                    'start_time': start_time,
-                    'end_time': end_time,
-                    'day': day_matches[idx_pair] if idx_pair < len(day_matches) else (day_matches[0] if day_matches else ''),
-                    'location': location_list[idx_pair] if idx_pair < len(location_list) else (location_list[0] if location_list else '')
-                }
-                # Split multi-day courses into individual day entries
-                split_courses = split_course_by_days(course)
-                courses.extend(split_courses)
-        
-        logger.info(f"Extracted {len(courses)} courses from document (after day splitting)")
-        return courses
+        pass
 
 
 class StudentCORExtractor(BaseCORExtractor):
     """
-    Extractor for Student Certificate of Registration documents.
-    Uses spatial parsing to extract course schedules from student COR format.
-    """
+    Extractor for Student Certificate of Registration documents from WMSU.
+    Uses line-based parsing to extract course schedules.
     
-    def _group_into_courses(self, elements: List[Dict]) -> List[Dict]:
+    WMSU COR Format:
+    BSCS222285 CC 102 3.00 0.00 COMPUTER PROGRAMMING 2 02:30PM-04:00PM TF LR 3
+    """
+
+    def _parse_text(self, text: str) -> List[Dict]:
         """
-        Group text elements into structured course information for Student COR.
-        Uses geometric/spatial parsing approach:
-        1. Find anchors (subject codes)
-        2. Find subject name spatially (to the right of anchor on same row)
-        3. Collect details vertically below anchor (until next anchor)
-        4. Parse details blob with regex
+        Parse extracted text into course dictionaries.
         
         Args:
-            elements: Sorted list of text elements with geometry
+            text: Full text extracted from document
             
         Returns:
             List of course dictionaries
         """
         courses = []
+        lines = text.split('\n')
         
-        # Define regex patterns for parsing
-        subject_code_pattern = re.compile(r'^[A-Z]{4,}\d{5,}$')
-        time_pattern = re.compile(r'([0-9]{2}:[0-9]{2}[AP]M)')
-        day_pattern = re.compile(r'\b(M|T|W|TH|F|S|TF|MW|MWF|MTH|TTH)\b')
-        location_pattern = re.compile(r'\b(LR\d*|LAB\d*|CLA\d*|COM\s?LAB\d*)\b', re.IGNORECASE)
-        is_number_pattern = re.compile(r'^\d+(\.\d{1,2})?$')
-        
-        # Geometric tolerance for matching elements on same row
-        Y_TOLERANCE = 0.02
-        
-        # Find all subject code anchors
-        anchors = []
-        for i, elem in enumerate(elements):
-            if subject_code_pattern.match(elem['text']):
-                anchors.append({
-                    'index': i,
-                    'text': elem['text'],
-                    'geometry': elem['geometry']
-                })
-        
-        # Memory for repeated subject codes
-        subject_name_map = {}
-        
-        # Process each anchor
-        for anchor_idx, anchor in enumerate(anchors):
-            subject_code = anchor['text']
-            anchor_geom = anchor['geometry']
-            anchor_y = anchor_geom[0][1]  # min_y of anchor
-            anchor_x_max = anchor_geom[1][0]  # max_x of anchor
-            
-            # Determine the range of elements for this anchor
-            start_index = anchor['index']
-            end_index = anchors[anchor_idx + 1]['index'] if anchor_idx + 1 < len(anchors) else len(elements)
-            
-            # STEP 1: Find Subject Name Spatially
-            current_subject_name = ''
-            subject_name_parts = []
-            
-            for i in range(start_index + 1, end_index):
-                elem = elements[i]
-                elem_geom = elem['geometry']
-                elem_y = elem_geom[0][1]
-                elem_x = elem_geom[0][0]
-                
-                # Check if on same row (Y overlaps)
-                if abs(elem_y - anchor_y) < Y_TOLERANCE:
-                    # Check if to the right of anchor
-                    if elem_x > anchor_x_max:
-                        text = elem['text']
-                        
-                        # Stop collecting if we hit time/location/day patterns
-                        if time_pattern.match(text):
-                            break
-                        if is_number_pattern.match(text):
-                            continue
-                        if location_pattern.match(text):
-                            break
-                        if day_pattern.match(text):
-                            break
-                        
-                        # Collect this text as part of subject name
-                        subject_name_parts.append(text)
-            
-            # Join collected parts to form complete subject name
-            if subject_name_parts:
-                current_subject_name = ' '.join(subject_name_parts)
-            
-            # Fallback to memory if no name found
-            if not current_subject_name:
-                current_subject_name = subject_name_map.get(subject_code, '')
-            else:
-                subject_name_map[subject_code] = current_subject_name
-            
-            # STEP 2: Collect Details Blob (vertically below anchor)
-            details_blob = []
-            for i in range(start_index + 1, end_index):
-                elem = elements[i]
-                if elem['text'] != current_subject_name:
-                    details_blob.append(elem['text'])
-            
-            # STEP 3: Parse Details Blob with Regex
-            blob_text = ' '.join(details_blob)
-            
-            time_matches = time_pattern.findall(blob_text)
-            day_matches = day_pattern.findall(blob_text)
-            location_matches = location_pattern.findall(blob_text)
-            
-            # Clean up locations (remove spaces, uppercase)
-            location_list = [re.sub(r'\s+', '', loc.upper()) for loc in location_matches]
-            
-            # STEP 4: Build Time Pairs
-            pairs = []
-            for j in range(len(time_matches) // 2):
-                pairs.append((time_matches[j*2], time_matches[j*2+1]))
-            if not pairs and len(time_matches) >= 2:
-                pairs.append((time_matches[0], time_matches[1]))
-            
-            if not pairs:  # No time found, skip this entry
+        for line in lines:
+            line = line.strip()
+            if not line:
                 continue
             
-            # STEP 5: Assemble Course Entries
-            for idx_pair, (start_time, end_time) in enumerate(pairs):
-                course = {
-                    'subject_code': subject_code,
-                    'subject_name': current_subject_name,
-                    'start_time': start_time,
-                    'end_time': end_time,
-                    'day': day_matches[idx_pair] if idx_pair < len(day_matches) else (day_matches[0] if day_matches else ''),
-                    'location': location_list[idx_pair] if idx_pair < len(location_list) else (location_list[0] if location_list else '')
-                }
-                # Split multi-day courses into individual day entries
+            course = self._parse_line(line)
+            if course:
+                # Split multi-day courses
                 split_courses = split_course_by_days(course)
                 courses.extend(split_courses)
         
         logger.info(f"Extracted {len(courses)} courses from Student COR (after day splitting)")
         return courses
 
+    def _parse_line(self, line: str) -> Optional[Dict]:
+        """
+        Parse a single line to extract course information.
+        
+        WMSU format: SCHEDULE_ID SUBJECT_CODE UNITS SUBJECT_NAME TIME DAY LOCATION
+        Example: BSCS222285 CC 102 3.00 0.00 COMPUTER PROGRAMMING 2 02:30PM-04:00PM TF LR 3
+        
+        Args:
+            line: Single line of text
+            
+        Returns:
+            Course dictionary or None if not a valid course line
+        """
+        # Check for schedule ID (required indicator of course line)
+        schedule_match = self.SCHEDULE_ID_PATTERN.search(line)
+        if not schedule_match:
+            return None
+        
+        # Check for time range (required for valid schedule)
+        time_match = self.TIME_RANGE_PATTERN.search(line)
+        if not time_match:
+            return None
+        
+        # Extract schedule ID and get text after it
+        schedule_id = schedule_match.group(1)
+        after_schedule = line[schedule_match.end():].strip()
+        
+        # Extract subject code (first matching pattern after schedule ID)
+        subj_match = self.SUBJECT_CODE_PATTERN.match(after_schedule)
+        if not subj_match:
+            return None
+        
+        subj_letters = subj_match.group(1)
+        subj_num = subj_match.group(2) or ''
+        subject_code = f"{subj_letters} {subj_num}".strip() if subj_num else subj_letters
+        
+        # Extract times
+        start_time = time_match.group(1).upper()
+        end_time = time_match.group(2).upper()
+        
+        # Extract day (look after time)
+        after_time = line[time_match.end():].strip()
+        day_match = self.DAY_PATTERN.search(after_time)
+        day = day_match.group(1).upper() if day_match else ''
+        
+        # Extract location
+        location_match = self.LOCATION_PATTERN.search(after_time)
+        location = re.sub(r'\s+', '', location_match.group(1).upper()) if location_match else ''
+        
+        # Extract subject name (between units and time)
+        # Find units pattern: X.XX X.XX (e.g., 3.00 0.00)
+        units_pattern = re.compile(r'[\d.]+\s+[\d.]+\s+')
+        units_match = units_pattern.search(after_schedule)
+        
+        subject_name = ''
+        if units_match:
+            # Subject name is between units and time
+            after_units = after_schedule[units_match.end():]
+            time_in_after = self.TIME_RANGE_PATTERN.search(after_units)
+            if time_in_after:
+                subject_name = after_units[:time_in_after.start()].strip()
+        
+        # Validate minimum required fields
+        if not subject_code or not start_time or not end_time or not day:
+            return None
+        
+        return {
+            'subject_code': subject_code.upper(),
+            'subject_name': subject_name,
+            'start_time': start_time,
+            'end_time': end_time,
+            'day': day,
+            'location': location
+        }
+
 
 class FacultyCORExtractor(BaseCORExtractor):
     """
     Extractor for Faculty Certificate of Registration documents.
     
-    Note: This is a placeholder implementation. Faculty COR extraction logic
-    will be implemented in a future update as faculty documents have different
-    formats and validation rules.
+    Note: This is a placeholder implementation.
     """
     
-    def _group_into_courses(self, elements: List[Dict]) -> List[Dict]:
-        """
-        Group text elements into structured course information for Faculty COR.
-        
-        Args:
-            elements: Sorted list of text elements with geometry
-            
-        Returns:
-            List of course dictionaries
-        """
-        # TODO: Implement faculty-specific extraction logic
+    def _parse_text(self, text: str) -> List[Dict]:
+        """Parse faculty COR text."""
         logger.warning("Faculty COR extraction not yet implemented")
         return []
 

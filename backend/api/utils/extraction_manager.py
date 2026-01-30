@@ -15,12 +15,14 @@ import logging
 from typing import Dict, List
 from .pdf_extractor import get_pdf_extractor, calculate_quality_score
 
-# Try to import OCR module - it's optional and requires heavy dependencies
+# Try to import OCR module - uses pytesseract (lightweight)
 try:
     from .ocr import get_cor_extractor
     OCR_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     OCR_AVAILABLE = False
+    import logging
+    logging.getLogger(__name__).warning(f"OCR not available: {e}")
 
 logger = logging.getLogger(__name__)
 

@@ -1,0 +1,4 @@
+# System dependencies for OCR schedule extraction
+# These are installed by DigitalOcean App Platform during build
+tesseract-ocr
+poppler-utils

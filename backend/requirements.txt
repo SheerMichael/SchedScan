@@ -21,11 +21,12 @@ tabulate==0.9.0
 Pillow==10.1.0
 
 # ============================================
-# OCR Dependencies (OPTIONAL - Heavy ~2GB)
+# OCR Dependencies (Lightweight - pytesseract)
 # ============================================
-# Only install these locally if you need OCR fallback:
-# pip install python-doctr[torch]==0.8.1 opencv-python-headless==4.8.1.78
-#
-# Note: These require system libraries (libGL) that may not be
-# available on cloud platforms. PDF extraction via pdfplumber
-# is the primary method and works for most COR documents.
+# Note: pytesseract requires Tesseract OCR to be installed on the system
+# On Ubuntu/Debian: apt-get install tesseract-ocr
+# On DigitalOcean App Platform: Add to Dockerfile or use buildpack
+pytesseract==0.3.10
+pdf2image==1.16.3
+# pdf2image requires poppler-utils: apt-get install poppler-utils
+
