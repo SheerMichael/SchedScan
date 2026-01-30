@@ -36,4 +36,7 @@ urlpatterns = [
     # Task endpoints
     path('tasks/', views.TaskListCreateView.as_view(), name='task_list_create'),
     path('tasks/<int:pk>/', views.TaskDetailView.as_view(), name='task_detail'),
+    
+    # Push notification endpoints
+    path('push-token/', views.RegisterPushTokenView.as_view(), name='register_push_token'),
 ]

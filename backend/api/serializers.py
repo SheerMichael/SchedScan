@@ -372,3 +372,25 @@ class TaskSerializer(serializers.ModelSerializer):
         """
         user = self.context['request'].user
         return Task.objects.create(user=user, **validated_data)
+
+
+class PushTokenSerializer(serializers.Serializer):
+    """
+    Serializer for registering Expo push notification tokens.
+    """
+    expo_push_token = serializers.CharField(
+        max_length=100,
+        required=True,
+        help_text="Expo push notification token (e.g., ExponentPushToken[xxxxxx])"
+    )
+
+    def validate_expo_push_token(self, value):
+        """
+        Validate that the token looks like an Expo push token.
+        """
+        if not value.startswith('ExponentPushToken[') and not value.startswith('ExpoPushToken['):
+            raise serializers.ValidationError(
+                "Invalid Expo push token format. Token should start with 'ExponentPushToken[' or 'ExpoPushToken['"
+            )
+        return value
+

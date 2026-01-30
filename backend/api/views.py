@@ -20,7 +20,8 @@ from .serializers import (
     CourseSerializer,
     ScheduleSerializer,
     ScheduleListSerializer,
-    TaskSerializer
+    TaskSerializer,
+    PushTokenSerializer
 )
 from .models import Course, Schedule, Task
 from .utils.extraction_manager import ExtractionManager
@@ -881,3 +882,50 @@ class DeleteAccountView(APIView):
                 {"error": "Failed to delete account"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+# =============================================================================
+# Push Notification Views
+# =============================================================================
+
+class RegisterPushTokenView(APIView):
+    """
+    API endpoint to register or update Expo push notification token.
+    
+    POST /api/push-token/
+    Headers: Authorization: Bearer <access_token>
+    Request body: {
+        "expo_push_token": "ExponentPushToken[xxxxxxxxxxxxxx]"
+    }
+    
+    Response: {
+        "message": "Push token registered successfully",
+        "expo_push_token": "ExponentPushToken[xxxxxxxxxxxxxx]"
+    }
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        serializer = PushTokenSerializer(data=request.data)
+        
+        if not serializer.is_valid():
+            return Response(
+                serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        token = serializer.validated_data['expo_push_token']
+        
+        # Save token to user
+        request.user.expo_push_token = token
+        request.user.save(update_fields=['expo_push_token'])
+        
+        logger.info(f"Push token registered for user {request.user.id}")
+        
+        return Response(
+            {
+                "message": "Push token registered successfully",
+                "expo_push_token": token
+            },
+            status=status.HTTP_200_OK
+        )

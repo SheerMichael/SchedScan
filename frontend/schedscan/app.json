@@ -53,7 +53,8 @@
     "extra": {
       "eas": {
         "projectId": "b637c01f-5d0c-4859-bfa1-ebb25819f464"
-      }
+      },
+      "apiUrl": "http://192.168.1.250:8000/api"
     },
     "owner": "kosuru"
   }

@@ -1,4 +1,4 @@
-import {useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 import * as Device from "expo-device";
 import * as Notification from "expo-notifications";
@@ -6,10 +6,13 @@ import * as Notification from "expo-notifications";
 import Constants from "expo-constants";
 
 import { Platform } from "react-native";
+import { registerPushToken } from "./services/pushNotificationService";
 
 export interface PushNotificationState {
     notification?: Notification.Notification;
     expoPushToken?: Notification.ExpoPushToken;
+    isRegisteredWithBackend: boolean;
+    registerTokenWithBackend: () => Promise<boolean>;
 }
 
 export const usePushNotification = (): PushNotificationState => {
@@ -29,7 +32,9 @@ export const usePushNotification = (): PushNotificationState => {
 
     const [notification, setNotification] = useState<
         Notification.Notification | undefined
-    >();  
+    >();
+
+    const [isRegisteredWithBackend, setIsRegisteredWithBackend] = useState(false);
 
     const notificationListener = useRef<Notification.Subscription | null>(null);
     const responseListener = useRef<Notification.Subscription | null>(null);
@@ -43,7 +48,7 @@ export const usePushNotification = (): PushNotificationState => {
 
             let finalStatus = existingStatus;
 
-            if(existingStatus !== "granted") { 
+            if (existingStatus !== "granted") {
                 const { status } = await Notification.requestPermissionsAsync();
                 finalStatus = status;
             }
@@ -55,7 +60,7 @@ export const usePushNotification = (): PushNotificationState => {
                 projectId: Constants.expoConfig?.extra?.eas.projectId,
             })
 
-            if(Platform.OS === "android") {
+            if (Platform.OS === "android") {
                 Notification.setNotificationChannelAsync("default", {
                     name: "default",
                     importance: Notification.AndroidImportance.MAX,
@@ -70,6 +75,28 @@ export const usePushNotification = (): PushNotificationState => {
             return;
         }
     }
+
+    /**
+     * Register the current push token with the backend.
+     * Call this after user is authenticated.
+     * Returns true if successful, false otherwise.
+     */
+    const registerTokenWithBackend = useCallback(async (): Promise<boolean> => {
+        if (!expoPushToken?.data) {
+            console.log("No push token available to register");
+            return false;
+        }
+
+        try {
+            await registerPushToken(expoPushToken.data);
+            setIsRegisteredWithBackend(true);
+            console.log("Push token registered with backend successfully");
+            return true;
+        } catch (error) {
+            console.error("Failed to register push token with backend:", error);
+            return false;
+        }
+    }, [expoPushToken]);
 
     useEffect(() => {
         registerForPushNotificationsAsync().then((token) => {
@@ -93,5 +120,10 @@ export const usePushNotification = (): PushNotificationState => {
 
     }, []);
 
-    return { notification, expoPushToken };
+    return {
+        notification,
+        expoPushToken,
+        isRegisteredWithBackend,
+        registerTokenWithBackend
+    };
 };

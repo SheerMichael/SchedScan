@@ -51,6 +51,12 @@ class User(AbstractUser):
         blank=True,
         help_text="User's profile picture"
     )
+    expo_push_token = models.CharField(
+        max_length=100,
+        null=True,
+        blank=True,
+        help_text="Expo push notification token for this device"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

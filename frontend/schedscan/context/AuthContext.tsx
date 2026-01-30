@@ -1,6 +1,7 @@
-import React, { createContext, useState, useContext, useEffect } from 'react';
+import React, { createContext, useState, useContext, useEffect, useCallback } from 'react';
 import { authService, User, LoginData, RegisterData } from '../services/authService';
 import { scheduleStorageService } from '../services/scheduleStorageService';
+import { usePushNotification } from '../usePushNotification';
 
 interface AuthContextType {
   user: User | null;
@@ -10,6 +11,7 @@ interface AuthContextType {
   register: (data: RegisterData) => Promise<void>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
+  registerPushNotificationToken: () => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -18,10 +20,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Get push notification hook
+  const { expoPushToken, registerTokenWithBackend } = usePushNotification();
+
   // Check authentication on mount
   useEffect(() => {
     checkAuth();
   }, []);
+
+  // Register push token when user becomes authenticated and token is available
+  useEffect(() => {
+    if (user && expoPushToken?.data) {
+      registerTokenWithBackend();
+    }
+  }, [user, expoPushToken, registerTokenWithBackend]);
 
   const checkAuth = async () => {
     try {
@@ -29,7 +41,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (isAuth) {
         const storedUser = await authService.getStoredUser();
         setUser(storedUser);
-        
+
         // Migrate/clear legacy schedules for this user
         if (storedUser?.id) {
           await scheduleStorageService.migrateLegacySchedules(storedUser.id);
@@ -48,11 +60,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(true);
       const response = await authService.login(data);
       setUser(response.user);
-      
+
       // Migrate/clear legacy schedules for this user
       if (response.user?.id) {
         await scheduleStorageService.migrateLegacySchedules(response.user.id);
       }
+
+      // Push token registration happens automatically via useEffect
     } catch (error) {
       throw error;
     } finally {
@@ -65,11 +79,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(true);
       const response = await authService.register(data);
       setUser(response.user);
-      
+
       // Migrate/clear legacy schedules for this user
       if (response.user?.id) {
         await scheduleStorageService.migrateLegacySchedules(response.user.id);
       }
+
+      // Push token registration happens automatically via useEffect
     } catch (error) {
       throw error;
     } finally {
@@ -100,6 +116,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  /**
+   * Manually trigger push notification token registration.
+   * Useful if the automatic registration failed or token changed.
+   */
+  const registerPushNotificationToken = useCallback(async (): Promise<boolean> => {
+    if (!user) {
+      console.log('Cannot register push token: user not authenticated');
+      return false;
+    }
+    return registerTokenWithBackend();
+  }, [user, registerTokenWithBackend]);
+
   return (
     <AuthContext.Provider
       value={{
@@ -110,6 +138,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         register,
         logout,
         refreshUser,
+        registerPushNotificationToken,
       }}
     >
       {children}

@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'react-native';
 import { router } from "expo-router";
 import Svg, { Path } from 'react-native-svg';
-import { Eye, EyeOff} from "lucide-react-native";
+import { Eye, EyeOff } from "lucide-react-native";
 import { useAuth } from '../../context/AuthContext';
 
 const LoginScreen = () => {
@@ -14,11 +14,11 @@ const LoginScreen = () => {
   const [isLoading, setIsLoading] = useState(false);
   const { login } = useAuth();
 
-    const ChevronRightIcon = ({ size = 24, color = '#ffffff' }) => (
-      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
-        <Path d="M19 12H6M12 5l-7 7 7 7" />
-      </Svg>
-    );
+  const ChevronRightIcon = ({ size = 24, color = '#ffffff' }) => (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
+      <Path d="M19 12H6M12 5l-7 7 7 7" />
+    </Svg>
+  );
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -36,12 +36,12 @@ const LoginScreen = () => {
     try {
       setIsLoading(true);
       await login({ email, password });
-      
+
       // Navigate to home screen after successful login
       router.replace('/Home/home');
     } catch (error: any) {
       let errorMessage = 'Login failed. Please check your credentials.';
-      
+
       if (error.message === 'Network Error' || !error.response) {
         errorMessage = 'Cannot connect to server. Please check:\n\n' +
           '1. Backend server is running (python manage.py runserver)\n' +
@@ -49,13 +49,13 @@ const LoginScreen = () => {
           '3. Firewall is not blocking the connection';
       } else if (error.response?.data) {
         const data = error.response.data;
-        errorMessage = data.non_field_errors?.[0] 
-          || data.detail 
+        errorMessage = data.non_field_errors?.[0]
+          || data.detail
           || data.email?.[0]
           || data.password?.[0]
           || 'Login failed. Please check your credentials.';
       }
-      
+
       Alert.alert('Login Failed', errorMessage);
       console.error('Login error:', error);
     } finally {
@@ -77,9 +77,9 @@ const LoginScreen = () => {
 
         {/* Back Button */}
         <View className='mb-60'>
-        <TouchableOpacity onPress={() => router.push('/intro/getstarted')} className="mb-5 w-4 absolute top-12 left-2">
-          <ChevronRightIcon size={30} color="#000000" />
-        </TouchableOpacity>
+          <TouchableOpacity onPress={() => router.push('/intro/getstarted')} className="mb-5 w-4 absolute top-12 left-2">
+            <ChevronRightIcon size={30} color="#000000" />
+          </TouchableOpacity>
         </View>
 
         <View className='flex items-center justify-center'>
@@ -89,87 +89,83 @@ const LoginScreen = () => {
           </Text>
         </View>
 
-          {/* Email Label */}
-          <Text className="text-sm font-semibold text-gray-700 mb-1 items-start">Email</Text>
+        {/* Email Label */}
+        <Text className="text-sm font-semibold text-gray-700 mb-1 items-start">Email</Text>
+        <TextInput
+          placeholder="your.email@example.com"
+          placeholderTextColor="#9CA3AF"
+          className="border border-gray-300 rounded-lg px-4 py-3 mb-5 text-gray-800 w-full"
+          value={email}
+          onChangeText={setEmail}
+          keyboardType="email-address"
+          autoCapitalize="none"
+          editable={!isLoading}
+        />
+
+        {/* Password Label */}
+        <Text className="text-sm font-semibold text-gray-700 mb-1">Password</Text>
+
+        {/* Password Field */}
+        <View className="relative mb-2 w-full">
           <TextInput
-            placeholder="your.email@example.com"
+            placeholder="Your password"
             placeholderTextColor="#9CA3AF"
-            className="border border-gray-300 rounded-lg px-4 py-3 mb-5 text-gray-800 w-full"
-            value={email}
-            onChangeText={setEmail}
-            keyboardType="email-address"
-            autoCapitalize="none"
+            secureTextEntry={!showPassword}
+            className="border border-gray-300 rounded-lg px-4 py-3 pr-10 text-gray-800 w-full"
+            value={password}
+            onChangeText={setPassword}
             editable={!isLoading}
           />
-
-          {/* Password Label */}
-          <Text className="text-sm font-semibold text-gray-700 mb-1">Password</Text>
-          
-          {/* Password Field */}
-          <View className="relative mb-2 w-full">
-            <TextInput
-              placeholder="Your password"
-              placeholderTextColor="#9CA3AF"
-              secureTextEntry={!showPassword}
-              className="border border-gray-300 rounded-lg px-4 py-3 pr-10 text-gray-800 w-full"
-              value={password}
-              onChangeText={setPassword}
-              editable={!isLoading}
-            />
-            <TouchableOpacity
-              onPress={() => setShowPassword(!showPassword)}
-              className="absolute right-3 top-3"
-              disabled={isLoading}
-            >
-              {showPassword ? <Eye size={20} color="#444" /> : <EyeOff size={20} color="#444" />}
-            </TouchableOpacity>
-          </View>
-
-          {/* Forgot Password */}
-          <TouchableOpacity className="self-end mb-6" disabled={isLoading}>
-            <Text className="text-red-800 text-sm font-medium">Forgot password?</Text>
-          </TouchableOpacity>
-
-          {/* Login Button */}
-          <TouchableOpacity 
-            className={`bg-primary-900 rounded-lg py-4 mb-8 shadow-sm ${isLoading ? 'opacity-50' : ''}`}
-
-            // For frontend test
-            onPress={() => router.push('/Home/home')}
-            // For backend test
-            // onPress={handleLogin}
+          <TouchableOpacity
+            onPress={() => setShowPassword(!showPassword)}
+            className="absolute right-3 top-3"
             disabled={isLoading}
           >
-            {isLoading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text className="text-white text-center font-semibold">Log in</Text>
-            )}
+            {showPassword ? <Eye size={20} color="#444" /> : <EyeOff size={20} color="#444" />}
           </TouchableOpacity>
+        </View>
 
-          {/* Divider */}
-          <View className="flex-row items-center mb-6">
-            <View className="flex-1 h-[1px] bg-gray-300" />
-            <Text className="mx-3 text-gray-500">Or</Text>
-            <View className="flex-1 h-[1px] bg-gray-300" />
-          </View>
+        {/* Forgot Password */}
+        <TouchableOpacity className="self-end mb-6" disabled={isLoading}>
+          <Text className="text-red-800 text-sm font-medium">Forgot password?</Text>
+        </TouchableOpacity>
 
-          {/* Google Button */}
-          <TouchableOpacity className="border border-gray-300 py-3 rounded-lg flex-row items-center justify-center mb-6" disabled={isLoading}>
-            <Image
-              source={{ uri: "https://upload.wikimedia.org/wikipedia/commons/0/09/IOS_Google_icon.png" }}
-              style={{ width: 20, height: 20, marginRight: 8 }}
-            />
-            <Text className="text-gray-700 font-medium">Sign up with Google</Text>
+        {/* Login Button */}
+        <TouchableOpacity
+          className={`bg-primary-900 rounded-lg py-4 mb-8 shadow-sm ${isLoading ? 'opacity-50' : ''}`}
+          onPress={handleLogin}
+          disabled={isLoading}
+        >
+          {isLoading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text className="text-white text-center font-semibold">Log in</Text>
+          )}
+        </TouchableOpacity>
+
+        {/* Divider */}
+        <View className="flex-row items-center mb-6">
+          <View className="flex-1 h-[1px] bg-gray-300" />
+          <Text className="mx-3 text-gray-500">Or</Text>
+          <View className="flex-1 h-[1px] bg-gray-300" />
+        </View>
+
+        {/* Google Button */}
+        <TouchableOpacity className="border border-gray-300 py-3 rounded-lg flex-row items-center justify-center mb-6" disabled={isLoading}>
+          <Image
+            source={{ uri: "https://upload.wikimedia.org/wikipedia/commons/0/09/IOS_Google_icon.png" }}
+            style={{ width: 20, height: 20, marginRight: 8 }}
+          />
+          <Text className="text-gray-700 font-medium">Sign up with Google</Text>
+        </TouchableOpacity>
+
+        {/* Bottom Sign Up */}
+        <View className="flex-row justify-center mt-2 mb-10">
+          <Text className="text-gray-600">Don't have an account? </Text>
+          <TouchableOpacity onPress={() => router.push('/intro/signup')} disabled={isLoading}>
+            <Text className="text-yellow-600 font-semibold">Sign up</Text>
           </TouchableOpacity>
-
-          {/* Bottom Sign Up */}
-          <View className="flex-row justify-center mt-2 mb-10">
-            <Text className="text-gray-600">Don't have an account? </Text>
-            <TouchableOpacity onPress={() => router.push('/intro/signup')} disabled={isLoading}>
-              <Text className="text-yellow-600 font-semibold">Sign up</Text>
-            </TouchableOpacity>
-          </View>
+        </View>
 
       </ScrollView>
     </SafeAreaView>
