@@ -3,13 +3,51 @@ backend/venv/
 backend/__pycache__/
 *.pyc
 *.pyo
+.venv/
+
+# Backend specific folders (not needed for deployment)
+backend/img/
+backend/media/
+backend/new/
 
 # Node/React Native
 frontend/node_modules/
+frontend/schedscan/node_modules/
+
+# Expo
+frontend/schedscan/.expo/
+frontend/schedscan/dist/
+frontend/schedscan/web-build/
+frontend/schedscan/expo-env.d.ts
+frontend/schedscan/app-example/
+frontend/schedscan/ios/
+frontend/schedscan/android/
+
+# Native build files
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+.kotlin/
+
+# Metro
+.metro-health-check*
+
+# Debug logs
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# TypeScript
+*.tsbuildinfo
 
 # Environment
 .env
 .env.local
+.env*.local
+*.pem
 
 # OS
 .DS_Store
