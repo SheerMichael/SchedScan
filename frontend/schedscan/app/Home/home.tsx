@@ -746,7 +746,8 @@ const Attending = ({ size = 24 }) => (
                     <View className="flex-1">
                       <View className="flex-row items-center">
                         <Text className="font-bold text-base text-black">{item.title}</Text>
-                        {item.source_type && (
+                        {/* Show badge for merged schedules (source_type) or non-merged schedules (uploadType) */}
+                        {(item.source_type || activeSchedule?.uploadType === 'faculty' || activeSchedule?.uploadType === 'student') && (
                           <View 
                             className="ml-2 px-2 py-0.5 rounded-full"
                             style={{ backgroundColor: courseColor + '20' }}
@@ -755,7 +756,9 @@ const Attending = ({ size = 24 }) => (
                               className="text-xs font-medium"
                               style={{ color: courseColor }}
                             >
-                              {item.source_type === 'faculty' ? 'Teaching' : 'Attending'}
+                              {item.source_type === 'faculty' || (!item.source_type && activeSchedule?.uploadType === 'faculty') 
+                                ? 'Faculty' 
+                                : 'Student'}
                             </Text>
                           </View>
                         )}
