@@ -1,12 +1,12 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
-import { Download, Trash2 } from 'lucide-react-native';
+import { Download, Trash2, Users, GraduationCap, Merge } from 'lucide-react-native';
 import { Course } from '../services/courseService';
 
 interface SchedulePreviewCardProps {
   title: string;
   courses: Course[];
-  uploadType: 'student' | 'faculty';
+  uploadType: 'student' | 'faculty' | 'merged';
   uploadDate: string;
   isActive: boolean;
   onApplyReminders: () => void;
@@ -24,6 +24,19 @@ const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
   onDownload,
   onDelete,
 }) => {
+  // Get color based on upload type or course source type
+  const getTypeColor = (type: string) => {
+    if (type === 'faculty') return '#f97316'; // orange
+    if (type === 'merged') return '#7c3aed';  // purple
+    return '#dc2626'; // red for student
+  };
+
+  const getTypeIcon = () => {
+    if (uploadType === 'faculty') return <Users size={24} color="#f97316" />;
+    if (uploadType === 'merged') return <Merge size={24} color="#7c3aed" />;
+    return <GraduationCap size={24} color="#dc2626" />;
+  };
+
   // Create weekly grid structure
   const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thurs', 'Fri', 'Sat'];
   
@@ -113,11 +126,34 @@ const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
       {/* Header */}
       <View className="flex-row justify-between items-center mb-3">
         <View className="flex-1">
-          <Text className="text-2xl font-bold text-red-500 capitalize">
-            {uploadType}
-          </Text>
+          <View className="flex-row items-center">
+            {getTypeIcon()}
+            <Text 
+              className="text-2xl font-bold capitalize ml-2"
+              style={{ color: getTypeColor(uploadType) }}
+            >
+              {uploadType}
+            </Text>
+          </View>
           <Text className="text-sm text-gray-600 mt-1">{title}</Text>
           <Text className="text-xs text-gray-400">{formatDate(uploadDate)}</Text>
+          {/* Show course breakdown for merged schedules */}
+          {uploadType === 'merged' && (
+            <View className="flex-row mt-2 gap-3">
+              <View className="flex-row items-center">
+                <View className="w-2 h-2 rounded-full bg-orange-500 mr-1" />
+                <Text className="text-xs text-gray-500">
+                  {courses.filter(c => c.source_type === 'faculty').length} faculty
+                </Text>
+              </View>
+              <View className="flex-row items-center">
+                <View className="w-2 h-2 rounded-full bg-red-500 mr-1" />
+                <Text className="text-xs text-gray-500">
+                  {courses.filter(c => c.source_type === 'student').length} student
+                </Text>
+              </View>
+            </View>
+          )}
         </View>
         <View className="flex-row items-center gap-3">
           <TouchableOpacity onPress={onDownload}>
@@ -152,16 +188,35 @@ const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
                 ? getCoursesForDay(dayIdx).filter(c => (c.start_time || 'unknown') === timeKey)
                 : [];
               
+              // Determine cell background based on course source type
+              const getCellBgColor = () => {
+                if (dayCourses.length === 0) return 'bg-white';
+                if (uploadType === 'merged') {
+                  // For merged, check source type
+                  const hasF = dayCourses.some(c => c.source_type === 'faculty');
+                  const hasS = dayCourses.some(c => c.source_type === 'student');
+                  if (hasF && hasS) return 'bg-purple-100'; // both
+                  if (hasF) return 'bg-orange-100';
+                  return 'bg-red-100';
+                }
+                return uploadType === 'faculty' ? 'bg-orange-100' : 'bg-red-100';
+              };
+
+              const getTextColor = () => {
+                if (uploadType === 'merged') {
+                  return dayCourses[0]?.source_type === 'faculty' ? 'text-orange-900' : 'text-red-900';
+                }
+                return uploadType === 'faculty' ? 'text-orange-900' : 'text-red-900';
+              };
+              
               return (
                 <View 
                   key={dayIdx} 
-                  className={`flex-1 p-1 border-r border-gray-200 min-h-[50px] ${
-                    dayCourses.length > 0 ? 'bg-red-100' : 'bg-white'
-                  }`}
+                  className={`flex-1 p-1 border-r border-gray-200 min-h-[50px] ${getCellBgColor()}`}
                 >
                   {dayCourses.map((course, idx) => (
                     <View key={idx}>
-                      <Text className="text-[8px] font-semibold text-red-900" numberOfLines={1}>
+                      <Text className={`text-[8px] font-semibold ${getTextColor()}`} numberOfLines={1}>
                         {course.subject_code}
                       </Text>
                       <Text className="text-[7px] text-gray-600" numberOfLines={1}>

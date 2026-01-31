@@ -1055,7 +1055,7 @@ class MergeSchedulesView(APIView):
                     status=status.HTTP_404_NOT_FOUND
                 )
         
-        # Get courses from all schedules
+        # Get courses from all schedules, tracking their source type
         all_courses = []
         courses_by_schedule = []
         
@@ -1064,6 +1064,9 @@ class MergeSchedulesView(APIView):
                 'subject_code', 'subject_name', 'start_time',
                 'end_time', 'day', 'location'
             ))
+            # Add source_type to each course based on the schedule's upload_type
+            for course in courses:
+                course['source_type'] = schedule.upload_type
             courses_by_schedule.append(courses)
             all_courses.extend(courses)
         

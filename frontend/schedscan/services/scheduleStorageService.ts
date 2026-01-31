@@ -69,7 +69,7 @@ export type ConflictResolution = 'keep_both' | 'keep_first' | 'keep_second' | 's
 interface APISchedule {
   id: number;
   title: string;
-  upload_type: 'student' | 'faculty';
+  upload_type: 'student' | 'faculty' | 'merged';
   is_active: boolean;
   courses: APICourse[];
   created_at: string;
@@ -84,6 +84,7 @@ interface APICourse {
   end_time: string;
   day: string;
   location: string;
+  source_type?: 'student' | 'faculty' | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -91,7 +92,7 @@ interface APICourse {
 interface APIScheduleListItem {
   id: number;
   title: string;
-  upload_type: 'student' | 'faculty';
+  upload_type: 'student' | 'faculty' | 'merged';
   is_active: boolean;
   course_count: number;
   created_at: string;
@@ -120,6 +121,7 @@ const transformAPISchedule = (apiSchedule: APISchedule): SavedSchedule => ({
     end_time: course.end_time,
     day: course.day,
     location: course.location,
+    source_type: course.source_type || null,
     created_at: course.created_at || '',
     updated_at: course.updated_at || '',
   })),
@@ -208,7 +210,7 @@ export const scheduleStorageService = {
   /**
    * Get all schedules for a specific type from the backend API
    */
-  getSchedules: async (uploadType: 'student' | 'faculty', userId: number): Promise<SavedSchedule[]> => {
+  getSchedules: async (uploadType: 'student' | 'faculty' | 'merged', userId: number): Promise<SavedSchedule[]> => {
     try {
       const response = await api.get(`/schedules/?upload_type=${uploadType}`);
       const schedules: APIScheduleListItem[] = response.data;
@@ -232,7 +234,7 @@ export const scheduleStorageService = {
   /**
    * Delete a schedule by ID from the backend API
    */
-  deleteSchedule: async (id: string | number, uploadType: 'student' | 'faculty', userId: number): Promise<void> => {
+  deleteSchedule: async (id: string | number, uploadType: 'student' | 'faculty' | 'merged', userId: number): Promise<void> => {
     try {
       await api.delete(`/schedules/${id}/`);
       console.log('Schedule deleted from backend:', id);
@@ -247,7 +249,7 @@ export const scheduleStorageService = {
    */
   updateSchedule: async (
     id: string | number,
-    uploadType: 'student' | 'faculty',
+    uploadType: 'student' | 'faculty' | 'merged',
     userId: number,
     updates: Partial<SavedSchedule>
   ): Promise<void> => {
@@ -276,7 +278,7 @@ export const scheduleStorageService = {
    */
   getScheduleById: async (
     id: string | number,
-    uploadType: 'student' | 'faculty',
+    uploadType: 'student' | 'faculty' | 'merged',
     userId: number
   ): Promise<SavedSchedule | null> => {
     try {

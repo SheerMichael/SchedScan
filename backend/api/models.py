@@ -206,6 +206,13 @@ class Course(models.Model):
         blank=True,
         help_text="Classroom/location (e.g., LR7, LAB2)"
     )
+    source_type = models.CharField(
+        max_length=10,
+        choices=[('student', 'Student'), ('faculty', 'Faculty')],
+        null=True,
+        blank=True,
+        help_text="Original source schedule type (for merged schedules)"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     

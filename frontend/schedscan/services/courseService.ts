@@ -9,6 +9,7 @@ export interface Course {
   end_time: string;
   day: string;
   location: string;
+  source_type?: 'student' | 'faculty' | null;  // For merged schedules: tracks original source
   created_at: string;
   updated_at: string;
 }

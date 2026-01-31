@@ -38,10 +38,27 @@ export default function SchedScanApp() {
     location: string;
     day: string;
     priority_level: string;
+    source_type?: 'student' | 'faculty' | null;  // For merged schedules
   };
   
   type WeeklySchedule = {
     [key: number]: ScheduleItem[];
+  };
+
+  // Get color based on source type or schedule type
+  const getCourseColor = (item: ScheduleItem): string => {
+    // For merged schedules, use the source_type
+    if (item.source_type === 'faculty') return '#f97316'; // orange
+    if (item.source_type === 'student') return '#ef4444'; // red
+    
+    // For non-merged schedules, use the active schedule's uploadType
+    if (activeSchedule?.uploadType === 'faculty') return '#f97316'; // orange
+    if (activeSchedule?.uploadType === 'student') return '#ef4444'; // red
+    
+    // Fallback for holidays
+    if (item.priority_level === 'Holiday') return '#16a34a'; // green
+    
+    return '#ef4444'; // default red
   };
 
   // Draggable card component using modern Gesture API
@@ -60,6 +77,7 @@ export default function SchedScanApp() {
     const scale = useSharedValue(1);
     const isActive = useSharedValue(false);
     const cardHeight = 100; // Approximate card height
+    const courseColor = getCourseColor(item);
 
     const animatedStyle = useAnimatedStyle(() => {
       return {
@@ -110,7 +128,7 @@ export default function SchedScanApp() {
               marginBottom: 12,
               borderRadius: 12,
               borderLeftWidth: 4,
-              borderLeftColor: item.priority_level === "Holiday" ? "#16a34a" : "#ef4444",
+              borderLeftColor: courseColor,
               shadowColor: '#000',
               shadowOffset: { width: 0, height: 2 },
               shadowRadius: 4,
@@ -396,6 +414,7 @@ const Attending = ({ size = 24 }) => (
       location: course.location || '',
       day: course.day,
       priority_level: 'Class',
+      source_type: course.source_type || null,  // Include source_type for color coding
     }));
 
     setDaySchedule(scheduleItems);
@@ -490,6 +509,7 @@ const Attending = ({ size = 24 }) => (
         location: course.location || '',
         day: course.day,
         priority_level: 'Class',
+        source_type: course.source_type || null,  // Include source_type for color coding
       }));
 
     const schedule = [...holiday, ...realCourses];
@@ -546,24 +566,46 @@ const Attending = ({ size = 24 }) => (
             <Text className="text-sm text-gray-500">Classes Today</Text>
           </View>
 
-          {/* Teaching - shows count for faculty schedules */}
-          <View className="flex-1 bg-white rounded-xl p-4 items-center border border-red-200 mx-1">
+          {/* Teaching - shows count for faculty schedules or faculty courses in merged */}
+          <View className="flex-1 bg-white rounded-xl p-4 items-center border border-orange-200 mx-1">
             <Teaching size={24}/>
-            <Text className="text-3xl font-bold text-primary-600">
-              {activeSchedule?.uploadType === 'faculty' ? daySchedule.length : 0}
+            <Text className="text-3xl font-bold text-orange-500">
+              {activeSchedule?.uploadType === 'faculty' 
+                ? daySchedule.length 
+                : activeSchedule?.uploadType === 'merged'
+                ? daySchedule.filter(item => item.source_type === 'faculty').length
+                : 0}
             </Text>
             <Text className="text-sm text-gray-500">Teaching</Text>
           </View>
 
-          {/* Attending - shows count for student schedules */}
+          {/* Attending - shows count for student schedules or student courses in merged */}
           <View className="flex-1 bg-white rounded-xl p-4 items-center border border-red-200 mx-1">
             <Attending size={24}/>
-            <Text className="text-3xl font-bold text-primary-600">
-              {activeSchedule?.uploadType === 'student' ? daySchedule.length : 0}
+            <Text className="text-3xl font-bold text-red-600">
+              {activeSchedule?.uploadType === 'student' 
+                ? daySchedule.length 
+                : activeSchedule?.uploadType === 'merged'
+                ? daySchedule.filter(item => item.source_type === 'student').length
+                : 0}
             </Text>
             <Text className="text-sm text-gray-500">Attending</Text>
           </View>
         </View>
+
+        {/* Color Legend for merged schedules */}
+        {activeSchedule?.uploadType === 'merged' && (
+          <View className='flex-row justify-center items-center gap-6 mt-3 py-2'>
+            <View className='flex-row items-center'>
+              <View className='w-3 h-3 rounded-full bg-orange-500 mr-2' />
+              <Text className='text-gray-600 text-sm'>Faculty</Text>
+            </View>
+            <View className='flex-row items-center'>
+              <View className='w-3 h-3 rounded-full bg-red-600 mr-2' />
+              <Text className='text-gray-600 text-sm'>Student</Text>
+            </View>
+          </View>
+        )}
 
         {/* Filter Buttons */}
         <View className="flex-row justify-evenly mt-3 px-4">
@@ -678,48 +720,66 @@ const Attending = ({ size = 24 }) => (
           ) : daySchedule.length === 0 ? (
             <Text className="text-gray-500">No classes / events today</Text>
           ) : (
-            daySchedule.map((item, index) => (
-              <TouchableOpacity
-                key={`${item.title}-${index}`}
-                onPress={() => {
-                  router.push({
-                    pathname: "/Home/Subject/subjectdetails",
-                    params: {
-                      title: item.title,
-                      subjectName: item.subjectName,
-                      time: item.time,
-                      startTime: item.startTime,
-                      endTime: item.endTime,
-                      location: item.location,
-                      day: item.day,
-                    }
-                  });
-                }}
-                className="bg-white p-4 mb-3 rounded-xl shadow border-l-4 border-red-500"
-              >
-                <View className="flex-row justify-between items-start">
-                  <View className="flex-1">
-                    <Text className="font-bold text-base text-black">{item.title}</Text>
-                    {/* Subject name hidden until OCR properly extracts it */}
-                    <Text className="text-sm text-gray-600">{item.time}</Text>
-                    <Text className="text-sm text-gray-600">{item.location}</Text>
-                  </View>
-                  {taskCounts[item.title]?.total > 0 && (
-                    <View className="flex-row items-center bg-amber-100 px-2 py-1 rounded-full">
-                      <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2">
-                        <Path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                        <Path d="M9 12l2 2 4-4" />
-                      </Svg>
-                      <Text className="text-xs font-semibold text-amber-700 ml-1">
-                        {taskCounts[item.title]?.incomplete > 0 
-                          ? `${taskCounts[item.title].incomplete}` 
-                          : '✓'}
-                      </Text>
+            daySchedule.map((item, index) => {
+              const courseColor = getCourseColor(item);
+              return (
+                <TouchableOpacity
+                  key={`${item.title}-${index}`}
+                  onPress={() => {
+                    router.push({
+                      pathname: "/Home/Subject/subjectdetails",
+                      params: {
+                        title: item.title,
+                        subjectName: item.subjectName,
+                        time: item.time,
+                        startTime: item.startTime,
+                        endTime: item.endTime,
+                        location: item.location,
+                        day: item.day,
+                      }
+                    });
+                  }}
+                  className="bg-white p-4 mb-3 rounded-xl shadow"
+                  style={{ borderLeftWidth: 4, borderLeftColor: courseColor }}
+                >
+                  <View className="flex-row justify-between items-start">
+                    <View className="flex-1">
+                      <View className="flex-row items-center">
+                        <Text className="font-bold text-base text-black">{item.title}</Text>
+                        {item.source_type && (
+                          <View 
+                            className="ml-2 px-2 py-0.5 rounded-full"
+                            style={{ backgroundColor: courseColor + '20' }}
+                          >
+                            <Text 
+                              className="text-xs font-medium"
+                              style={{ color: courseColor }}
+                            >
+                              {item.source_type === 'faculty' ? 'Teaching' : 'Attending'}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text className="text-sm text-gray-600">{item.time}</Text>
+                      <Text className="text-sm text-gray-600">{item.location}</Text>
                     </View>
-                  )}
-                </View>
-              </TouchableOpacity>
-            ))
+                    {taskCounts[item.title]?.total > 0 && (
+                      <View className="flex-row items-center bg-amber-100 px-2 py-1 rounded-full">
+                        <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2">
+                          <Path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                          <Path d="M9 12l2 2 4-4" />
+                        </Svg>
+                        <Text className="text-xs font-semibold text-amber-700 ml-1">
+                          {taskCounts[item.title]?.incomplete > 0 
+                            ? `${taskCounts[item.title].incomplete}` 
+                            : '✓'}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              );
+            })
           )}
         </View>
 

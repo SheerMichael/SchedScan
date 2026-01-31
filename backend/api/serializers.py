@@ -148,6 +148,7 @@ class CourseSerializer(serializers.ModelSerializer):
             'end_time', 
             'day', 
             'location',
+            'source_type',
             'created_at',
             'updated_at'
         ]
@@ -162,6 +163,7 @@ class WritableCourseSerializer(serializers.ModelSerializer):
     subject_name = serializers.CharField(required=False, allow_blank=True, allow_null=True, default='')
     day = serializers.CharField(required=False, allow_blank=True, allow_null=True, default='')
     location = serializers.CharField(required=False, allow_blank=True, allow_null=True, default='')
+    source_type = serializers.CharField(required=False, allow_blank=True, allow_null=True, default=None)
     
     class Meta:
         model = Course
@@ -173,6 +175,7 @@ class WritableCourseSerializer(serializers.ModelSerializer):
             'end_time', 
             'day', 
             'location',
+            'source_type',
         ]
         read_only_fields = ['id']
         extra_kwargs = {
