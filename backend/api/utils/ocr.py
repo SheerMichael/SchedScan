@@ -8,6 +8,7 @@ This module provides a hybrid approach:
 Provides separate extractors for Student and Faculty COR documents.
 """
 
+import os
 import re
 from typing import List, Dict, Optional
 import logging
@@ -15,6 +16,7 @@ from abc import ABC, abstractmethod
 
 # PDF text extraction
 import pdfplumber
+import shutil
 
 # Image OCR (optional - for scanned documents)
 try:
@@ -22,8 +24,31 @@ try:
     from PIL import Image
     from pdf2image import convert_from_path
     PYTESSERACT_AVAILABLE = True
-    # Explicitly set tesseract path for Linux
-    pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
+    
+    # Auto-detect tesseract path - check common locations
+    tesseract_paths = [
+        '/usr/bin/tesseract',
+        '/usr/local/bin/tesseract',
+        '/app/.apt/usr/bin/tesseract',  # DigitalOcean App Platform with Aptfile
+        '/heroku/vendor/tesseract/bin/tesseract',  # Heroku
+    ]
+    
+    # Try to find tesseract using shutil.which first
+    tesseract_cmd = shutil.which('tesseract')
+    
+    if not tesseract_cmd:
+        # Fall back to checking common paths
+        for path in tesseract_paths:
+            if os.path.isfile(path):
+                tesseract_cmd = path
+                break
+    
+    if tesseract_cmd:
+        pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+        logging.getLogger(__name__).info(f"Tesseract found at: {tesseract_cmd}")
+    else:
+        logging.getLogger(__name__).warning("Tesseract not found in common paths")
+        
 except ImportError:
     PYTESSERACT_AVAILABLE = False
 
