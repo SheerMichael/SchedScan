@@ -48,7 +48,7 @@ export const courseService = {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
-        timeout: 30000, // 30 seconds for OCR processing
+        timeout: 120000, // 120 seconds for OCR processing (server-side processing can be slow)
       });
 
       return response.data;

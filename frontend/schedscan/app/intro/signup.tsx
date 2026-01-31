@@ -258,7 +258,7 @@ const AuthFlow = () => {
     if (status !== "granted") return alert("Gallery permission is required!");
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [4, 4],
       quality: 1,
