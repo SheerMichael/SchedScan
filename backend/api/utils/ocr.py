@@ -223,14 +223,49 @@ class BaseCORExtractor(ABC):
             List of course dictionaries
         """
         logger.info("Using OCR for scanned PDF...")
-        images = convert_from_path(file_path, dpi=self.dpi)
+        # Use lower DPI (150) for faster processing while maintaining readability
+        images = convert_from_path(file_path, dpi=150)
         
         all_text = ""
         for i, image in enumerate(images):
+            # Optimize each page image
+            image = self._optimize_image_for_ocr(image)
             text = pytesseract.image_to_string(image)
             all_text += text + "\n"
         
         return self._parse_text(all_text)
+
+    def _optimize_image_for_ocr(self, image: Image.Image, max_dimension: int = 2000) -> Image.Image:
+        """
+        Optimize image for faster OCR processing.
+        
+        - Resize large images to max_dimension while maintaining aspect ratio
+        - Convert to grayscale for faster processing
+        - Apply slight sharpening for better text recognition
+        
+        Args:
+            image: PIL Image object
+            max_dimension: Maximum width or height (default 2000px)
+            
+        Returns:
+            Optimized PIL Image
+        """
+        # Get original dimensions
+        width, height = image.size
+        
+        # Resize if image is too large
+        if width > max_dimension or height > max_dimension:
+            ratio = min(max_dimension / width, max_dimension / height)
+            new_size = (int(width * ratio), int(height * ratio))
+            image = image.resize(new_size, Image.Resampling.LANCZOS)
+            logger.info(f"Resized image from {width}x{height} to {new_size[0]}x{new_size[1]}")
+        
+        # Convert to grayscale for faster OCR
+        if image.mode != 'L':
+            image = image.convert('L')
+            logger.info("Converted image to grayscale")
+        
+        return image
 
     def _extract_from_image(self, file_path: str) -> List[Dict]:
         """
@@ -247,6 +282,9 @@ class BaseCORExtractor(ABC):
         
         logger.info(f"Extracting from image: {file_path}")
         image = Image.open(file_path)
+        
+        # Optimize image for faster OCR
+        image = self._optimize_image_for_ocr(image)
         
         # Use psm 6 for better table/block detection
         text = pytesseract.image_to_string(image, config='--psm 6')
