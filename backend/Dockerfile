@@ -17,14 +17,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Debug: Verify tesseract installation
-RUN echo "=== Verifying tesseract installation ===" && \
-    which tesseract && \
-    tesseract --version && \
-    echo "=== Tesseract OK ==="
+# Debug: Show what was copied
+RUN echo "=== Build context contents ===" && \
+    ls -la && \
+    echo "=== Checking for manage.py ===" && \
+    if [ -f manage.py ]; then echo "manage.py found!"; else echo "ERROR: manage.py NOT FOUND!" && exit 1; fi
 
-# Debug: List files to verify manage.py exists
-RUN echo "=== Listing /app contents ===" && ls -la /app/
+# Verify tesseract installation
+RUN which tesseract && tesseract --version
 
 # Collect static files
 RUN python manage.py collectstatic --noinput
