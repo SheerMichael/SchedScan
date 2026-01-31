@@ -22,6 +22,8 @@ try:
     from PIL import Image
     from pdf2image import convert_from_path
     PYTESSERACT_AVAILABLE = True
+    # Explicitly set tesseract path for Linux
+    pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
 except ImportError:
     PYTESSERACT_AVAILABLE = False
 
