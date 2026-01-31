@@ -11,17 +11,17 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
-COPY requirements.txt .
+# Note: DigitalOcean builds from repo root, so use backend/ path
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY . .
+# Copy backend application code only
+COPY backend/ .
 
-# Debug: Show what was copied
-RUN echo "=== Build context contents ===" && \
-    ls -la && \
-    echo "=== Checking for manage.py ===" && \
-    if [ -f manage.py ]; then echo "manage.py found!"; else echo "ERROR: manage.py NOT FOUND!" && exit 1; fi
+# Verify files are in place
+RUN echo "=== App directory contents ===" && ls -la && \
+    echo "=== manage.py check ===" && \
+    test -f manage.py && echo "manage.py found!" || (echo "manage.py missing!" && exit 1)
 
 # Verify tesseract installation
 RUN which tesseract && tesseract --version

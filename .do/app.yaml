@@ -3,8 +3,8 @@ region: sgp
 
 services:
   - name: schedscan-api
-    source_dir: /backend
-    dockerfile_path: Dockerfile
+    source_dir: /
+    dockerfile_path: backend/Dockerfile
     github:
       repo: SheerMichael/SchedScan
       branch: main
