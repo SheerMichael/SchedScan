@@ -9,7 +9,7 @@ export interface SavedSchedule {
   id: number;
   title: string;
   courses: Course[];
-  uploadType: 'student' | 'faculty';
+  uploadType: 'student' | 'faculty' | 'merged';
   uploadDate: string;
   isActive: boolean;
 }

@@ -126,13 +126,16 @@ const SchedulesScreen = () => {
       
       Alert.alert(
         'Success!',
-        `Schedules merged successfully into "${mergeTitle}"`,
+        `Schedules merged successfully into "${mergeTitle}" and applied to your calendar!`,
         [
           {
-            text: 'View Schedule',
-            onPress: () => router.push('/Home/Schedules/student'), // Merged schedules go to student folder
+            text: 'View Calendar',
+            onPress: () => router.push('/Home/home'),
           },
-          { text: 'OK' }
+          {
+            text: 'View Merged Schedules',
+            onPress: () => router.push('/Home/Schedules/merged'),
+          },
         ]
       );
     } catch (error: any) {
@@ -192,6 +195,18 @@ const SchedulesScreen = () => {
                 <View className='flex-row justify-evenly items-center ml-4'>
                     <FolderClosed size={40} color="#ffffff" fill="#ffffff" stroke="#990100"/>
                     <Text className='text-white text-2xl font-semibold'>Student</Text>
+                </View>
+                <View className='flex mr-4'>
+                    <ChevronRight size={34} color="#ffffff"/>
+                </View>
+            </TouchableOpacity>
+          </View>
+
+          <View className='flex items-center justify-center pt-4'>
+            <TouchableOpacity className='flex-row justify-between items-center bg-purple-700 w-11/12 rounded-xl h-20' onPress={() => router.push('/Home/Schedules/merged')}>
+                <View className='flex-row justify-evenly items-center ml-4'>
+                    <Merge size={40} color="#ffffff"/>
+                    <Text className='text-white text-2xl font-semibold'>Merged</Text>
                 </View>
                 <View className='flex mr-4'>
                     <ChevronRight size={34} color="#ffffff"/>

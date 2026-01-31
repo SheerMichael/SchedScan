@@ -1167,12 +1167,12 @@ class MergeSchedulesView(APIView):
                 seen.add(key)
                 unique_courses.append(course)
         
-        # Create the merged schedule
+        # Create the merged schedule and set it as active
         merged_schedule = Schedule.objects.create(
             user=request.user,
             title=title,
-            upload_type='student',  # Default to student for merged schedules
-            is_active=False
+            upload_type='merged',  # Use 'merged' type for merged schedules
+            is_active=True  # Automatically set as active so it shows in calendar
         )
         
         # Create courses for the merged schedule

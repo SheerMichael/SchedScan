@@ -96,6 +96,7 @@ class Schedule(models.Model):
     UPLOAD_TYPE_CHOICES = [
         ('student', 'Student'),
         ('faculty', 'Faculty'),
+        ('merged', 'Merged'),
     ]
     
     user = models.ForeignKey(
