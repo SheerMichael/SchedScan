@@ -29,6 +29,7 @@ urlpatterns = [
     path('schedules/', views.ScheduleListCreateView.as_view(), name='schedule_list_create'),
     path('schedules/active/', views.ScheduleActiveView.as_view(), name='schedule_active'),
     path('schedules/clear-active/', views.ScheduleClearActiveView.as_view(), name='schedule_clear_active'),
+    path('schedules/merge/', views.MergeSchedulesView.as_view(), name='schedule_merge'),
     path('schedules/<int:pk>/', views.ScheduleDetailView.as_view(), name='schedule_detail'),
     path('schedules/<int:pk>/set-active/', views.ScheduleSetActiveView.as_view(), name='schedule_set_active'),
     path('schedules/<int:pk>/timetable/', views.ScheduleTimetableDownloadView.as_view(), name='schedule_timetable_download'),

@@ -15,6 +15,55 @@ export interface SavedSchedule {
 }
 
 /**
+ * Interface for merge conflict information
+ */
+export interface ScheduleConflict {
+  day: string;
+  course1: {
+    subject_code: string;
+    subject_name: string;
+    start_time: string;
+    end_time: string;
+    location: string;
+  };
+  course2: {
+    subject_code: string;
+    subject_name: string;
+    start_time: string;
+    end_time: string;
+    location: string;
+  };
+  overlap_minutes: number;
+}
+
+/**
+ * Interface for merge response when conflicts are detected
+ */
+export interface MergeConflictsResponse {
+  has_conflicts: true;
+  conflicts: ScheduleConflict[];
+  conflict_count: number;
+  message: string;
+  available_strategies: {
+    value: string;
+    description: string;
+  }[];
+}
+
+/**
+ * Interface for successful merge response
+ */
+export interface MergeSuccessResponse {
+  message: string;
+  schedule: APISchedule;
+  total_courses: number;
+  conflicts_found: number;
+  conflicts_resolved: string;
+}
+
+export type ConflictResolution = 'keep_both' | 'keep_first' | 'keep_second' | 'skip_conflicts';
+
+/**
  * Interface matching backend API response format
  */
 interface APISchedule {
@@ -356,6 +405,94 @@ export const scheduleStorageService = {
       console.log('Legacy schedule migration complete');
     } catch (error) {
       console.error('Error migrating legacy schedules:', error);
+    }
+  },
+
+  /**
+   * Check for conflicts between two schedules without merging
+   * Returns conflicts if any, or null if no conflicts
+   */
+  checkMergeConflicts: async (
+    scheduleIds: number[]
+  ): Promise<MergeConflictsResponse | null> => {
+    try {
+      const response = await api.post('/schedules/merge/', {
+        schedule_ids: scheduleIds,
+        title: 'Conflict Check', // Won't be used since we're just checking
+      });
+      
+      // If response has has_conflicts, return the conflicts
+      if (response.data.has_conflicts) {
+        return response.data as MergeConflictsResponse;
+      }
+      
+      // No conflicts - this means merge would succeed with no issues
+      return null;
+    } catch (error: any) {
+      console.error('Error checking merge conflicts:', error.response?.data || error.message);
+      throw error;
+    }
+  },
+
+  /**
+   * Merge multiple schedules into a new combined schedule
+   * 
+   * @param scheduleIds - Array of schedule IDs to merge
+   * @param title - Title for the new merged schedule
+   * @param conflictResolution - How to handle time conflicts (optional, required if conflicts exist)
+   * @returns The merged schedule or conflict information
+   */
+  mergeSchedules: async (
+    scheduleIds: number[],
+    title: string,
+    conflictResolution?: ConflictResolution
+  ): Promise<SavedSchedule | MergeConflictsResponse> => {
+    try {
+      const requestBody: any = {
+        schedule_ids: scheduleIds,
+        title,
+      };
+      
+      if (conflictResolution) {
+        requestBody.conflict_resolution = conflictResolution;
+      }
+      
+      const response = await api.post('/schedules/merge/', requestBody);
+      
+      // Check if response indicates conflicts that need resolution
+      if (response.data.has_conflicts) {
+        return response.data as MergeConflictsResponse;
+      }
+      
+      // Successful merge - transform and return the schedule
+      console.log('Schedules merged successfully:', response.data);
+      return transformAPISchedule(response.data.schedule);
+    } catch (error: any) {
+      console.error('Error merging schedules:', error.response?.data || error.message);
+      throw error;
+    }
+  },
+
+  /**
+   * Get all schedules (both student and faculty) for the user
+   */
+  getAllSchedules: async (userId: number): Promise<SavedSchedule[]> => {
+    try {
+      const response = await api.get('/schedules/');
+      const schedules: APIScheduleListItem[] = response.data;
+      
+      // Fetch full details for each schedule
+      const fullSchedules = await Promise.all(
+        schedules.map(async (s) => {
+          const detailResponse = await api.get(`/schedules/${s.id}/`);
+          return transformAPISchedule(detailResponse.data);
+        })
+      );
+      
+      return fullSchedules;
+    } catch (error: any) {
+      console.error('Error getting all schedules:', error.response?.data || error.message);
+      return [];
     }
   },
 };

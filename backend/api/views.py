@@ -929,3 +929,270 @@ class RegisterPushTokenView(APIView):
             },
             status=status.HTTP_200_OK
         )
+
+
+class MergeSchedulesView(APIView):
+    """
+    API endpoint to merge two schedules (e.g., student and faculty) into a new combined schedule.
+    Detects time conflicts between courses and allows the user to choose how to handle them.
+    
+    POST /api/schedules/merge/
+    Headers: Authorization: Bearer <access_token>
+    Request body: {
+        "schedule_ids": [1, 2],  // IDs of schedules to merge
+        "title": "Merged Schedule",  // Title for the new merged schedule
+        "conflict_resolution": "keep_both" | "keep_first" | "keep_second" | "skip_conflicts"
+    }
+    
+    Response (success): {
+        "message": "Successfully merged 2 schedules into 'Merged Schedule'",
+        "schedule": { ...merged schedule data... },
+        "conflicts_found": 2,
+        "conflicts_resolved": "keep_both"
+    }
+    
+    Response (conflicts detected - when conflict_resolution not provided): {
+        "has_conflicts": true,
+        "conflicts": [
+            {
+                "day": "M",
+                "course1": { "subject_code": "CS101", "start_time": "08:00AM", ... },
+                "course2": { "subject_code": "MATH201", "start_time": "08:30AM", ... },
+                "overlap_minutes": 30
+            },
+            ...
+        ],
+        "message": "Time conflicts detected. Please specify conflict_resolution strategy."
+    }
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def _parse_time(self, time_str: str) -> int:
+        """Convert time string (e.g., '08:00AM') to minutes from midnight."""
+        import re
+        match = re.match(r'(\d{1,2}):(\d{2})(AM|PM)', time_str.upper())
+        if not match:
+            return 0
+        
+        hours = int(match.group(1))
+        minutes = int(match.group(2))
+        period = match.group(3)
+        
+        if period == 'PM' and hours != 12:
+            hours += 12
+        elif period == 'AM' and hours == 12:
+            hours = 0
+        
+        return hours * 60 + minutes
+    
+    def _times_overlap(self, start1: str, end1: str, start2: str, end2: str) -> tuple:
+        """
+        Check if two time ranges overlap.
+        Returns (overlaps: bool, overlap_minutes: int)
+        """
+        s1 = self._parse_time(start1)
+        e1 = self._parse_time(end1)
+        s2 = self._parse_time(start2)
+        e2 = self._parse_time(end2)
+        
+        # Check for overlap
+        overlap_start = max(s1, s2)
+        overlap_end = min(e1, e2)
+        
+        if overlap_start < overlap_end:
+            return True, overlap_end - overlap_start
+        return False, 0
+    
+    def _find_conflicts(self, courses1: list, courses2: list) -> list:
+        """
+        Find all time conflicts between two lists of courses.
+        Returns list of conflict dictionaries.
+        """
+        conflicts = []
+        
+        for c1 in courses1:
+            for c2 in courses2:
+                # Only check courses on the same day
+                if c1['day'] != c2['day']:
+                    continue
+                
+                overlaps, overlap_minutes = self._times_overlap(
+                    c1['start_time'], c1['end_time'],
+                    c2['start_time'], c2['end_time']
+                )
+                
+                if overlaps:
+                    conflicts.append({
+                        'day': c1['day'],
+                        'course1': c1,
+                        'course2': c2,
+                        'overlap_minutes': overlap_minutes
+                    })
+        
+        return conflicts
+    
+    def post(self, request):
+        schedule_ids = request.data.get('schedule_ids', [])
+        title = request.data.get('title', 'Merged Schedule')
+        conflict_resolution = request.data.get('conflict_resolution', None)
+        
+        # Validate input
+        if len(schedule_ids) < 2:
+            return Response(
+                {"error": "At least 2 schedule IDs are required to merge"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Fetch schedules
+        schedules = []
+        for sid in schedule_ids:
+            try:
+                schedule = Schedule.objects.get(pk=sid, user=request.user)
+                schedules.append(schedule)
+            except Schedule.DoesNotExist:
+                return Response(
+                    {"error": f"Schedule with ID {sid} not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        
+        # Get courses from all schedules
+        all_courses = []
+        courses_by_schedule = []
+        
+        for schedule in schedules:
+            courses = list(schedule.courses.values(
+                'subject_code', 'subject_name', 'start_time',
+                'end_time', 'day', 'location'
+            ))
+            courses_by_schedule.append(courses)
+            all_courses.extend(courses)
+        
+        # Find conflicts between all schedule pairs
+        all_conflicts = []
+        for i in range(len(courses_by_schedule)):
+            for j in range(i + 1, len(courses_by_schedule)):
+                conflicts = self._find_conflicts(
+                    courses_by_schedule[i],
+                    courses_by_schedule[j]
+                )
+                all_conflicts.extend(conflicts)
+        
+        # If conflicts exist and no resolution strategy provided, return conflicts
+        if all_conflicts and not conflict_resolution:
+            return Response({
+                "has_conflicts": True,
+                "conflicts": all_conflicts,
+                "conflict_count": len(all_conflicts),
+                "message": "Time conflicts detected. Please specify conflict_resolution strategy.",
+                "available_strategies": [
+                    {"value": "keep_both", "description": "Keep all courses (allow overlapping schedules)"},
+                    {"value": "keep_first", "description": "Keep courses from the first schedule only"},
+                    {"value": "keep_second", "description": "Keep courses from the second schedule only"},
+                    {"value": "skip_conflicts", "description": "Skip all conflicting courses from both schedules"}
+                ]
+            }, status=status.HTTP_200_OK)
+        
+        # Apply conflict resolution
+        merged_courses = []
+        
+        if conflict_resolution == 'keep_both' or not all_conflicts:
+            # Keep all courses (including conflicts)
+            merged_courses = all_courses
+        
+        elif conflict_resolution == 'keep_first':
+            # Keep first schedule's courses, only add non-conflicting from others
+            merged_courses = courses_by_schedule[0].copy()
+            for courses in courses_by_schedule[1:]:
+                for course in courses:
+                    has_conflict = False
+                    for existing in merged_courses:
+                        if existing['day'] == course['day']:
+                            overlaps, _ = self._times_overlap(
+                                existing['start_time'], existing['end_time'],
+                                course['start_time'], course['end_time']
+                            )
+                            if overlaps:
+                                has_conflict = True
+                                break
+                    if not has_conflict:
+                        merged_courses.append(course)
+        
+        elif conflict_resolution == 'keep_second':
+            # Keep second schedule's courses as priority
+            merged_courses = courses_by_schedule[-1].copy() if len(courses_by_schedule) > 1 else []
+            for courses in courses_by_schedule[:-1]:
+                for course in courses:
+                    has_conflict = False
+                    for existing in merged_courses:
+                        if existing['day'] == course['day']:
+                            overlaps, _ = self._times_overlap(
+                                existing['start_time'], existing['end_time'],
+                                course['start_time'], course['end_time']
+                            )
+                            if overlaps:
+                                has_conflict = True
+                                break
+                    if not has_conflict:
+                        merged_courses.append(course)
+        
+        elif conflict_resolution == 'skip_conflicts':
+            # Skip all courses that have any conflict
+            conflicting_courses = set()
+            for conflict in all_conflicts:
+                # Create hashable keys for conflicting courses
+                c1_key = (conflict['course1']['subject_code'], conflict['course1']['day'], 
+                         conflict['course1']['start_time'])
+                c2_key = (conflict['course2']['subject_code'], conflict['course2']['day'],
+                         conflict['course2']['start_time'])
+                conflicting_courses.add(c1_key)
+                conflicting_courses.add(c2_key)
+            
+            for course in all_courses:
+                course_key = (course['subject_code'], course['day'], course['start_time'])
+                if course_key not in conflicting_courses:
+                    merged_courses.append(course)
+        
+        else:
+            return Response(
+                {"error": f"Invalid conflict_resolution strategy: {conflict_resolution}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Remove duplicates (same subject, day, time)
+        seen = set()
+        unique_courses = []
+        for course in merged_courses:
+            key = (course['subject_code'], course['day'], course['start_time'], course['end_time'])
+            if key not in seen:
+                seen.add(key)
+                unique_courses.append(course)
+        
+        # Create the merged schedule
+        merged_schedule = Schedule.objects.create(
+            user=request.user,
+            title=title,
+            upload_type='student',  # Default to student for merged schedules
+            is_active=False
+        )
+        
+        # Create courses for the merged schedule
+        for course_data in unique_courses:
+            Course.objects.create(
+                user=request.user,
+                schedule=merged_schedule,
+                **course_data
+            )
+        
+        # Serialize the response
+        serializer = ScheduleSerializer(merged_schedule)
+        
+        logger.info(f"User {request.user.id} merged {len(schedule_ids)} schedules into schedule {merged_schedule.id} "
+                   f"with {len(unique_courses)} courses (conflicts: {len(all_conflicts)}, resolution: {conflict_resolution})")
+        
+        return Response({
+            "message": f"Successfully merged {len(schedule_ids)} schedules into '{title}'",
+            "schedule": serializer.data,
+            "total_courses": len(unique_courses),
+            "conflicts_found": len(all_conflicts),
+            "conflicts_resolved": conflict_resolution or "none"
+        }, status=status.HTTP_201_CREATED)
