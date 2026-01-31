@@ -106,7 +106,7 @@ export default function Scanner() {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
         allowsEditing: true,
-        quality: 1,
+        quality: 0.8, // Reduced quality for faster upload while maintaining OCR readability
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
@@ -150,7 +150,7 @@ export default function Scanner() {
 
       const result = await ImagePicker.launchCameraAsync({
         allowsEditing: true,
-        quality: 1,
+        quality: 0.8, // Reduced quality for faster upload while maintaining OCR readability
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
