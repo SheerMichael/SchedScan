@@ -15,25 +15,34 @@ export interface SavedSchedule {
 }
 
 /**
+ * Interface for course in conflict
+ */
+export interface ConflictCourse {
+  subject_code: string;
+  subject_name: string;
+  start_time: string;
+  end_time: string;
+  location: string;
+  source_type: 'student' | 'faculty';
+}
+
+/**
  * Interface for merge conflict information
  */
 export interface ScheduleConflict {
+  id: string;  // Unique identifier for this conflict
   day: string;
-  course1: {
-    subject_code: string;
-    subject_name: string;
-    start_time: string;
-    end_time: string;
-    location: string;
-  };
-  course2: {
-    subject_code: string;
-    subject_name: string;
-    start_time: string;
-    end_time: string;
-    location: string;
-  };
+  course1: ConflictCourse;
+  course2: ConflictCourse;
   overlap_minutes: number;
+}
+
+/**
+ * Per-conflict resolution choice
+ */
+export interface ConflictChoice {
+  conflict_id: string;  // Use snake_case for API compatibility
+  choice: 'keep_course1' | 'keep_course2' | 'keep_both' | 'skip_both';
 }
 
 /**
@@ -61,7 +70,17 @@ export interface MergeSuccessResponse {
   conflicts_resolved: string;
 }
 
-export type ConflictResolution = 'keep_both' | 'keep_first' | 'keep_second' | 'skip_conflicts';
+export type ConflictResolution = 'keep_both' | 'keep_faculty' | 'keep_student' | 'skip_conflicts' | 'per_conflict';
+
+/**
+ * Request body for merge with per-conflict resolution
+ */
+export interface MergeRequest {
+  schedule_ids: number[];
+  title: string;
+  conflict_resolution?: ConflictResolution;
+  conflict_choices?: ConflictChoice[];  // For per-conflict resolution
+}
 
 /**
  * Interface matching backend API response format
@@ -442,21 +461,27 @@ export const scheduleStorageService = {
    * @param scheduleIds - Array of schedule IDs to merge
    * @param title - Title for the new merged schedule
    * @param conflictResolution - How to handle time conflicts (optional, required if conflicts exist)
+   * @param conflictChoices - Individual choices for each conflict (when using per_conflict resolution)
    * @returns The merged schedule or conflict information
    */
   mergeSchedules: async (
     scheduleIds: number[],
     title: string,
-    conflictResolution?: ConflictResolution
+    conflictResolution?: ConflictResolution,
+    conflictChoices?: ConflictChoice[]
   ): Promise<SavedSchedule | MergeConflictsResponse> => {
     try {
-      const requestBody: any = {
+      const requestBody: MergeRequest = {
         schedule_ids: scheduleIds,
         title,
       };
       
       if (conflictResolution) {
         requestBody.conflict_resolution = conflictResolution;
+      }
+      
+      if (conflictChoices && conflictChoices.length > 0) {
+        requestBody.conflict_choices = conflictChoices;
       }
       
       const response = await api.post('/schedules/merge/', requestBody);

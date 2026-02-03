@@ -941,7 +941,13 @@ class MergeSchedulesView(APIView):
     Request body: {
         "schedule_ids": [1, 2],  // IDs of schedules to merge
         "title": "Merged Schedule",  // Title for the new merged schedule
-        "conflict_resolution": "keep_both" | "keep_first" | "keep_second" | "skip_conflicts"
+        "conflict_resolution": "keep_both" | "keep_faculty" | "keep_student" | "skip_conflicts" | "per_conflict",
+        "conflict_choices": [  // Required when using "per_conflict" resolution
+            {
+                "conflict_id": "conflict_0",
+                "choice": "keep_course1" | "keep_course2" | "keep_both" | "skip_both"
+            }
+        ]
     }
     
     Response (success): {
@@ -955,9 +961,10 @@ class MergeSchedulesView(APIView):
         "has_conflicts": true,
         "conflicts": [
             {
+                "id": "conflict_0",
                 "day": "M",
-                "course1": { "subject_code": "CS101", "start_time": "08:00AM", ... },
-                "course2": { "subject_code": "MATH201", "start_time": "08:30AM", ... },
+                "course1": { "subject_code": "CS101", "start_time": "08:00AM", "source_type": "faculty", ... },
+                "course2": { "subject_code": "MATH201", "start_time": "08:30AM", "source_type": "student", ... },
                 "overlap_minutes": 30
             },
             ...
@@ -1006,9 +1013,10 @@ class MergeSchedulesView(APIView):
     def _find_conflicts(self, courses1: list, courses2: list) -> list:
         """
         Find all time conflicts between two lists of courses.
-        Returns list of conflict dictionaries.
+        Returns list of conflict dictionaries with unique IDs.
         """
         conflicts = []
+        conflict_index = 0
         
         for c1 in courses1:
             for c2 in courses2:
@@ -1023,18 +1031,25 @@ class MergeSchedulesView(APIView):
                 
                 if overlaps:
                     conflicts.append({
+                        'id': f'conflict_{conflict_index}',
                         'day': c1['day'],
                         'course1': c1,
                         'course2': c2,
                         'overlap_minutes': overlap_minutes
                     })
+                    conflict_index += 1
         
         return conflicts
+    
+    def _get_course_key(self, course: dict) -> tuple:
+        """Generate a unique key for a course."""
+        return (course['subject_code'], course['day'], course['start_time'], course['end_time'])
     
     def post(self, request):
         schedule_ids = request.data.get('schedule_ids', [])
         title = request.data.get('title', 'Merged Schedule')
         conflict_resolution = request.data.get('conflict_resolution', None)
+        conflict_choices = request.data.get('conflict_choices', [])
         
         # Validate input
         if len(schedule_ids) < 2:
@@ -1058,6 +1073,8 @@ class MergeSchedulesView(APIView):
         # Get courses from all schedules, tracking their source type
         all_courses = []
         courses_by_schedule = []
+        faculty_courses = []
+        student_courses = []
         
         for schedule in schedules:
             courses = list(schedule.courses.values(
@@ -1066,7 +1083,14 @@ class MergeSchedulesView(APIView):
             ))
             # Add source_type to each course based on the schedule's upload_type
             for course in courses:
-                course['source_type'] = schedule.upload_type
+                source_type = schedule.upload_type if schedule.upload_type in ['student', 'faculty'] else 'student'
+                course['source_type'] = source_type
+                
+                if source_type == 'faculty':
+                    faculty_courses.append(course)
+                else:
+                    student_courses.append(course)
+            
             courses_by_schedule.append(courses)
             all_courses.extend(courses)
         
@@ -1080,6 +1104,10 @@ class MergeSchedulesView(APIView):
                 )
                 all_conflicts.extend(conflicts)
         
+        # Re-index conflicts to ensure unique IDs
+        for idx, conflict in enumerate(all_conflicts):
+            conflict['id'] = f'conflict_{idx}'
+        
         # If conflicts exist and no resolution strategy provided, return conflicts
         if all_conflicts and not conflict_resolution:
             return Response({
@@ -1089,9 +1117,10 @@ class MergeSchedulesView(APIView):
                 "message": "Time conflicts detected. Please specify conflict_resolution strategy.",
                 "available_strategies": [
                     {"value": "keep_both", "description": "Keep all courses (allow overlapping schedules)"},
-                    {"value": "keep_first", "description": "Keep courses from the first schedule only"},
-                    {"value": "keep_second", "description": "Keep courses from the second schedule only"},
-                    {"value": "skip_conflicts", "description": "Skip all conflicting courses from both schedules"}
+                    {"value": "keep_faculty", "description": "Keep faculty courses, add non-conflicting student courses"},
+                    {"value": "keep_student", "description": "Keep student courses, add non-conflicting faculty courses"},
+                    {"value": "skip_conflicts", "description": "Skip all conflicting courses from both schedules"},
+                    {"value": "per_conflict", "description": "Manually choose for each conflict"}
                 ]
             }, status=status.HTTP_200_OK)
         
@@ -1102,8 +1131,98 @@ class MergeSchedulesView(APIView):
             # Keep all courses (including conflicts)
             merged_courses = all_courses
         
+        elif conflict_resolution == 'keep_faculty':
+            # Keep faculty courses, only add non-conflicting student courses
+            merged_courses = faculty_courses.copy()
+            for course in student_courses:
+                has_conflict = False
+                for existing in merged_courses:
+                    if existing['day'] == course['day']:
+                        overlaps, _ = self._times_overlap(
+                            existing['start_time'], existing['end_time'],
+                            course['start_time'], course['end_time']
+                        )
+                        if overlaps:
+                            has_conflict = True
+                            break
+                if not has_conflict:
+                    merged_courses.append(course)
+        
+        elif conflict_resolution == 'keep_student':
+            # Keep student courses as priority
+            merged_courses = student_courses.copy()
+            for course in faculty_courses:
+                has_conflict = False
+                for existing in merged_courses:
+                    if existing['day'] == course['day']:
+                        overlaps, _ = self._times_overlap(
+                            existing['start_time'], existing['end_time'],
+                            course['start_time'], course['end_time']
+                        )
+                        if overlaps:
+                            has_conflict = True
+                            break
+                if not has_conflict:
+                    merged_courses.append(course)
+        
+        elif conflict_resolution == 'skip_conflicts':
+            # Skip all courses that have any conflict
+            conflicting_courses = set()
+            for conflict in all_conflicts:
+                c1_key = self._get_course_key(conflict['course1'])
+                c2_key = self._get_course_key(conflict['course2'])
+                conflicting_courses.add(c1_key)
+                conflicting_courses.add(c2_key)
+            
+            for course in all_courses:
+                course_key = self._get_course_key(course)
+                if course_key not in conflicting_courses:
+                    merged_courses.append(course)
+        
+        elif conflict_resolution == 'per_conflict':
+            # Handle per-conflict resolution
+            if not conflict_choices:
+                return Response(
+                    {"error": "conflict_choices is required when using per_conflict resolution"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Create a map of conflict choices
+            choices_map = {c['conflict_id']: c['choice'] for c in conflict_choices}
+            
+            # Track which courses to include/exclude
+            courses_to_include = set()
+            courses_to_exclude = set()
+            
+            for conflict in all_conflicts:
+                conflict_id = conflict['id']
+                choice = choices_map.get(conflict_id, 'keep_both')  # Default to keep_both
+                
+                c1_key = self._get_course_key(conflict['course1'])
+                c2_key = self._get_course_key(conflict['course2'])
+                
+                if choice == 'keep_course1':
+                    courses_to_include.add(c1_key)
+                    courses_to_exclude.add(c2_key)
+                elif choice == 'keep_course2':
+                    courses_to_include.add(c2_key)
+                    courses_to_exclude.add(c1_key)
+                elif choice == 'keep_both':
+                    courses_to_include.add(c1_key)
+                    courses_to_include.add(c2_key)
+                elif choice == 'skip_both':
+                    courses_to_exclude.add(c1_key)
+                    courses_to_exclude.add(c2_key)
+            
+            # Add all courses that are not explicitly excluded
+            for course in all_courses:
+                course_key = self._get_course_key(course)
+                # Include if explicitly included or not in any conflict
+                if course_key in courses_to_include or course_key not in courses_to_exclude:
+                    merged_courses.append(course)
+        
+        # Legacy support: keep_first and keep_second still work
         elif conflict_resolution == 'keep_first':
-            # Keep first schedule's courses, only add non-conflicting from others
             merged_courses = courses_by_schedule[0].copy()
             for courses in courses_by_schedule[1:]:
                 for course in courses:
@@ -1121,7 +1240,6 @@ class MergeSchedulesView(APIView):
                         merged_courses.append(course)
         
         elif conflict_resolution == 'keep_second':
-            # Keep second schedule's courses as priority
             merged_courses = courses_by_schedule[-1].copy() if len(courses_by_schedule) > 1 else []
             for courses in courses_by_schedule[:-1]:
                 for course in courses:
@@ -1137,23 +1255,6 @@ class MergeSchedulesView(APIView):
                                 break
                     if not has_conflict:
                         merged_courses.append(course)
-        
-        elif conflict_resolution == 'skip_conflicts':
-            # Skip all courses that have any conflict
-            conflicting_courses = set()
-            for conflict in all_conflicts:
-                # Create hashable keys for conflicting courses
-                c1_key = (conflict['course1']['subject_code'], conflict['course1']['day'], 
-                         conflict['course1']['start_time'])
-                c2_key = (conflict['course2']['subject_code'], conflict['course2']['day'],
-                         conflict['course2']['start_time'])
-                conflicting_courses.add(c1_key)
-                conflicting_courses.add(c2_key)
-            
-            for course in all_courses:
-                course_key = (course['subject_code'], course['day'], course['start_time'])
-                if course_key not in conflicting_courses:
-                    merged_courses.append(course)
         
         else:
             return Response(
