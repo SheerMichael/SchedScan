@@ -11,7 +11,7 @@ import { scheduleStorageService, SavedSchedule } from '../../../services/schedul
 import { useAuth } from '../../../context/AuthContext';
 
 const MergedSchedule = () => {
-  const { user } = useAuth();
+  const { user, invalidateScheduleCache } = useAuth();
   const [mergedSchedules, setMergedSchedules] = useState<SavedSchedule[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -55,10 +55,13 @@ const MergedSchedule = () => {
 
     try {
       await scheduleStorageService.setActiveSchedule(scheduleId, user.id);
-      
+
+      // Invalidate cache so home screen fetches fresh active schedule
+      invalidateScheduleCache();
+
       // Reload schedules to update UI
       await loadSchedules();
-      
+
       Alert.alert(
         'Success!',
         'Schedule is now active. Your calendar and reminders will show courses from this schedule.',
@@ -94,10 +97,13 @@ const MergedSchedule = () => {
           onPress: async () => {
             try {
               await scheduleStorageService.deleteSchedule(schedule.id, 'merged', user!.id);
-              
+
+              // Invalidate cache in case the deleted schedule was active
+              invalidateScheduleCache();
+
               // Reload schedules to update UI
               await loadSchedules();
-              
+
               Alert.alert('Success', 'Schedule deleted successfully');
             } catch (error) {
               console.error('Error deleting schedule:', error);
@@ -111,12 +117,12 @@ const MergedSchedule = () => {
 
   const handleDownload = async (scheduleId: string | number, scheduleTitle: string = 'schedule') => {
     console.log(`Downloading timetable for schedule ${scheduleId}`);
-    
+
     try {
       // Get the download URL
       const downloadUrl = scheduleStorageService.getTimetableDownloadUrl(scheduleId);
       console.log('Download URL:', downloadUrl);
-      
+
       // Create a safe filename
       const safeTitle = scheduleTitle.replace(/[^a-zA-Z0-9]/g, '_');
       const filename = `timetable_${safeTitle}_${Date.now()}.png`;
@@ -127,7 +133,7 @@ const MergedSchedule = () => {
         Alert.alert('Error', 'Authentication token not found. Please log in again.');
         return;
       }
-      
+
       // Download using expo/fetch with auth headers
       console.log('Downloading file...');
       const response = await fetch(downloadUrl, {
@@ -144,7 +150,7 @@ const MergedSchedule = () => {
       const file = new File(Paths.cache, filename);
       const bytes = await response.bytes();
       file.write(bytes);
-      
+
       console.log('File saved to cache:', file.uri);
 
       // Open share sheet - user can save to gallery from there
@@ -154,9 +160,9 @@ const MergedSchedule = () => {
           dialogTitle: 'Save Timetable',
           UTI: 'public.png',
         });
-        
+
         // Clean up after sharing dialog closes
-        try { file.delete(); } catch (e) {}
+        try { file.delete(); } catch (e) { }
       } else {
         Alert.alert('Error', 'Sharing is not available on this device');
       }
@@ -181,7 +187,7 @@ const MergedSchedule = () => {
         </View>
       </View>
 
-        {isLoading ? (
+      {isLoading ? (
         <View className="flex-1 justify-center items-center">
           <Text className="text-gray-500">Loading schedules...</Text>
         </View>
@@ -199,7 +205,7 @@ const MergedSchedule = () => {
               onDownload={() => handleDownload(schedule.id, schedule.title)}
               onDelete={() => handleDeleteSchedule(schedule)}
             />
-          ))} 
+          ))}
         </ScrollView>
       ) : (
         <View className='flex-1 justify-center items-center'>

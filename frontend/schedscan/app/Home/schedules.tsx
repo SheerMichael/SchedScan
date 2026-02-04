@@ -4,10 +4,10 @@ import { router, useFocusEffect } from "expo-router";
 import Svg, { Path, Circle, Rect, G } from 'react-native-svg';
 import { FolderClosed, ChevronRight, Merge, X, AlertTriangle, Check, Calendar, Users, GraduationCap, ChevronDown, ChevronUp, Eye, Info } from "lucide-react-native";
 import { useAuth } from '../../context/AuthContext';
-import { 
-  scheduleStorageService, 
-  SavedSchedule, 
-  MergeConflictsResponse, 
+import {
+  scheduleStorageService,
+  SavedSchedule,
+  MergeConflictsResponse,
   ScheduleConflict,
   ConflictResolution,
   ConflictChoice
@@ -20,7 +20,7 @@ type PerConflictChoice = 'keep_course1' | 'keep_course2' | 'keep_both' | 'skip_b
 type MergeStep = 'select' | 'review_conflicts' | 'per_conflict' | 'preview';
 
 const SchedulesScreen = () => {
-  const { user } = useAuth();
+  const { user, invalidateScheduleCache } = useAuth();
   const [allSchedules, setAllSchedules] = useState<SavedSchedule[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showMergeModal, setShowMergeModal] = useState(false);
@@ -30,19 +30,21 @@ const SchedulesScreen = () => {
   const [isMerging, setIsMerging] = useState(false);
   const [isCheckingConflicts, setIsCheckingConflicts] = useState(false);
   const [previewConflicts, setPreviewConflicts] = useState<ScheduleConflict[] | null>(null);
-  
+
   // New state for improved UX
   const [mergeStep, setMergeStep] = useState<MergeStep>('select');
   const [perConflictChoices, setPerConflictChoices] = useState<Record<string, PerConflictChoice>>({});
   const [expandedConflicts, setExpandedConflicts] = useState<Set<string>>(new Set());
   const [showQuickActions, setShowQuickActions] = useState(false);
-  
+
   // Debounce timer for conflict checking
-  const conflictCheckTimer = useRef<NodeJS.Timeout | null>(null);
+  const conflictCheckTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Track the last checked selection to avoid redundant API calls
+  const lastCheckedSelection = useRef<string>('');
 
   const loadAllSchedules = useCallback(async () => {
     if (!user?.id) return;
-    
+
     try {
       setIsLoading(true);
       const schedules = await scheduleStorageService.getAllSchedules(user.id);
@@ -63,11 +65,19 @@ const SchedulesScreen = () => {
   // Auto-check conflicts when 2+ schedules selected
   useEffect(() => {
     if (selectedSchedules.length >= 2) {
+      // Create a unique key for the current selection (sorted to handle order changes)
+      const selectionKey = [...selectedSchedules].sort((a, b) => a - b).join(',');
+
+      // Skip if we've already checked this exact selection
+      if (selectionKey === lastCheckedSelection.current) {
+        return;
+      }
+
       // Clear previous timer
       if (conflictCheckTimer.current) {
         clearTimeout(conflictCheckTimer.current);
       }
-      
+
       // Debounce conflict check
       conflictCheckTimer.current = setTimeout(async () => {
         setIsCheckingConflicts(true);
@@ -78,6 +88,8 @@ const SchedulesScreen = () => {
           } else {
             setPreviewConflicts(null);
           }
+          // Remember this selection as checked
+          lastCheckedSelection.current = selectionKey;
         } catch (error) {
           console.error('Error checking conflicts:', error);
           setPreviewConflicts(null);
@@ -87,8 +99,10 @@ const SchedulesScreen = () => {
       }, 500);
     } else {
       setPreviewConflicts(null);
+      // Reset the last checked selection when deselecting
+      lastCheckedSelection.current = '';
     }
-    
+
     return () => {
       if (conflictCheckTimer.current) {
         clearTimeout(conflictCheckTimer.current);
@@ -157,7 +171,7 @@ const SchedulesScreen = () => {
 
   const applyQuickAction = (action: 'all_faculty' | 'all_student' | 'all_both' | 'all_skip') => {
     if (!conflicts) return;
-    
+
     const newChoices: Record<string, PerConflictChoice> = {};
     conflicts.forEach(conflict => {
       const isCourse1Faculty = conflict.course1.source_type === 'faculty';
@@ -194,7 +208,7 @@ const SchedulesScreen = () => {
     try {
       setIsMerging(true);
       const result = await scheduleStorageService.checkMergeConflicts(selectedSchedules);
-      
+
       if (result && result.has_conflicts) {
         setConflicts(result.conflicts);
         // Initialize all choices to 'keep_both' by default
@@ -238,8 +252,12 @@ const SchedulesScreen = () => {
       setConflicts(null);
       setPreviewConflicts(null);
       setMergeStep('select');
+
+      // Invalidate cache since merged schedule becomes active
+      invalidateScheduleCache();
+
       await loadAllSchedules();
-      
+
       Alert.alert(
         'Success!',
         `Schedules merged successfully into "${mergeTitle}" and applied to your calendar!`,
@@ -268,7 +286,7 @@ const SchedulesScreen = () => {
 
   const handlePerConflictMerge = () => {
     if (!conflicts) return;
-    
+
     // Check if all conflicts have a choice
     const unresolved = conflicts.filter(c => !perConflictChoices[c.id]);
     if (unresolved.length > 0) {
@@ -324,7 +342,7 @@ const SchedulesScreen = () => {
   const getChoiceLabel = (choice: PerConflictChoice, conflict: ScheduleConflict): string => {
     const c1Type = conflict.course1.source_type;
     const c2Type = conflict.course2.source_type;
-    
+
     switch (choice) {
       case 'keep_course1':
         return c1Type === 'faculty' ? 'Keep Faculty' : 'Keep Student';
@@ -346,11 +364,11 @@ const SchedulesScreen = () => {
 
   const getMergePreviewStats = () => {
     if (!conflicts) return { kept: 0, skipped: 0, overlapping: 0 };
-    
+
     let kept = 0;
     let skipped = 0;
     let overlapping = 0;
-    
+
     conflicts.forEach(conflict => {
       const choice = perConflictChoices[conflict.id] || 'keep_both';
       switch (choice) {
@@ -368,7 +386,7 @@ const SchedulesScreen = () => {
           break;
       }
     });
-    
+
     return { kept, skipped, overlapping };
   };
 
@@ -379,7 +397,7 @@ const SchedulesScreen = () => {
     const studentCount = selected.filter(s => s.uploadType === 'student').reduce((sum, s) => sum + s.courses.length, 0);
     return { facultyCount, studentCount, total: facultyCount + studentCount };
   };
- 
+
   return (
     <>
       <View className="w-full h-14 bg-white border-b-2 border-gray-200 justify-between items-center flex-row">
@@ -388,78 +406,78 @@ const SchedulesScreen = () => {
             <LeftPointingArrow size={30} color="#000000" />
           </TouchableOpacity>
         </View>
-          <View className='flex-row justify-center items-center mr-4'>
-            <Text className='font-bold text-2xl'>Schedules</Text>
-          </View>
+        <View className='flex-row justify-center items-center mr-4'>
+          <Text className='font-bold text-2xl'>Schedules</Text>
+        </View>
         <View>
         </View>
       </View>
 
-        <ScrollView>
-          <View className='flex items-center justify-center mt-8 pt-4'>
-            <TouchableOpacity className='flex-row justify-between items-center bg-orange-500 w-11/12 rounded-xl h-20' onPress={() => router.push('/Home/Schedules/faculty')}>
-                <View className='flex-row justify-evenly items-center ml-4'>
-                    <FolderClosed size={40} color="#ffffff" fill="#ffffff" stroke="#c2410c"/>
-                    <Text className='text-white text-2xl font-semibold ml-2'>Faculty</Text>
-                </View>
-                <View className='flex mr-4'>
-                    <ChevronRight size={34} color="#ffffff"/>
-                </View>
-            </TouchableOpacity>
-          </View>
-
-          <View className='flex items-center justify-center pt-4'>
-            <TouchableOpacity className='flex-row justify-between items-center bg-primary-900 w-11/12 rounded-xl h-20' onPress={() => router.push('/Home/Schedules/student')}>
-                <View className='flex-row justify-evenly items-center ml-4'>
-                    <FolderClosed size={40} color="#ffffff" fill="#ffffff" stroke="#990100"/>
-                    <Text className='text-white text-2xl font-semibold ml-2'>Student</Text>
-                </View>
-                <View className='flex mr-4'>
-                    <ChevronRight size={34} color="#ffffff"/>
-                </View>
-            </TouchableOpacity>
-          </View>
-
-          <View className='flex items-center justify-center pt-4'>
-            <TouchableOpacity className='flex-row justify-between items-center bg-purple-700 w-11/12 rounded-xl h-20' onPress={() => router.push('/Home/Schedules/merged')}>
-                <View className='flex-row justify-evenly items-center ml-4'>
-                    <Merge size={40} color="#ffffff"/>
-                    <Text className='text-white text-2xl font-semibold ml-2'>Merged</Text>
-                </View>
-                <View className='flex mr-4'>
-                    <ChevronRight size={34} color="#ffffff"/>
-                </View>
-            </TouchableOpacity>
-          </View>
-
-          {/* Merge Schedules Button */}
-          <View className='flex items-center justify-center pt-6'>
-            <TouchableOpacity 
-              className='flex-row justify-center items-center bg-green-600 w-11/12 rounded-xl h-16'
-              onPress={openMergeModal}
-            >
-              <Merge size={28} color="#ffffff" />
-              <Text className='text-white text-xl font-semibold ml-3'>Merge Schedules</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Color Legend */}
-          <View className='px-6 pt-4'>
-            <View className='flex-row justify-center items-center gap-6 mb-2'>
-              <View className='flex-row items-center'>
-                <View className='w-4 h-4 rounded-full bg-orange-500 mr-2' />
-                <Text className='text-gray-600 text-sm'>Faculty</Text>
-              </View>
-              <View className='flex-row items-center'>
-                <View className='w-4 h-4 rounded-full bg-red-600 mr-2' />
-                <Text className='text-gray-600 text-sm'>Student</Text>
-              </View>
+      <ScrollView>
+        <View className='flex items-center justify-center mt-8 pt-4'>
+          <TouchableOpacity className='flex-row justify-between items-center bg-orange-500 w-11/12 rounded-xl h-20' onPress={() => router.push('/Home/Schedules/faculty')}>
+            <View className='flex-row justify-evenly items-center ml-4'>
+              <FolderClosed size={40} color="#ffffff" fill="#ffffff" stroke="#c2410c" />
+              <Text className='text-white text-2xl font-semibold ml-2'>Faculty</Text>
             </View>
-            <Text className='text-gray-500 text-center text-sm'>
-              Merge your student and faculty schedules to view both in a single calendar
-            </Text>
+            <View className='flex mr-4'>
+              <ChevronRight size={34} color="#ffffff" />
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        <View className='flex items-center justify-center pt-4'>
+          <TouchableOpacity className='flex-row justify-between items-center bg-primary-900 w-11/12 rounded-xl h-20' onPress={() => router.push('/Home/Schedules/student')}>
+            <View className='flex-row justify-evenly items-center ml-4'>
+              <FolderClosed size={40} color="#ffffff" fill="#ffffff" stroke="#990100" />
+              <Text className='text-white text-2xl font-semibold ml-2'>Student</Text>
+            </View>
+            <View className='flex mr-4'>
+              <ChevronRight size={34} color="#ffffff" />
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        <View className='flex items-center justify-center pt-4'>
+          <TouchableOpacity className='flex-row justify-between items-center bg-purple-700 w-11/12 rounded-xl h-20' onPress={() => router.push('/Home/Schedules/merged')}>
+            <View className='flex-row justify-evenly items-center ml-4'>
+              <Merge size={40} color="#ffffff" />
+              <Text className='text-white text-2xl font-semibold ml-2'>Merged</Text>
+            </View>
+            <View className='flex mr-4'>
+              <ChevronRight size={34} color="#ffffff" />
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        {/* Merge Schedules Button */}
+        <View className='flex items-center justify-center pt-6'>
+          <TouchableOpacity
+            className='flex-row justify-center items-center bg-green-600 w-11/12 rounded-xl h-16'
+            onPress={openMergeModal}
+          >
+            <Merge size={28} color="#ffffff" />
+            <Text className='text-white text-xl font-semibold ml-3'>Merge Schedules</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Color Legend */}
+        <View className='px-6 pt-4'>
+          <View className='flex-row justify-center items-center gap-6 mb-2'>
+            <View className='flex-row items-center'>
+              <View className='w-4 h-4 rounded-full bg-orange-500 mr-2' />
+              <Text className='text-gray-600 text-sm'>Faculty</Text>
+            </View>
+            <View className='flex-row items-center'>
+              <View className='w-4 h-4 rounded-full bg-red-600 mr-2' />
+              <Text className='text-gray-600 text-sm'>Student</Text>
+            </View>
           </View>
-        </ScrollView>
+          <Text className='text-gray-500 text-center text-sm'>
+            Merge your student and faculty schedules to view both in a single calendar
+          </Text>
+        </View>
+      </ScrollView>
 
       {/* Merge Modal */}
       <Modal
@@ -484,7 +502,7 @@ const SchedulesScreen = () => {
                 <View>
                   {/* Header with conflict count and back button */}
                   <View className='flex-row items-center justify-between mb-4'>
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       className='flex-row items-center'
                       onPress={() => {
                         setMergeStep('select');
@@ -517,38 +535,32 @@ const SchedulesScreen = () => {
                   {/* Resolution Options Tabs */}
                   <View className='mb-4'>
                     <Text className='text-gray-700 font-semibold mb-3'>Resolution Method:</Text>
-                    
+
                     <View className='flex-row mb-3'>
                       <TouchableOpacity
-                        className={`flex-1 py-3 mr-2 rounded-xl border-2 ${
-                          mergeStep === 'review_conflicts' 
-                            ? 'bg-blue-50 border-blue-500' 
-                            : 'bg-white border-gray-200'
-                        }`}
+                        className={`flex-1 py-3 mr-2 rounded-xl border-2 ${mergeStep === 'review_conflicts'
+                          ? 'bg-blue-50 border-blue-500'
+                          : 'bg-white border-gray-200'
+                          }`}
                         onPress={() => setMergeStep('review_conflicts')}
                       >
-                        <Text className={`text-center font-medium ${
-                          mergeStep === 'review_conflicts' ? 'text-blue-700' : 'text-gray-600'
-                        }`}>Quick Resolve</Text>
-                        <Text className={`text-center text-xs mt-1 ${
-                          mergeStep === 'review_conflicts' ? 'text-blue-500' : 'text-gray-400'
-                        }`}>Same choice for all</Text>
+                        <Text className={`text-center font-medium ${mergeStep === 'review_conflicts' ? 'text-blue-700' : 'text-gray-600'
+                          }`}>Quick Resolve</Text>
+                        <Text className={`text-center text-xs mt-1 ${mergeStep === 'review_conflicts' ? 'text-blue-500' : 'text-gray-400'
+                          }`}>Same choice for all</Text>
                       </TouchableOpacity>
-                      
+
                       <TouchableOpacity
-                        className={`flex-1 py-3 ml-2 rounded-xl border-2 ${
-                          mergeStep === 'per_conflict' 
-                            ? 'bg-purple-50 border-purple-500' 
-                            : 'bg-white border-gray-200'
-                        }`}
+                        className={`flex-1 py-3 ml-2 rounded-xl border-2 ${mergeStep === 'per_conflict'
+                          ? 'bg-purple-50 border-purple-500'
+                          : 'bg-white border-gray-200'
+                          }`}
                         onPress={() => setMergeStep('per_conflict')}
                       >
-                        <Text className={`text-center font-medium ${
-                          mergeStep === 'per_conflict' ? 'text-purple-700' : 'text-gray-600'
-                        }`}>Custom Resolve</Text>
-                        <Text className={`text-center text-xs mt-1 ${
-                          mergeStep === 'per_conflict' ? 'text-purple-500' : 'text-gray-400'
-                        }`}>Choose per conflict</Text>
+                        <Text className={`text-center font-medium ${mergeStep === 'per_conflict' ? 'text-purple-700' : 'text-gray-600'
+                          }`}>Custom Resolve</Text>
+                        <Text className={`text-center text-xs mt-1 ${mergeStep === 'per_conflict' ? 'text-purple-500' : 'text-gray-400'
+                          }`}>Choose per conflict</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -629,9 +641,8 @@ const SchedulesScreen = () => {
                             </Text>
                             <View className='flex-row mt-2'>
                               <View className='flex-1 flex-row items-center'>
-                                <View className={`w-2 h-2 rounded-full mr-2 ${
-                                  conflict.course1.source_type === 'faculty' ? 'bg-orange-500' : 'bg-red-500'
-                                }`} />
+                                <View className={`w-2 h-2 rounded-full mr-2 ${conflict.course1.source_type === 'faculty' ? 'bg-orange-500' : 'bg-red-500'
+                                  }`} />
                                 <Text className='text-gray-600 text-xs' numberOfLines={1}>
                                   {conflict.course1.subject_code}
                                 </Text>
@@ -641,9 +652,8 @@ const SchedulesScreen = () => {
                                 <Text className='text-gray-600 text-xs' numberOfLines={1}>
                                   {conflict.course2.subject_code}
                                 </Text>
-                                <View className={`w-2 h-2 rounded-full ml-2 ${
-                                  conflict.course2.source_type === 'faculty' ? 'bg-orange-500' : 'bg-red-500'
-                                }`} />
+                                <View className={`w-2 h-2 rounded-full ml-2 ${conflict.course2.source_type === 'faculty' ? 'bg-orange-500' : 'bg-red-500'
+                                  }`} />
                               </View>
                             </View>
                           </View>
@@ -665,7 +675,7 @@ const SchedulesScreen = () => {
                         <Text className='text-gray-600'>
                           Resolved: <Text className='font-semibold'>{getResolvedCount()}/{conflicts.length}</Text>
                         </Text>
-                        <TouchableOpacity 
+                        <TouchableOpacity
                           className='bg-purple-100 px-3 py-1 rounded-lg'
                           onPress={() => setShowQuickActions(!showQuickActions)}
                         >
@@ -680,25 +690,25 @@ const SchedulesScreen = () => {
                         <View className='bg-purple-50 rounded-xl p-3 mb-4 border border-purple-200'>
                           <Text className='text-purple-800 font-medium mb-2 text-sm'>Apply to all conflicts:</Text>
                           <View className='flex-row flex-wrap gap-2'>
-                            <TouchableOpacity 
+                            <TouchableOpacity
                               className='bg-orange-100 px-3 py-2 rounded-lg'
                               onPress={() => applyQuickAction('all_faculty')}
                             >
                               <Text className='text-orange-700 text-xs font-medium'>All Faculty</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity 
+                            <TouchableOpacity
                               className='bg-red-100 px-3 py-2 rounded-lg'
                               onPress={() => applyQuickAction('all_student')}
                             >
                               <Text className='text-red-700 text-xs font-medium'>All Student</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity 
+                            <TouchableOpacity
                               className='bg-blue-100 px-3 py-2 rounded-lg'
                               onPress={() => applyQuickAction('all_both')}
                             >
                               <Text className='text-blue-700 text-xs font-medium'>All Keep Both</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity 
+                            <TouchableOpacity
                               className='bg-gray-200 px-3 py-2 rounded-lg'
                               onPress={() => applyQuickAction('all_skip')}
                             >
@@ -713,11 +723,11 @@ const SchedulesScreen = () => {
                         const isExpanded = expandedConflicts.has(conflict.id);
                         const currentChoice = perConflictChoices[conflict.id];
                         const c1IsFaculty = conflict.course1.source_type === 'faculty';
-                        
+
                         return (
                           <View key={conflict.id} className='bg-white rounded-xl border border-gray-200 mb-3 overflow-hidden'>
                             {/* Conflict Header - Clickable to expand */}
-                            <TouchableOpacity 
+                            <TouchableOpacity
                               className='p-4 flex-row items-center justify-between'
                               onPress={() => toggleConflictExpanded(conflict.id)}
                             >
@@ -747,20 +757,18 @@ const SchedulesScreen = () => {
                               </View>
                               <View className='flex-row items-center'>
                                 {currentChoice && (
-                                  <View className={`px-2 py-1 rounded-lg mr-2 ${
-                                    currentChoice === 'keep_both' ? 'bg-blue-100' :
+                                  <View className={`px-2 py-1 rounded-lg mr-2 ${currentChoice === 'keep_both' ? 'bg-blue-100' :
                                     currentChoice === 'skip_both' ? 'bg-gray-100' :
-                                    currentChoice === 'keep_course1' && c1IsFaculty ? 'bg-orange-100' :
-                                    currentChoice === 'keep_course2' && !c1IsFaculty ? 'bg-orange-100' :
-                                    'bg-red-100'
-                                  }`}>
-                                    <Text className={`text-xs font-medium ${
-                                      currentChoice === 'keep_both' ? 'text-blue-700' :
+                                      currentChoice === 'keep_course1' && c1IsFaculty ? 'bg-orange-100' :
+                                        currentChoice === 'keep_course2' && !c1IsFaculty ? 'bg-orange-100' :
+                                          'bg-red-100'
+                                    }`}>
+                                    <Text className={`text-xs font-medium ${currentChoice === 'keep_both' ? 'text-blue-700' :
                                       currentChoice === 'skip_both' ? 'text-gray-600' :
-                                      currentChoice === 'keep_course1' && c1IsFaculty ? 'text-orange-700' :
-                                      currentChoice === 'keep_course2' && !c1IsFaculty ? 'text-orange-700' :
-                                      'text-red-700'
-                                    }`}>{getChoiceLabel(currentChoice, conflict)}</Text>
+                                        currentChoice === 'keep_course1' && c1IsFaculty ? 'text-orange-700' :
+                                          currentChoice === 'keep_course2' && !c1IsFaculty ? 'text-orange-700' :
+                                            'text-red-700'
+                                      }`}>{getChoiceLabel(currentChoice, conflict)}</Text>
                                   </View>
                                 )}
                                 {isExpanded ? (
@@ -777,18 +785,16 @@ const SchedulesScreen = () => {
                                 {/* Course Details Side by Side */}
                                 <View className='flex-row p-4'>
                                   {/* Course 1 */}
-                                  <View className={`flex-1 p-3 rounded-xl mr-2 border-l-4 ${
-                                    c1IsFaculty ? 'bg-orange-50 border-orange-500' : 'bg-red-50 border-red-500'
-                                  }`}>
+                                  <View className={`flex-1 p-3 rounded-xl mr-2 border-l-4 ${c1IsFaculty ? 'bg-orange-50 border-orange-500' : 'bg-red-50 border-red-500'
+                                    }`}>
                                     <View className='flex-row items-center mb-2'>
                                       {c1IsFaculty ? (
                                         <Users size={14} color="#f97316" />
                                       ) : (
                                         <GraduationCap size={14} color="#dc2626" />
                                       )}
-                                      <Text className={`text-xs font-medium ml-1 ${
-                                        c1IsFaculty ? 'text-orange-600' : 'text-red-600'
-                                      }`}>
+                                      <Text className={`text-xs font-medium ml-1 ${c1IsFaculty ? 'text-orange-600' : 'text-red-600'
+                                        }`}>
                                         {c1IsFaculty ? 'Teaching' : 'Attending'}
                                       </Text>
                                     </View>
@@ -807,18 +813,16 @@ const SchedulesScreen = () => {
                                   </View>
 
                                   {/* Course 2 */}
-                                  <View className={`flex-1 p-3 rounded-xl ml-2 border-l-4 ${
-                                    !c1IsFaculty ? 'bg-orange-50 border-orange-500' : 'bg-red-50 border-red-500'
-                                  }`}>
+                                  <View className={`flex-1 p-3 rounded-xl ml-2 border-l-4 ${!c1IsFaculty ? 'bg-orange-50 border-orange-500' : 'bg-red-50 border-red-500'
+                                    }`}>
                                     <View className='flex-row items-center mb-2'>
                                       {!c1IsFaculty ? (
                                         <Users size={14} color="#f97316" />
                                       ) : (
                                         <GraduationCap size={14} color="#dc2626" />
                                       )}
-                                      <Text className={`text-xs font-medium ml-1 ${
-                                        !c1IsFaculty ? 'text-orange-600' : 'text-red-600'
-                                      }`}>
+                                      <Text className={`text-xs font-medium ml-1 ${!c1IsFaculty ? 'text-orange-600' : 'text-red-600'
+                                        }`}>
                                         {!c1IsFaculty ? 'Teaching' : 'Attending'}
                                       </Text>
                                     </View>
@@ -842,61 +846,53 @@ const SchedulesScreen = () => {
                                   <Text className='text-gray-600 text-xs mb-2 font-medium'>Choose action:</Text>
                                   <View className='flex-row flex-wrap gap-2'>
                                     <TouchableOpacity
-                                      className={`px-3 py-2 rounded-lg border ${
-                                        currentChoice === 'keep_course1'
-                                          ? c1IsFaculty ? 'bg-orange-500 border-orange-500' : 'bg-red-500 border-red-500'
-                                          : 'bg-white border-gray-300'
-                                      }`}
+                                      className={`px-3 py-2 rounded-lg border ${currentChoice === 'keep_course1'
+                                        ? c1IsFaculty ? 'bg-orange-500 border-orange-500' : 'bg-red-500 border-red-500'
+                                        : 'bg-white border-gray-300'
+                                        }`}
                                       onPress={() => setConflictChoice(conflict.id, 'keep_course1')}
                                     >
-                                      <Text className={`text-xs font-medium ${
-                                        currentChoice === 'keep_course1' ? 'text-white' : 'text-gray-700'
-                                      }`}>
+                                      <Text className={`text-xs font-medium ${currentChoice === 'keep_course1' ? 'text-white' : 'text-gray-700'
+                                        }`}>
                                         Keep {c1IsFaculty ? 'Teaching' : 'Class'}
                                       </Text>
                                     </TouchableOpacity>
 
                                     <TouchableOpacity
-                                      className={`px-3 py-2 rounded-lg border ${
-                                        currentChoice === 'keep_course2'
-                                          ? !c1IsFaculty ? 'bg-orange-500 border-orange-500' : 'bg-red-500 border-red-500'
-                                          : 'bg-white border-gray-300'
-                                      }`}
+                                      className={`px-3 py-2 rounded-lg border ${currentChoice === 'keep_course2'
+                                        ? !c1IsFaculty ? 'bg-orange-500 border-orange-500' : 'bg-red-500 border-red-500'
+                                        : 'bg-white border-gray-300'
+                                        }`}
                                       onPress={() => setConflictChoice(conflict.id, 'keep_course2')}
                                     >
-                                      <Text className={`text-xs font-medium ${
-                                        currentChoice === 'keep_course2' ? 'text-white' : 'text-gray-700'
-                                      }`}>
+                                      <Text className={`text-xs font-medium ${currentChoice === 'keep_course2' ? 'text-white' : 'text-gray-700'
+                                        }`}>
                                         Keep {!c1IsFaculty ? 'Teaching' : 'Class'}
                                       </Text>
                                     </TouchableOpacity>
 
                                     <TouchableOpacity
-                                      className={`px-3 py-2 rounded-lg border ${
-                                        currentChoice === 'keep_both'
-                                          ? 'bg-blue-500 border-blue-500'
-                                          : 'bg-white border-gray-300'
-                                      }`}
+                                      className={`px-3 py-2 rounded-lg border ${currentChoice === 'keep_both'
+                                        ? 'bg-blue-500 border-blue-500'
+                                        : 'bg-white border-gray-300'
+                                        }`}
                                       onPress={() => setConflictChoice(conflict.id, 'keep_both')}
                                     >
-                                      <Text className={`text-xs font-medium ${
-                                        currentChoice === 'keep_both' ? 'text-white' : 'text-gray-700'
-                                      }`}>
+                                      <Text className={`text-xs font-medium ${currentChoice === 'keep_both' ? 'text-white' : 'text-gray-700'
+                                        }`}>
                                         Keep Both
                                       </Text>
                                     </TouchableOpacity>
 
                                     <TouchableOpacity
-                                      className={`px-3 py-2 rounded-lg border ${
-                                        currentChoice === 'skip_both'
-                                          ? 'bg-gray-500 border-gray-500'
-                                          : 'bg-white border-gray-300'
-                                      }`}
+                                      className={`px-3 py-2 rounded-lg border ${currentChoice === 'skip_both'
+                                        ? 'bg-gray-500 border-gray-500'
+                                        : 'bg-white border-gray-300'
+                                        }`}
                                       onPress={() => setConflictChoice(conflict.id, 'skip_both')}
                                     >
-                                      <Text className={`text-xs font-medium ${
-                                        currentChoice === 'skip_both' ? 'text-white' : 'text-gray-700'
-                                      }`}>
+                                      <Text className={`text-xs font-medium ${currentChoice === 'skip_both' ? 'text-white' : 'text-gray-700'
+                                        }`}>
                                         Skip Both
                                       </Text>
                                     </TouchableOpacity>
@@ -939,11 +935,10 @@ const SchedulesScreen = () => {
                       </View>
 
                       <TouchableOpacity
-                        className={`rounded-xl p-4 mt-4 ${
-                          getResolvedCount() === conflicts.length
-                            ? 'bg-purple-600'
-                            : 'bg-gray-300'
-                        }`}
+                        className={`rounded-xl p-4 mt-4 ${getResolvedCount() === conflicts.length
+                          ? 'bg-purple-600'
+                          : 'bg-gray-300'
+                          }`}
                         onPress={handlePerConflictMerge}
                         disabled={getResolvedCount() !== conflicts.length || isMerging}
                       >
@@ -997,7 +992,7 @@ const SchedulesScreen = () => {
                   {/* Schedule Selection */}
                   <View className='mb-4'>
                     <Text className='text-gray-700 font-medium mb-2'>Select Schedules to Merge</Text>
-                    
+
                     {isLoading ? (
                       <ActivityIndicator size="large" color="#990100" />
                     ) : allSchedules.filter(s => s.uploadType !== 'merged').length === 0 ? (
@@ -1006,21 +1001,20 @@ const SchedulesScreen = () => {
                       allSchedules.filter(s => s.uploadType !== 'merged').map((schedule) => {
                         const isSelected = selectedSchedules.includes(schedule.id);
                         const typeColor = getScheduleTypeColor(schedule.uploadType);
-                        
+
                         return (
                           <TouchableOpacity
                             key={schedule.id}
-                            className={`flex-row items-center p-4 rounded-xl mb-3 border-2 ${
-                              isSelected
-                                ? 'bg-gray-50'
-                                : 'border-gray-200 bg-white'
-                            }`}
+                            className={`flex-row items-center p-4 rounded-xl mb-3 border-2 ${isSelected
+                              ? 'bg-gray-50'
+                              : 'border-gray-200 bg-white'
+                              }`}
                             style={isSelected ? { borderColor: typeColor } : {}}
                             onPress={() => toggleScheduleSelection(schedule.id)}
                           >
-                            <View 
+                            <View
                               className={`w-7 h-7 rounded-full border-2 mr-3 items-center justify-center`}
-                              style={{ 
+                              style={{
                                 borderColor: isSelected ? typeColor : '#d1d5db',
                                 backgroundColor: isSelected ? typeColor : 'transparent'
                               }}
@@ -1029,7 +1023,7 @@ const SchedulesScreen = () => {
                                 <Check size={18} color="#ffffff" />
                               )}
                             </View>
-                            <View 
+                            <View
                               className='w-1 h-12 rounded-full mr-3'
                               style={{ backgroundColor: typeColor }}
                             />
@@ -1131,11 +1125,10 @@ const SchedulesScreen = () => {
 
                   {/* Merge Button */}
                   <TouchableOpacity
-                    className={`rounded-xl p-4 ${
-                      selectedSchedules.length >= 2 && mergeTitle.trim()
-                        ? 'bg-green-600'
-                        : 'bg-gray-300'
-                    }`}
+                    className={`rounded-xl p-4 ${selectedSchedules.length >= 2 && mergeTitle.trim()
+                      ? 'bg-green-600'
+                      : 'bg-gray-300'
+                      }`}
                     onPress={checkForConflicts}
                     disabled={selectedSchedules.length < 2 || !mergeTitle.trim() || isMerging}
                   >
@@ -1148,11 +1141,11 @@ const SchedulesScreen = () => {
                       <View className='flex-row items-center justify-center'>
                         <Merge size={22} color="#ffffff" />
                         <Text className='text-white text-center font-semibold text-lg ml-2'>
-                          {selectedSchedules.length < 2 
+                          {selectedSchedules.length < 2
                             ? 'Select at least 2 schedules'
                             : !mergeTitle.trim()
-                            ? 'Enter a title first'
-                            : 'Merge Schedules'
+                              ? 'Enter a title first'
+                              : 'Merge Schedules'
                           }
                         </Text>
                       </View>

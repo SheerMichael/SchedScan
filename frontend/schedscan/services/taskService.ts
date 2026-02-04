@@ -51,14 +51,14 @@ export const taskService = {
         params: { subject_code: subjectCode }
       });
       const tasks: Task[] = response.data;
-      
+
       // Update local cache
       await AsyncStorage.setItem(getCacheKey(subjectCode), JSON.stringify(tasks));
-      
+
       return tasks;
     } catch (error: any) {
       console.error('Error fetching tasks from API:', error.message);
-      
+
       // Fall back to local cache
       try {
         const cached = await AsyncStorage.getItem(getCacheKey(subjectCode));
@@ -69,7 +69,7 @@ export const taskService = {
       } catch (cacheError) {
         console.error('Error reading tasks cache:', cacheError);
       }
-      
+
       return [];
     }
   },
@@ -83,14 +83,14 @@ export const taskService = {
       // Create on backend
       const response = await api.post('/tasks/', data);
       const newTask: Task = response.data;
-      
+
       // Update local cache
       await taskService.addToCache(data.subject_code, newTask);
-      
+
       return newTask;
     } catch (error: any) {
       console.error('Error creating task:', error.response?.data || error.message);
-      
+
       // Create local-only task if offline
       const localTask: Task = {
         id: Date.now(), // Temporary ID
@@ -100,9 +100,9 @@ export const taskService = {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
-      
+
       await taskService.addToCache(data.subject_code, localTask);
-      
+
       throw error; // Re-throw to let UI know it failed
     }
   },
@@ -116,14 +116,14 @@ export const taskService = {
       // Update on backend
       const response = await api.patch(`/tasks/${taskId}/`, data);
       const updatedTask: Task = response.data;
-      
+
       // Update local cache
       await taskService.updateInCache(subjectCode, updatedTask);
-      
+
       return updatedTask;
     } catch (error: any) {
       console.error('Error updating task:', error.response?.data || error.message);
-      
+
       // Update in cache even if backend fails (optimistic update)
       const cachedTasks = await taskService.getFromCache(subjectCode);
       const taskIndex = cachedTasks.findIndex(t => t.id === taskId);
@@ -131,7 +131,7 @@ export const taskService = {
         cachedTasks[taskIndex] = { ...cachedTasks[taskIndex], ...data, updated_at: new Date().toISOString() };
         await AsyncStorage.setItem(getCacheKey(subjectCode), JSON.stringify(cachedTasks));
       }
-      
+
       throw error;
     }
   },
@@ -144,7 +144,7 @@ export const taskService = {
     try {
       // Delete from backend
       await api.delete(`/tasks/${taskId}/`);
-      
+
       // Remove from local cache
       await taskService.removeFromCache(subjectCode, taskId);
     } catch (error: any) {
@@ -233,27 +233,46 @@ export const taskService = {
   },
 
   /**
-   * Get task counts for multiple subject codes.
+   * Get task counts for multiple subject codes in a single API call.
+   * Uses the batch endpoint to avoid N+1 queries.
    * Returns a map of subject_code -> { total: number, incomplete: number }
+   * 
+   * Optimized: Makes a single POST request instead of N individual requests
    */
   getTaskCounts: async (subjectCodes: string[]): Promise<Record<string, { total: number; incomplete: number }>> => {
-    const counts: Record<string, { total: number; incomplete: number }> = {};
-    
-    await Promise.all(
-      subjectCodes.map(async (subjectCode) => {
-        try {
-          const tasks = await taskService.getTasks(subjectCode);
-          counts[subjectCode] = {
-            total: tasks.length,
-            incomplete: tasks.filter(t => !t.is_completed).length,
-          };
-        } catch (error) {
-          console.error(`Error getting task count for ${subjectCode}:`, error);
-          counts[subjectCode] = { total: 0, incomplete: 0 };
-        }
-      })
-    );
-    
-    return counts;
+    if (subjectCodes.length === 0) {
+      return {};
+    }
+
+    try {
+      // Use the batch endpoint for efficient counting (single API call)
+      const response = await api.post('/tasks/counts/', {
+        subject_codes: subjectCodes
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error('Error fetching task counts from batch endpoint:', error.message);
+
+      // Fallback to individual queries if batch endpoint fails
+      // This ensures backward compatibility during deployment transition
+      const counts: Record<string, { total: number; incomplete: number }> = {};
+
+      await Promise.all(
+        subjectCodes.map(async (subjectCode) => {
+          try {
+            const tasks = await taskService.getTasks(subjectCode);
+            counts[subjectCode] = {
+              total: tasks.length,
+              incomplete: tasks.filter(t => !t.is_completed).length,
+            };
+          } catch (innerError) {
+            console.error(`Error getting task count for ${subjectCode}:`, innerError);
+            counts[subjectCode] = { total: 0, incomplete: 0 };
+          }
+        })
+      );
+
+      return counts;
+    }
   },
 };

@@ -149,7 +149,7 @@ const transformAPISchedule = (apiSchedule: APISchedule): SavedSchedule => ({
 /**
  * Transform frontend courses to API format (for creating schedules)
  */
-const transformCoursesForAPI = (courses: Course[]): Omit<APICourse, 'id' | 'created_at' | 'updated_at'>[] => 
+const transformCoursesForAPI = (courses: Course[]): Omit<APICourse, 'id' | 'created_at' | 'updated_at'>[] =>
   courses.map(course => ({
     subject_code: course.subject_code,
     subject_name: course.subject_name,
@@ -167,19 +167,19 @@ export const scheduleStorageService = {
     try {
       const key = `${LAST_UPLOAD_KEY}_${userId}`;
       const lastUpload = await AsyncStorage.getItem(key);
-      
+
       if (!lastUpload) {
         return { allowed: true, remainingSeconds: 0 };
       }
-      
+
       const lastUploadTime = parseInt(lastUpload, 10);
       const now = Date.now();
       const elapsed = now - lastUploadTime;
-      
+
       if (elapsed >= UPLOAD_COOLDOWN_MS) {
         return { allowed: true, remainingSeconds: 0 };
       }
-      
+
       const remainingMs = UPLOAD_COOLDOWN_MS - elapsed;
       return { allowed: false, remainingSeconds: Math.ceil(remainingMs / 1000) };
     } catch (error) {
@@ -217,7 +217,7 @@ export const scheduleStorageService = {
         is_active: setAsActive,
         courses: transformCoursesForAPI(courses),
       });
-      
+
       console.log('Schedule saved to backend:', response.data);
       return transformAPISchedule(response.data);
     } catch (error: any) {
@@ -228,22 +228,17 @@ export const scheduleStorageService = {
 
   /**
    * Get all schedules for a specific type from the backend API
+   * Uses include_courses=true to get full schedule data in a single API call
+   * (Optimized to avoid N+1 queries)
    */
   getSchedules: async (uploadType: 'student' | 'faculty' | 'merged', userId: number): Promise<SavedSchedule[]> => {
     try {
-      const response = await api.get(`/schedules/?upload_type=${uploadType}`);
-      const schedules: APIScheduleListItem[] = response.data;
-      
-      // For list view, we need to fetch full details for each schedule
-      // Or we can return minimal data - let's fetch full details
-      const fullSchedules = await Promise.all(
-        schedules.map(async (s) => {
-          const detailResponse = await api.get(`/schedules/${s.id}/`);
-          return transformAPISchedule(detailResponse.data);
-        })
-      );
-      
-      return fullSchedules;
+      // Use include_courses=true to get full schedule details in a single request
+      // This avoids N+1 queries where we would otherwise need to fetch each schedule's courses separately
+      const response = await api.get(`/schedules/?upload_type=${uploadType}&include_courses=true`);
+      const schedules: APISchedule[] = response.data;
+
+      return schedules.map(transformAPISchedule);
     } catch (error: any) {
       console.error('Error getting schedules from backend:', error.response?.data || error.message);
       return [];
@@ -282,7 +277,7 @@ export const scheduleStorageService = {
         console.log('updateSchedule: Sending', apiUpdates.courses.length, 'courses');
         console.log('updateSchedule: First course:', JSON.stringify(apiUpdates.courses[0]));
       }
-      
+
       console.log('updateSchedule: PATCH /schedules/' + id + '/ with:', JSON.stringify(apiUpdates).substring(0, 500));
       await api.patch(`/schedules/${id}/`, apiUpdates);
       console.log('Schedule updated on backend:', id);
@@ -384,7 +379,7 @@ export const scheduleStorageService = {
       // Only clear local rate limiting data
       const key = `${LAST_UPLOAD_KEY}_${userId}`;
       await AsyncStorage.removeItem(key);
-      
+
       // Clear legacy keys if they exist
       await AsyncStorage.multiRemove([
         'schedules_student',
@@ -393,7 +388,7 @@ export const scheduleStorageService = {
         `schedules_faculty_${userId}`,
         `active_schedule_${userId}`,
       ]);
-      
+
       console.log('Local schedule data cleared');
     } catch (error) {
       console.error('Error clearing local schedule data:', error);
@@ -404,9 +399,20 @@ export const scheduleStorageService = {
   /**
    * Migrate legacy local schedules to backend
    * Called on login to sync any local-only data to the server
+   * 
+   * Optimized: Uses a flag to skip migration check after first successful run
    */
   migrateLegacySchedules: async (userId: number): Promise<void> => {
     try {
+      // Check if migration has already been completed for this user
+      const migrationKey = `migration_complete_v1_${userId}`;
+      const migrationComplete = await AsyncStorage.getItem(migrationKey);
+
+      if (migrationComplete === 'true') {
+        // Migration already done, skip the legacy key checks
+        return;
+      }
+
       // Check for old legacy keys and clear them
       const legacyKeys = [
         'schedules_student',
@@ -414,16 +420,25 @@ export const scheduleStorageService = {
         `schedules_student_${userId}`,
         `schedules_faculty_${userId}`,
       ];
-      
+
+      let foundLegacyData = false;
       for (const key of legacyKeys) {
         const data = await AsyncStorage.getItem(key);
         if (data) {
           console.log(`Found legacy data at ${key}, clearing...`);
           await AsyncStorage.removeItem(key);
+          foundLegacyData = true;
         }
       }
-      
-      console.log('Legacy schedule migration complete');
+
+      // Mark migration as complete for this user
+      await AsyncStorage.setItem(migrationKey, 'true');
+
+      if (foundLegacyData) {
+        console.log('Legacy schedule migration complete - cleared old data');
+      } else {
+        console.log('Legacy schedule migration complete - no legacy data found');
+      }
     } catch (error) {
       console.error('Error migrating legacy schedules:', error);
     }
@@ -441,12 +456,12 @@ export const scheduleStorageService = {
         schedule_ids: scheduleIds,
         title: 'Conflict Check', // Won't be used since we're just checking
       });
-      
+
       // If response has has_conflicts, return the conflicts
       if (response.data.has_conflicts) {
         return response.data as MergeConflictsResponse;
       }
-      
+
       // No conflicts - this means merge would succeed with no issues
       return null;
     } catch (error: any) {
@@ -475,22 +490,22 @@ export const scheduleStorageService = {
         schedule_ids: scheduleIds,
         title,
       };
-      
+
       if (conflictResolution) {
         requestBody.conflict_resolution = conflictResolution;
       }
-      
+
       if (conflictChoices && conflictChoices.length > 0) {
         requestBody.conflict_choices = conflictChoices;
       }
-      
+
       const response = await api.post('/schedules/merge/', requestBody);
-      
+
       // Check if response indicates conflicts that need resolution
       if (response.data.has_conflicts) {
         return response.data as MergeConflictsResponse;
       }
-      
+
       // Successful merge - transform and return the schedule
       console.log('Schedules merged successfully:', response.data);
       return transformAPISchedule(response.data.schedule);
@@ -502,21 +517,17 @@ export const scheduleStorageService = {
 
   /**
    * Get all schedules (both student and faculty) for the user
+   * Uses include_courses=true to get full schedule data in a single API call
+   * (Optimized to avoid N+1 queries)
    */
   getAllSchedules: async (userId: number): Promise<SavedSchedule[]> => {
     try {
-      const response = await api.get('/schedules/');
-      const schedules: APIScheduleListItem[] = response.data;
-      
-      // Fetch full details for each schedule
-      const fullSchedules = await Promise.all(
-        schedules.map(async (s) => {
-          const detailResponse = await api.get(`/schedules/${s.id}/`);
-          return transformAPISchedule(detailResponse.data);
-        })
-      );
-      
-      return fullSchedules;
+      // Use include_courses=true to get full schedule details in a single request
+      // This avoids N+1 queries where we would otherwise need to fetch each schedule's courses separately
+      const response = await api.get('/schedules/?include_courses=true');
+      const schedules: APISchedule[] = response.data;
+
+      return schedules.map(transformAPISchedule);
     } catch (error: any) {
       console.error('Error getting all schedules:', error.response?.data || error.message);
       return [];

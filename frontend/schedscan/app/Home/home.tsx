@@ -4,19 +4,19 @@ import Svg, { Path, Circle, G, Rect, Polygon } from "react-native-svg";
 import { router } from "expo-router";
 import { useAuth } from '../../context/AuthContext';
 import { Course } from '../../services/courseService';
-import { scheduleStorageService, SavedSchedule } from '../../services/scheduleStorageService';
+import { SavedSchedule } from '../../services/scheduleStorageService';
 import { taskService } from '../../services/taskService';
 import { useFocusEffect } from '@react-navigation/native';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
-import Animated, { 
-  useAnimatedStyle, 
-  useSharedValue, 
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
   withSpring,
   runOnJS,
 } from 'react-native-reanimated';
 
 export default function SchedScanApp() {
-  const { user } = useAuth();
+  const { user, getActiveSchedule } = useAuth();
   const startYear = 2025;
   const endYear = 2050;
   const now = new Date();
@@ -40,7 +40,7 @@ export default function SchedScanApp() {
     priority_level: string;
     source_type?: 'student' | 'faculty' | null;  // For merged schedules
   };
-  
+
   type WeeklySchedule = {
     [key: number]: ScheduleItem[];
   };
@@ -50,26 +50,26 @@ export default function SchedScanApp() {
     // For merged schedules, use the source_type
     if (item.source_type === 'faculty') return '#f97316'; // orange
     if (item.source_type === 'student') return '#ef4444'; // red
-    
+
     // For non-merged schedules, use the active schedule's uploadType
     if (activeSchedule?.uploadType === 'faculty') return '#f97316'; // orange
     if (activeSchedule?.uploadType === 'student') return '#ef4444'; // red
-    
+
     // Fallback for holidays
     if (item.priority_level === 'Holiday') return '#16a34a'; // green
-    
+
     return '#ef4444'; // default red
   };
 
   // Draggable card component using modern Gesture API
-  const DraggableCard = ({ 
-    item, 
-    index, 
-    onDragEnd, 
+  const DraggableCard = ({
+    item,
+    index,
+    onDragEnd,
     totalItems
-  }: { 
-    item: ScheduleItem; 
-    index: number; 
+  }: {
+    item: ScheduleItem;
+    index: number;
     onDragEnd: (fromIndex: number, toIndex: number) => void;
     totalItems: number;
   }) => {
@@ -101,13 +101,13 @@ export default function SchedScanApp() {
         const offsetY = event.translationY;
         const moveBy = Math.round(offsetY / cardHeight);
         let newIndex = index + moveBy;
-        
+
         // Clamp to valid range
         newIndex = Math.max(0, Math.min(totalItems - 1, newIndex));
-        
+
         translateY.value = withSpring(0);
         isActive.value = false;
-        
+
         if (newIndex !== index) {
           runOnJS(onDragEnd)(index, newIndex);
         }
@@ -155,81 +155,81 @@ export default function SchedScanApp() {
   interface Star {
     value: number;
   }
-const StarBadge = ({ value }: Star) => {
-  return (
-    <View className="items-center justify-center">
-      <Svg width={40} height={40} viewBox="0 0 100 100">
-        <Path
-          d="M50 5 L61 35 L94 35 L67 55 L78 85 L50 65 L22 85 L33 55 L6 35 L39 35 Z"
-          fill="#F7FF63" 
-          stroke="black"
-          strokeWidth="1"
-        />
-      </Svg>
+  const StarBadge = ({ value }: Star) => {
+    return (
+      <View className="items-center justify-center">
+        <Svg width={40} height={40} viewBox="0 0 100 100">
+          <Path
+            d="M50 5 L61 35 L94 35 L67 55 L78 85 L50 65 L22 85 L33 55 L6 35 L39 35 Z"
+            fill="#F7FF63"
+            stroke="black"
+            strokeWidth="1"
+          />
+        </Svg>
 
-      <View className="absolute">
-        <Text className="font-bold text-black text-lg">{value}</Text>
+        <View className="absolute">
+          <Text className="font-bold text-black text-lg">{value}</Text>
+        </View>
       </View>
-    </View>
+    );
+  };
+
+  const Bell = ({ size = 24, color = '#4D4D4D' }) => (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill={color} stroke={color} strokeWidth="2">
+      <Path d="M22 17H2a3 3 0 0 0 3-3V9a7 7 0 0 1 14 0v5a3 3 0 0 0 3 3zm-8.27 4a2 2 0 0 1-3.46 0" />
+    </Svg>
   );
-};
 
-const Bell = ({ size = 24, color = '#4D4D4D' }) => (
-  <Svg width={size} height={size} viewBox="0 0 24 24" fill={color} stroke={color} strokeWidth="2">
-    <Path d="M22 17H2a3 3 0 0 0 3-3V9a7 7 0 0 1 14 0v5a3 3 0 0 0 3 3zm-8.27 4a2 2 0 0 1-3.46 0" />
-  </Svg>
-);
-
-const Classes_Today = ({ size = 24 }) => (
-  <Svg
-    width={size}
-    height={size}
-    viewBox="0 0 16 16"
-    fill="#EB3223"
-  >
-    <Path
-      d="M14.5 2H13V1h-1v1H4V1H3v1H1.5l-.5.5v12l.5.5h13l.5-.5v-12l-.5-.5zM14 14H2V5h12v9zm0-10H2V3h12v1zM4 8H3v1h1V8zm-1 2h1v1H3v-1zm1 2H3v1h1v-1zm2-4h1v1H6V8zm1 2H6v1h1v-1zm-1 2h1v1H6v-1zm1-6H6v1h1V6zm2 2h1v1H9V8zm1 2H9v1h1v-1zm-1 2h1v1H9v-1zm1-6H9v1h1V6zm2 2h1v1h-1V8zm1 2h-1v1h1v-1zm-1-4h1v1h-1V6z"
-    />
-  </Svg>
-);
-
-const Teaching = ({ size = 24 }) => (
- <Svg
-    id="Capa_1"
-    width={size}
-    height={size}
-    viewBox="0 0 31.314 31.314"
-    fill="#EB3223"
-  >
-    <G>
-      <G>
-        <Path d="M18.773,7.2c-0.09,0-0.094,0-0.103,0.128c-0.019,0.262-0.036,0.47-0.049,0.638h-0.354c-0.274,0-0.311,0.16-0.318,0.31 s-0.008,0.155-0.008,0.182c0,0.03,0.013,0.049,0.047,0.049h0.59c-0.018,0.195-0.021,0.256-0.021,0.345 c0,0.271,0.09,0.421,0.446,0.421c0.075,0,0.095-0.018,0.099-0.089l0.053-0.677h0.352c0.266,0,0.322-0.12,0.335-0.297l0.015-0.182 c0-0.039-0.035-0.062-0.07-0.062h-0.58c0.018-0.199,0.021-0.279,0.021-0.363C19.227,7.351,19.137,7.2,18.773,7.2z" />
-        <Path d="M21.046,9.038c-0.014,0.022-0.03,0.071-0.03,0.103v0.265c0,0.235,0.11,0.323,0.406,0.323h1.452 c0.267,0,0.324-0.12,0.337-0.297l0.018-0.261c0-0.044-0.035-0.062-0.07-0.062h-1.124c0.274-0.218,1.292-0.886,1.292-1.74 c0-0.372-0.207-0.833-1.004-0.833c-0.551,0-1.139,0.234-1.139,0.845c0,0.31,0.158,0.474,0.49,0.474 c0.125,0,0.133-0.022,0.143-0.081c0.027-0.238,0.09-0.584,0.377-0.584c0.227,0,0.318,0.12,0.318,0.266 C22.512,8.006,21.215,8.728,21.046,9.038z" />
-        <Path d="M24.634,9.025L24.62,9.264c0,0.031,0.014,0.049,0.049,0.049h1.427c0.266,0,0.321-0.12,0.336-0.297l0.019-0.239 c0-0.044-0.026-0.062-0.071-0.062h-1.426C24.68,8.715,24.643,8.874,24.634,9.025z" />
-        <Path d="M26.59,7.865l0.02-0.24c0-0.044-0.027-0.062-0.07-0.062h-1.428c-0.273,0-0.31,0.16-0.316,0.31l-0.016,0.239 c0,0.031,0.015,0.049,0.05,0.049h1.424C26.52,8.161,26.577,8.042,26.59,7.865z" />
-        <Rect x={23.695} y={15.25} width={5.053} height={1.878} />
-        <Polygon points="2.932,0.463 2.932,3.416 4.222,3.018 4.222,1.753 30.023,1.753 30.023,18.201 9.491,18.201 9.424,19.49  31.314,19.49 31.314,0.463  " />
-        <Circle cx={4.984} cy={7.526} r={3.821} />
-        <Path d="M8.228,29.104v-6.802V21.66v-0.87h0.243l0.355-6.905l6.59-3.414l-0.358-0.692l0.65-0.449 c0.012,0.271,0.121,0.398,0.455,0.398h0.244c0.053,0,0.065-0.018,0.069-0.066c0.015-0.124,0.184-2.458,0.184-2.706 c0-0.217-0.133-0.373-0.457-0.373h-0.266c-0.01,0-0.15,0.094-0.247,0.151c-0.377,0.23-0.404,0.253-0.404,0.31 c0,0.155,0.12,0.416,0.346,0.416c0.071,0,0.15-0.026,0.214-0.097c-0.049,0.606-0.1,1.195-0.126,1.575l-0.096-0.139l-0.791,0.546 L14.55,8.801l-6.025,3.121h-2.15l-1.456,1.689L3.51,11.922l-3.095,0.495l-0.2,6.948h1.313l0.07,1.426h0.2v0.87v0.642v6.803H1.534 L0,29.438v1.414h1.307l1.523-0.25l0.014,0.25h1.688v-1.576v-0.17v-6.803h0.961v6.803v0.17v1.576h1.688l0.014-0.25l1.524,0.25 h1.306v-1.414L8.49,29.104H8.228z" />
-      </G>
-    </G>
-  </Svg>
-);
-
-const Attending = ({ size = 24 }) => (
+  const Classes_Today = ({ size = 24 }) => (
     <Svg
-    fill="#EB3223"
-    width={size}
-    height={size}
-    viewBox="0 0 512 512"
-  >
-    <G id="Graduation">
-      <Polygon points="445.055 384.794 445.055 221.864 418.805 234.989 418.805 384.777 401.301 429.785 462.551 429.785 445.055 384.794" />
-      <Path d="M229.0648,306.3708l-107.7643-53.88v53.7754c0,36.2433,58.7634,65.625,131.25,65.625,72.4887,0,131.25-29.3817,131.25-65.625V252.49L276.0277,306.3741C257.5813,313.681,247.5133,313.6789,229.0648,306.3708Z" />
-      <Path d="M264.2912,282.8969l186.5207-93.26c6.4579-3.2289,6.4579-8.5107,0-11.74l-186.5207-93.26c-6.4556-3.2289-17.0214-3.2289-23.4793,0l-186.5207,93.26c-6.4556,3.2289-6.4556,8.5107,0,11.74l186.5207,93.26C247.27,286.1258,257.8356,286.1258,264.2912,282.8969Z" />
-    </G>
-  </Svg>
-);
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="#EB3223"
+    >
+      <Path
+        d="M14.5 2H13V1h-1v1H4V1H3v1H1.5l-.5.5v12l.5.5h13l.5-.5v-12l-.5-.5zM14 14H2V5h12v9zm0-10H2V3h12v1zM4 8H3v1h1V8zm-1 2h1v1H3v-1zm1 2H3v1h1v-1zm2-4h1v1H6V8zm1 2H6v1h1v-1zm-1 2h1v1H6v-1zm1-6H6v1h1V6zm2 2h1v1H9V8zm1 2H9v1h1v-1zm-1 2h1v1H9v-1zm1-6H9v1h1V6zm2 2h1v1h-1V8zm1 2h-1v1h1v-1zm-1-4h1v1h-1V6z"
+      />
+    </Svg>
+  );
+
+  const Teaching = ({ size = 24 }) => (
+    <Svg
+      id="Capa_1"
+      width={size}
+      height={size}
+      viewBox="0 0 31.314 31.314"
+      fill="#EB3223"
+    >
+      <G>
+        <G>
+          <Path d="M18.773,7.2c-0.09,0-0.094,0-0.103,0.128c-0.019,0.262-0.036,0.47-0.049,0.638h-0.354c-0.274,0-0.311,0.16-0.318,0.31 s-0.008,0.155-0.008,0.182c0,0.03,0.013,0.049,0.047,0.049h0.59c-0.018,0.195-0.021,0.256-0.021,0.345 c0,0.271,0.09,0.421,0.446,0.421c0.075,0,0.095-0.018,0.099-0.089l0.053-0.677h0.352c0.266,0,0.322-0.12,0.335-0.297l0.015-0.182 c0-0.039-0.035-0.062-0.07-0.062h-0.58c0.018-0.199,0.021-0.279,0.021-0.363C19.227,7.351,19.137,7.2,18.773,7.2z" />
+          <Path d="M21.046,9.038c-0.014,0.022-0.03,0.071-0.03,0.103v0.265c0,0.235,0.11,0.323,0.406,0.323h1.452 c0.267,0,0.324-0.12,0.337-0.297l0.018-0.261c0-0.044-0.035-0.062-0.07-0.062h-1.124c0.274-0.218,1.292-0.886,1.292-1.74 c0-0.372-0.207-0.833-1.004-0.833c-0.551,0-1.139,0.234-1.139,0.845c0,0.31,0.158,0.474,0.49,0.474 c0.125,0,0.133-0.022,0.143-0.081c0.027-0.238,0.09-0.584,0.377-0.584c0.227,0,0.318,0.12,0.318,0.266 C22.512,8.006,21.215,8.728,21.046,9.038z" />
+          <Path d="M24.634,9.025L24.62,9.264c0,0.031,0.014,0.049,0.049,0.049h1.427c0.266,0,0.321-0.12,0.336-0.297l0.019-0.239 c0-0.044-0.026-0.062-0.071-0.062h-1.426C24.68,8.715,24.643,8.874,24.634,9.025z" />
+          <Path d="M26.59,7.865l0.02-0.24c0-0.044-0.027-0.062-0.07-0.062h-1.428c-0.273,0-0.31,0.16-0.316,0.31l-0.016,0.239 c0,0.031,0.015,0.049,0.05,0.049h1.424C26.52,8.161,26.577,8.042,26.59,7.865z" />
+          <Rect x={23.695} y={15.25} width={5.053} height={1.878} />
+          <Polygon points="2.932,0.463 2.932,3.416 4.222,3.018 4.222,1.753 30.023,1.753 30.023,18.201 9.491,18.201 9.424,19.49  31.314,19.49 31.314,0.463  " />
+          <Circle cx={4.984} cy={7.526} r={3.821} />
+          <Path d="M8.228,29.104v-6.802V21.66v-0.87h0.243l0.355-6.905l6.59-3.414l-0.358-0.692l0.65-0.449 c0.012,0.271,0.121,0.398,0.455,0.398h0.244c0.053,0,0.065-0.018,0.069-0.066c0.015-0.124,0.184-2.458,0.184-2.706 c0-0.217-0.133-0.373-0.457-0.373h-0.266c-0.01,0-0.15,0.094-0.247,0.151c-0.377,0.23-0.404,0.253-0.404,0.31 c0,0.155,0.12,0.416,0.346,0.416c0.071,0,0.15-0.026,0.214-0.097c-0.049,0.606-0.1,1.195-0.126,1.575l-0.096-0.139l-0.791,0.546 L14.55,8.801l-6.025,3.121h-2.15l-1.456,1.689L3.51,11.922l-3.095,0.495l-0.2,6.948h1.313l0.07,1.426h0.2v0.87v0.642v6.803H1.534 L0,29.438v1.414h1.307l1.523-0.25l0.014,0.25h1.688v-1.576v-0.17v-6.803h0.961v6.803v0.17v1.576h1.688l0.014-0.25l1.524,0.25 h1.306v-1.414L8.49,29.104H8.228z" />
+        </G>
+      </G>
+    </Svg>
+  );
+
+  const Attending = ({ size = 24 }) => (
+    <Svg
+      fill="#EB3223"
+      width={size}
+      height={size}
+      viewBox="0 0 512 512"
+    >
+      <G id="Graduation">
+        <Polygon points="445.055 384.794 445.055 221.864 418.805 234.989 418.805 384.777 401.301 429.785 462.551 429.785 445.055 384.794" />
+        <Path d="M229.0648,306.3708l-107.7643-53.88v53.7754c0,36.2433,58.7634,65.625,131.25,65.625,72.4887,0,131.25-29.3817,131.25-65.625V252.49L276.0277,306.3741C257.5813,313.681,247.5133,313.6789,229.0648,306.3708Z" />
+        <Path d="M264.2912,282.8969l186.5207-93.26c6.4579-3.2289,6.4579-8.5107,0-11.74l-186.5207-93.26c-6.4556-3.2289-17.0214-3.2289-23.4793,0l-186.5207,93.26c-6.4556,3.2289-6.4556,8.5107,0,11.74l186.5207,93.26C247.27,286.1258,257.8356,286.1258,264.2912,282.8969Z" />
+      </G>
+    </Svg>
+  );
 
   const [daySchedule, setDaySchedule] = useState<ScheduleItem[]>([]);
   const [taskCounts, setTaskCounts] = useState<Record<string, { total: number; incomplete: number }>>({});
@@ -261,20 +261,22 @@ const Attending = ({ size = 24 }) => (
 
     try {
       setIsLoadingCourses(true);
-      const active = await scheduleStorageService.getActiveSchedule(user.id);
+      // Use cached active schedule from AuthContext (with 30s TTL)
+      // This avoids redundant API calls when switching between screens
+      const active = await getActiveSchedule();
       setActiveSchedule(active);
-      
+
       if (active) {
         setCourses(active.courses);
         console.log('Loaded active schedule:', active.title, 'with', active.courses.length, 'courses');
-        
+
         // Update today's schedule if a day is selected
         if (selectedDay !== null) {
           updateDaySchedule(selectedDay, active.courses);
         }
-        
-        // Load task counts for all subjects
-        const subjectCodes = active.courses.map(c => c.subject_code);
+
+        // Load task counts for all subjects (uses batch API endpoint)
+        const subjectCodes = active.courses.map((c: Course) => c.subject_code);
         if (subjectCodes.length > 0) {
           const counts = await taskService.getTaskCounts(subjectCodes);
           setTaskCounts(counts);
@@ -354,7 +356,7 @@ const Attending = ({ size = 24 }) => (
   // Check if a specific date has courses
   const hasCoursesOnDate = (day: number): boolean => {
     const weekday = new Date(selectedYear, selectedMonth, day).getDay();
-    
+
     return courses.some(course => {
       const courseDays = dayCodeToNumbers(course.day);
       return courseDays.includes(weekday);
@@ -364,7 +366,7 @@ const Attending = ({ size = 24 }) => (
   // Get courses for a specific date
   const getCoursesForDate = (day: number): Course[] => {
     const weekday = new Date(selectedYear, selectedMonth, day).getDay();
-    
+
     return courses.filter(course => {
       const courseDays = dayCodeToNumbers(course.day);
       return courseDays.includes(weekday);
@@ -376,18 +378,18 @@ const Attending = ({ size = 24 }) => (
     if (!timeStr) return 0;
     const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
     if (!match) return 0;
-    
+
     let hours = parseInt(match[1], 10);
     const minutes = parseInt(match[2], 10);
     const period = match[3].toUpperCase();
-    
+
     // Convert to 24-hour format for proper sorting
     if (period === 'PM' && hours !== 12) {
       hours += 12;
     } else if (period === 'AM' && hours === 12) {
       hours = 0;
     }
-    
+
     return hours * 60 + minutes;
   };
 
@@ -426,12 +428,12 @@ const Attending = ({ size = 24 }) => (
   const holidaySchedule: { [key: string]: ScheduleItem[] } = {};
 
   const years = Array.from({ length: endYear - startYear + 1 }, (_, i) => startYear + i);
-  const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
-  const monthsFull = ['JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE','JULY','AUGUST','SEPTEMBER','OCTOBER','NOVEMBER','DECEMBER'];
-  const daysOfWeek = ['S','M','T','W','T','F','S'];
+  const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+  const monthsFull = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
+  const daysOfWeek = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
-  const getDaysInMonth = (month:number, year:number) => new Date(year, month + 1, 0).getDate();
-  const getFirstDayOfMonth = (month:number, year:number) => new Date(year, month, 1).getDay();
+  const getDaysInMonth = (month: number, year: number) => new Date(year, month + 1, 0).getDate();
+  const getFirstDayOfMonth = (month: number, year: number) => new Date(year, month, 1).getDay();
 
   const generateCalendarDays = () => {
     const daysInMonth = getDaysInMonth(selectedMonth, selectedYear);
@@ -443,7 +445,7 @@ const Attending = ({ size = 24 }) => (
     return days;
   };
 
-  const navigateMonth = (direction:'prev' | 'next') => {
+  const navigateMonth = (direction: 'prev' | 'next') => {
     if (direction === 'prev') {
       if (selectedMonth === 0) {
         setSelectedMonth(11);
@@ -462,13 +464,13 @@ const Attending = ({ size = 24 }) => (
     setSelectedDay(null);
   };
   // ✅ NEW — Check if date has holiday
-  const isHoliday = (day:number) => {
+  const isHoliday = (day: number) => {
     const key = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     return holidaySchedule[key] !== undefined;
   };
 
   // ✅ UPDATED — Only show real courses from backend
-  const selectDay = (day:number) => {
+  const selectDay = (day: number) => {
     setSelectedDay(day);
 
     const dateKey = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -492,10 +494,10 @@ const Attending = ({ size = 24 }) => (
           let hours = parseInt(match[1], 10);
           const minutes = parseInt(match[2], 10);
           const period = match[3].toUpperCase();
-          
+
           if (period === 'PM' && hours !== 12) hours += 12;
           if (period === 'AM' && hours === 12) hours = 0;
-          
+
           return hours * 60 + minutes;
         };
         return parseTime(a.start_time) - parseTime(b.start_time);
@@ -532,24 +534,24 @@ const Attending = ({ size = 24 }) => (
     <>
       <View className="w-full h-14 bg-white border-b-2 border-gray-200 justify-between items-center flex-row">
         <View className='ml-8 flex-row justify-center items-center'>
-          <Image source={require('../../assets/images/logo.png')} className='w-12 h-12'/>
+          <Image source={require('../../assets/images/logo.png')} className='w-12 h-12' />
           <View className='flex-col justify-center items-left'>
             <Text className="text-xl font-bold text-primary-900/50 leading-none">Sched</Text>
             <Text className="text-xl font-bold text-primary-900 leading-none">Scan</Text>
           </View>
         </View>
         <View className='flex-row justify-center items-center mr-4'>
-        <TouchableOpacity onPress={() => router.push("../Parent/home")}>    
-          <StarBadge value={5} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => router.push('/Home/notification')}>
-          <Bell size={24} color="#4D4D4D"/>
-        </TouchableOpacity>
+          <TouchableOpacity onPress={() => router.push("../Parent/home")}>
+            <StarBadge value={5} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => router.push('/Home/notification')}>
+            <Bell size={24} color="#4D4D4D" />
+          </TouchableOpacity>
         </View>
       </View>
 
-        {/* Banner */}
+      {/* Banner */}
       <ScrollView className="flex-1">
         <View className="bg-primary-600 m-4 p-6 rounded-2xl">
           <Text className="text-3xl font-bold text-white mb-1">
@@ -557,37 +559,37 @@ const Attending = ({ size = 24 }) => (
           </Text>
           <Text className="text-base text-red-200">Ready to organize?</Text>
         </View>
-        
+
         <View className="flex-row justify-between px-4 mt-2">
           {/* Classes Today */}
           <View className="flex-1 bg-white rounded-xl p-4 items-center border border-red-200 mx-1">
-            <Classes_Today size={24}/>
+            <Classes_Today size={24} />
             <Text className="text-3xl font-bold text-primary-600">{daySchedule.length}</Text>
             <Text className="text-sm text-gray-500">Classes Today</Text>
           </View>
 
           {/* Teaching - shows count for faculty schedules or faculty courses in merged */}
           <View className="flex-1 bg-white rounded-xl p-4 items-center border border-orange-200 mx-1">
-            <Teaching size={24}/>
+            <Teaching size={24} />
             <Text className="text-3xl font-bold text-orange-500">
-              {activeSchedule?.uploadType === 'faculty' 
-                ? daySchedule.length 
+              {activeSchedule?.uploadType === 'faculty'
+                ? daySchedule.length
                 : activeSchedule?.uploadType === 'merged'
-                ? daySchedule.filter(item => item.source_type === 'faculty').length
-                : 0}
+                  ? daySchedule.filter(item => item.source_type === 'faculty').length
+                  : 0}
             </Text>
             <Text className="text-sm text-gray-500">Teaching</Text>
           </View>
 
           {/* Attending - shows count for student schedules or student courses in merged */}
           <View className="flex-1 bg-white rounded-xl p-4 items-center border border-red-200 mx-1">
-            <Attending size={24}/>
+            <Attending size={24} />
             <Text className="text-3xl font-bold text-red-600">
-              {activeSchedule?.uploadType === 'student' 
-                ? daySchedule.length 
+              {activeSchedule?.uploadType === 'student'
+                ? daySchedule.length
                 : activeSchedule?.uploadType === 'merged'
-                ? daySchedule.filter(item => item.source_type === 'student').length
-                : 0}
+                  ? daySchedule.filter(item => item.source_type === 'student').length
+                  : 0}
             </Text>
             <Text className="text-sm text-gray-500">Attending</Text>
           </View>
@@ -612,7 +614,7 @@ const Attending = ({ size = 24 }) => (
 
           {/* All Schedules */}
           <TouchableOpacity onPress={() => setSelectedFilter('all')} className={`px-4 py-2 rounded-full border w-1/3 items-center
-              ${selectedFilter === 'all' ? 'bg-primary-500 border-primary-400': 'bg-white border-primary-400'}`}>
+              ${selectedFilter === 'all' ? 'bg-primary-500 border-primary-400' : 'bg-white border-primary-400'}`}>
             <Text className={`text-xs font-semibold ${selectedFilter === 'all' ? 'text-white' : 'text-red-600'}`}>
               All Schedules
             </Text>
@@ -620,7 +622,7 @@ const Attending = ({ size = 24 }) => (
 
           {/* Teaching Only */}
           <TouchableOpacity onPress={() => setSelectedFilter('teaching')} className={`px-4 py-2 rounded-full border w-1/3 items-center mx-1
-              ${selectedFilter === 'teaching'? 'bg-primary-500 border-primary-400': 'bg-white border-primary-400'}`}>
+              ${selectedFilter === 'teaching' ? 'bg-primary-500 border-primary-400' : 'bg-white border-primary-400'}`}>
             <Text className={`text-xs font-semibold 
               ${selectedFilter === 'teaching' ? 'text-white' : 'text-red-600'}`}>
               Teaching Only
@@ -629,7 +631,7 @@ const Attending = ({ size = 24 }) => (
 
           {/* Attending */}
           <TouchableOpacity onPress={() => setSelectedFilter('attending')} className={`px-4 py-2 rounded-full border w-1/3 items-center
-              ${selectedFilter === 'attending' ? 'bg-primary-500 border-primary-400': 'bg-white border-primary-400'}`}>
+              ${selectedFilter === 'attending' ? 'bg-primary-500 border-primary-400' : 'bg-white border-primary-400'}`}>
             <Text className={`text-xs font-semibold 
               ${selectedFilter === 'attending' ? 'text-white' : 'text-red-600'}`}>
               Attending Class
@@ -748,16 +750,16 @@ const Attending = ({ size = 24 }) => (
                         <Text className="font-bold text-base text-black">{item.title}</Text>
                         {/* Show badge for merged schedules (source_type) or non-merged schedules (uploadType) */}
                         {(item.source_type || activeSchedule?.uploadType === 'faculty' || activeSchedule?.uploadType === 'student') && (
-                          <View 
+                          <View
                             className="ml-2 px-2 py-0.5 rounded-full"
                             style={{ backgroundColor: courseColor + '20' }}
                           >
-                            <Text 
+                            <Text
                               className="text-xs font-medium"
                               style={{ color: courseColor }}
                             >
-                              {item.source_type === 'faculty' || (!item.source_type && activeSchedule?.uploadType === 'faculty') 
-                                ? 'Faculty' 
+                              {item.source_type === 'faculty' || (!item.source_type && activeSchedule?.uploadType === 'faculty')
+                                ? 'Faculty'
                                 : 'Student'}
                             </Text>
                           </View>
@@ -773,8 +775,8 @@ const Attending = ({ size = 24 }) => (
                           <Path d="M9 12l2 2 4-4" />
                         </Svg>
                         <Text className="text-xs font-semibold text-amber-700 ml-1">
-                          {taskCounts[item.title]?.incomplete > 0 
-                            ? `${taskCounts[item.title].incomplete}` 
+                          {taskCounts[item.title]?.incomplete > 0
+                            ? `${taskCounts[item.title].incomplete}`
                             : '✓'}
                         </Text>
                       </View>

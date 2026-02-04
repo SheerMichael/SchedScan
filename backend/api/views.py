@@ -461,14 +461,28 @@ class ScheduleListCreateView(generics.ListCreateAPIView):
     Headers: Authorization: Bearer <access_token>
     Query params:
         - upload_type: Filter by 'student' or 'faculty' (optional)
+        - include_courses: If 'true', include full course details (optional)
     
-    Response: [
+    Response (default - lightweight list): [
         {
             "id": 1,
             "title": "1st Semester 2025",
             "upload_type": "student",
             "is_active": true,
             "course_count": 8,
+            "created_at": "2025-12-01T...",
+            "updated_at": "2025-12-01T..."
+        },
+        ...
+    ]
+    
+    Response (with include_courses=true): [
+        {
+            "id": 1,
+            "title": "1st Semester 2025",
+            "upload_type": "student",
+            "is_active": true,
+            "courses": [...],  // Full course details
             "created_at": "2025-12-01T...",
             "updated_at": "2025-12-01T..."
         },
@@ -509,6 +523,11 @@ class ScheduleListCreateView(generics.ListCreateAPIView):
     def get_serializer_class(self):
         if self.request.method == 'POST':
             return ScheduleSerializer
+        # Support include_courses query param to return full details in list view
+        # This avoids N+1 queries when frontend needs full schedule data
+        include_courses = self.request.query_params.get('include_courses', '').lower() == 'true'
+        if include_courses:
+            return ScheduleSerializer
         return ScheduleListSerializer
     
     def get_queryset(self):
@@ -516,6 +535,11 @@ class ScheduleListCreateView(generics.ListCreateAPIView):
         upload_type = self.request.query_params.get('upload_type', None)
         if upload_type:
             queryset = queryset.filter(upload_type=upload_type)
+        # Prefetch courses to optimize queries when including course details
+        # This prevents N+1 queries when serializing nested courses
+        include_courses = self.request.query_params.get('include_courses', '').lower() == 'true'
+        if include_courses:
+            queryset = queryset.prefetch_related('courses')
         return queryset
 
 
@@ -773,6 +797,61 @@ class TaskDetailView(generics.RetrieveUpdateDestroyAPIView):
         Only allow access to user's own tasks.
         """
         return Task.objects.filter(user=self.request.user)
+
+
+class TaskCountsView(APIView):
+    """
+    API endpoint to get task counts for multiple subject codes in a single request.
+    This avoids N+1 queries where frontend would otherwise make N separate API calls
+    to get task counts for each subject code displayed on the home screen.
+    
+    POST /api/tasks/counts/
+    Headers: Authorization: Bearer <access_token>
+    Request body: {
+        "subject_codes": ["CS101", "MATH201", "ENG100"]
+    }
+    
+    Response: {
+        "CS101": {"total": 3, "incomplete": 2},
+        "MATH201": {"total": 1, "incomplete": 0},
+        "ENG100": {"total": 0, "incomplete": 0}
+    }
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        subject_codes = request.data.get('subject_codes', [])
+        
+        if not isinstance(subject_codes, list):
+            return Response(
+                {"error": "subject_codes must be a list"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Use aggregation for efficient counting
+        from django.db.models import Count, Q
+        
+        # Get counts for all requested subject codes in a single query
+        task_counts = Task.objects.filter(
+            user=request.user,
+            subject_code__in=subject_codes
+        ).values('subject_code').annotate(
+            total=Count('id'),
+            incomplete=Count('id', filter=Q(is_completed=False))
+        )
+        
+        # Convert to dict format
+        counts = {item['subject_code']: {
+            'total': item['total'],
+            'incomplete': item['incomplete']
+        } for item in task_counts}
+        
+        # Fill in zeros for subject codes with no tasks
+        for code in subject_codes:
+            if code not in counts:
+                counts[code] = {'total': 0, 'incomplete': 0}
+        
+        return Response(counts, status=status.HTTP_200_OK)
 
 
 # =============================================================================
