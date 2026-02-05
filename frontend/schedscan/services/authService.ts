@@ -11,6 +11,7 @@ export interface RegisterData {
   password: string;
   first_name: string;
   last_name: string;
+  user_type?: 'student' | 'faculty' | 'parent';
   profile_picture?: any;
 }
 
@@ -19,6 +20,7 @@ export interface User {
   email: string;
   first_name: string;
   last_name: string;
+  user_type: 'student' | 'faculty' | 'parent';
   profile_picture: string | null;
   created_at: string;
 }
@@ -44,6 +46,9 @@ export const authService = {
       formData.append('password', data.password);
       formData.append('first_name', data.first_name);
       formData.append('last_name', data.last_name);
+      if (data.user_type) {
+        formData.append('user_type', data.user_type);
+      }
 
       // Add profile picture if provided
       if (data.profile_picture) {
@@ -101,7 +106,7 @@ export const authService = {
   logout: async (): Promise<void> => {
     try {
       const refreshToken = await SecureStore.getItemAsync('refresh_token');
-      
+
       if (refreshToken) {
         // Call logout endpoint to blacklist token
         await api.post('/auth/logout/', {

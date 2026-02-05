@@ -21,9 +21,13 @@ from .serializers import (
     ScheduleSerializer,
     ScheduleListSerializer,
     TaskSerializer,
-    PushTokenSerializer
+    PushTokenSerializer,
+    InviteCodeSerializer,
+    ParentChildLinkSerializer,
+    ChildInfoSerializer,
+    ChildScheduleSerializer
 )
-from .models import Course, Schedule, Task
+from .models import Course, Schedule, Task, ParentChildLink, InviteCode
 from .utils.extraction_manager import ExtractionManager
 
 User = get_user_model()
@@ -1379,3 +1383,362 @@ class MergeSchedulesView(APIView):
             "conflicts_found": len(all_conflicts),
             "conflicts_resolved": conflict_resolution or "none"
         }, status=status.HTTP_201_CREATED)
+
+
+# ============================================
+# Parental View Endpoints
+# ============================================
+
+class GenerateInviteCodeView(APIView):
+    """
+    API endpoint for students to generate an invite code for parents.
+    
+    POST /api/auth/invite-code/generate/
+    
+    Response: {
+        "code": "ABC123XYZ0",
+        "message": "Share this code with your parent..."
+    }
+    
+    Only students/faculty can generate codes.
+    Generating a new code invalidates any previous unused codes.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        user = request.user
+        
+        # Only students and faculty can generate invite codes
+        if user.user_type == 'parent':
+            return Response(
+                {"error": "Parents cannot generate invite codes"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Invalidate any existing active codes for this student
+        InviteCode.objects.filter(
+            student=user,
+            is_active=True,
+            used=False
+        ).update(is_active=False)
+        
+        # Generate new code
+        code = InviteCode.generate_code()
+        invite = InviteCode.objects.create(
+            student=user,
+            code=code
+        )
+        
+        logger.info(f"User {user.id} generated invite code {code}")
+        
+        return Response({
+            "code": invite.code,
+            "created_at": invite.created_at,
+            "message": "Share this code with your parent. They can use it to link their account and view your schedule."
+        }, status=status.HTTP_201_CREATED)
+    
+    def get(self, request):
+        """Get current active invite code if one exists."""
+        user = request.user
+        
+        if user.user_type == 'parent':
+            return Response(
+                {"error": "Parents cannot have invite codes"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        active_code = InviteCode.objects.filter(
+            student=user,
+            is_active=True,
+            used=False
+        ).first()
+        
+        if active_code:
+            return Response({
+                "code": active_code.code,
+                "created_at": active_code.created_at
+            })
+        
+        return Response({"code": None, "message": "No active invite code"})
+
+
+class UseInviteCodeView(APIView):
+    """
+    API endpoint for parents to use an invite code and link to a student.
+    
+    POST /api/auth/invite-code/use/
+    Request body: { "code": "ABC123XYZ0" }
+    
+    Response: {
+        "message": "Successfully linked...",
+        "child": { ... }
+    }
+    
+    Only parents can use invite codes.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        user = request.user
+        code = request.data.get('code', '').strip().upper()
+        
+        # Only parents can use invite codes
+        if user.user_type != 'parent':
+            return Response(
+                {"error": "Only parent accounts can use invite codes"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Check if parent already has a linked child
+        existing_link = ParentChildLink.objects.filter(
+            parent=user,
+            status='active'
+        ).first()
+        
+        if existing_link:
+            return Response(
+                {"error": "You already have a linked child. Unlink first to link a new child."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not code:
+            return Response(
+                {"error": "Invite code is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Find the invite code
+        invite = InviteCode.objects.filter(
+            code=code,
+            is_active=True,
+            used=False
+        ).first()
+        
+        if not invite:
+            return Response(
+                {"error": "Invalid or expired invite code"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Prevent self-linking
+        if invite.student == user:
+            return Response(
+                {"error": "You cannot link to yourself"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create the parent-child link
+        from django.utils import timezone
+        
+        link = ParentChildLink.objects.create(
+            parent=user,
+            child=invite.student,
+            status='active'
+        )
+        
+        # Mark code as used
+        invite.used = True
+        invite.used_by = user
+        invite.used_at = timezone.now()
+        invite.save()
+        
+        logger.info(f"Parent {user.id} linked to student {invite.student.id} using code {code}")
+        
+        return Response({
+            "message": f"Successfully linked to {invite.student.get_full_name()}",
+            "child": ChildInfoSerializer(invite.student).data,
+            "linked_at": link.linked_at
+        }, status=status.HTTP_201_CREATED)
+
+
+class ChildScheduleView(APIView):
+    """
+    API endpoint for parents to view their linked child's active schedule.
+    
+    GET /api/parent/child/schedule/
+    
+    Response: {
+        "child": { ... },
+        "schedule": { ... } or null,
+        "has_active_schedule": true/false
+    }
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        user = request.user
+        
+        # Only parents can access this
+        if user.user_type != 'parent':
+            return Response(
+                {"error": "Only parent accounts can access this endpoint"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get the linked child
+        link = ParentChildLink.objects.filter(
+            parent=user,
+            status='active'
+        ).select_related('child').first()
+        
+        if not link:
+            return Response(
+                {"error": "No linked child found. Please link to a student first."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        child = link.child
+        
+        # Get child's active schedule with courses
+        active_schedule = Schedule.objects.filter(
+            user=child,
+            is_active=True
+        ).prefetch_related('courses').first()
+        
+        return Response({
+            "child": ChildInfoSerializer(child).data,
+            "schedule": ScheduleSerializer(active_schedule).data if active_schedule else None,
+            "has_active_schedule": active_schedule is not None
+        })
+
+
+class LinkedParentsView(APIView):
+    """
+    API endpoint for students to view and manage linked parents.
+    
+    GET /api/student/parents/
+    Returns list of linked parents.
+    
+    DELETE /api/student/parents/<parent_id>/revoke/
+    Revokes a parent's access.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        user = request.user
+        
+        if user.user_type == 'parent':
+            return Response(
+                {"error": "This endpoint is for students only"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        links = ParentChildLink.objects.filter(
+            child=user
+        ).select_related('parent')
+        
+        result = []
+        for link in links:
+            result.append({
+                "id": link.id,
+                "parent_id": link.parent.id,
+                "parent_name": link.parent.get_full_name(),
+                "parent_email": link.parent.email,
+                "status": link.status,
+                "linked_at": link.linked_at
+            })
+        
+        return Response({"parents": result})
+
+
+class RevokeParentAccessView(APIView):
+    """
+    API endpoint for students to revoke a parent's access.
+    
+    DELETE /api/student/parents/<link_id>/revoke/
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def delete(self, request, link_id):
+        user = request.user
+        
+        if user.user_type == 'parent':
+            return Response(
+                {"error": "This endpoint is for students only"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        try:
+            link = ParentChildLink.objects.get(id=link_id, child=user)
+        except ParentChildLink.DoesNotExist:
+            return Response(
+                {"error": "Link not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        link.status = 'revoked'
+        link.save()
+        
+        logger.info(f"Student {user.id} revoked access for parent {link.parent.id}")
+        
+        return Response({
+            "message": f"Access revoked for {link.parent.get_full_name()}"
+        })
+
+
+class ChildLinkView(APIView):
+    """
+    API endpoint for parents to view and manage their child link.
+    
+    GET /api/parent/child/
+    Returns linked child info.
+    
+    DELETE /api/parent/child/
+    Unlinks from child.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        user = request.user
+        
+        if user.user_type != 'parent':
+            return Response(
+                {"error": "This endpoint is for parents only"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        link = ParentChildLink.objects.filter(
+            parent=user,
+            status='active'
+        ).select_related('child').first()
+        
+        if not link:
+            return Response({
+                "child": None,
+                "has_linked_child": False
+            })
+        
+        return Response({
+            "child": ChildInfoSerializer(link.child).data,
+            "linked_at": link.linked_at,
+            "has_linked_child": True
+        })
+    
+    def delete(self, request):
+        user = request.user
+        
+        if user.user_type != 'parent':
+            return Response(
+                {"error": "This endpoint is for parents only"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        link = ParentChildLink.objects.filter(
+            parent=user,
+            status='active'
+        ).first()
+        
+        if not link:
+            return Response(
+                {"error": "No linked child to unlink"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        child_name = link.child.get_full_name()
+        link.delete()
+        
+        logger.info(f"Parent {user.id} unlinked from their child")
+        
+        return Response({
+            "message": f"Successfully unlinked from {child_name}"
+        })

@@ -41,10 +41,22 @@ class User(AbstractUser):
     Custom User model that uses email as the primary identifier
     instead of username.
     """
+    USER_TYPE_CHOICES = [
+        ('student', 'Student'),
+        ('faculty', 'Faculty'),
+        ('parent', 'Parent'),
+    ]
+    
     username = None  # Remove username field
     email = models.EmailField(unique=True, max_length=255)
     first_name = models.CharField(max_length=150)
     last_name = models.CharField(max_length=150)
+    user_type = models.CharField(
+        max_length=10,
+        choices=USER_TYPE_CHOICES,
+        default='student',
+        help_text="Type of user account: student, faculty, or parent"
+    )
     profile_picture = models.ImageField(
         upload_to='profile_pictures/',
         null=True,
@@ -267,3 +279,113 @@ class Task(models.Model):
     def __str__(self):
         status = "✓" if self.is_completed else "○"
         return f"[{status}] {self.subject_code}: {self.text[:50]}"
+
+
+class ParentChildLink(models.Model):
+    """
+    Links parent accounts to student accounts.
+    One parent can have one child (as per requirements).
+    One student can have multiple parent links.
+    """
+    STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('revoked', 'Revoked'),
+    ]
+    
+    parent = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='child_link',
+        help_text="The parent user"
+    )
+    child = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='parent_links',
+        help_text="The student (child) user"
+    )
+    status = models.CharField(
+        max_length=10,
+        choices=STATUS_CHOICES,
+        default='active',
+        help_text="Status of the parent-child link"
+    )
+    linked_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        verbose_name = 'Parent-Child Link'
+        verbose_name_plural = 'Parent-Child Links'
+        indexes = [
+            models.Index(fields=['parent', 'status']),
+            models.Index(fields=['child', 'status']),
+        ]
+    
+    def __str__(self):
+        return f"{self.parent.email} → {self.child.email} ({self.status})"
+
+
+class InviteCode(models.Model):
+    """
+    Invite codes for parents to link to student accounts.
+    Codes are 10 characters alphanumeric and don't expire.
+    Only one active code per student - generating a new one invalidates the old.
+    """
+    student = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='invite_codes',
+        help_text="The student who generated this code"
+    )
+    code = models.CharField(
+        max_length=10,
+        unique=True,
+        help_text="10-character alphanumeric invite code"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this code is still valid"
+    )
+    used = models.BooleanField(
+        default=False,
+        help_text="Whether this code has been used"
+    )
+    used_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='used_invite_codes',
+        help_text="The parent who used this code"
+    )
+    used_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the code was used"
+    )
+    
+    class Meta:
+        verbose_name = 'Invite Code'
+        verbose_name_plural = 'Invite Codes'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['code']),
+            models.Index(fields=['student', 'is_active', 'used']),
+        ]
+    
+    def __str__(self):
+        status = "Used" if self.used else ("Active" if self.is_active else "Inactive")
+        return f"{self.code} - {self.student.email} ({status})"
+    
+    @classmethod
+    def generate_code(cls):
+        """Generate a random 10-character alphanumeric code."""
+        import secrets
+        import string
+        alphabet = string.ascii_uppercase + string.digits
+        # Loop with max attempts to prevent infinite loop
+        for _ in range(100):
+            code = ''.join(secrets.choice(alphabet) for _ in range(10))
+            if not cls.objects.filter(code=code).exists():
+                return code
+        raise RuntimeError("Failed to generate unique invite code after 100 attempts")

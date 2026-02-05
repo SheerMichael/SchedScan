@@ -1,5 +1,5 @@
 import React, { createContext, useState, useContext, useEffect, useCallback, useRef } from 'react';
-import { authService, User, LoginData, RegisterData } from '../services/authService';
+import { authService, User, LoginData, RegisterData, AuthResponse } from '../services/authService';
 import { scheduleStorageService, SavedSchedule } from '../services/scheduleStorageService';
 import { usePushNotification } from '../usePushNotification';
 
@@ -10,7 +10,7 @@ interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (data: LoginData) => Promise<void>;
+  login: (data: LoginData) => Promise<AuthResponse>;
   register: (data: RegisterData) => Promise<void>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
@@ -66,7 +66,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const login = async (data: LoginData) => {
+  const login = async (data: LoginData): Promise<AuthResponse> => {
     try {
       setIsLoading(true);
       const response = await authService.login(data);
@@ -81,6 +81,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // Push token registration happens automatically via useEffect
+      return response;
     } catch (error) {
       throw error;
     } finally {

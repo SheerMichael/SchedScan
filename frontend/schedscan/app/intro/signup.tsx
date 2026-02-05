@@ -12,9 +12,10 @@ type SignUpData = {
   email: string;
   password: string;
   confirmPassword: string;
+  user_type: 'student' | 'faculty' | 'parent';
 };
 
-type Step = 'signup1' | 'signup2' | 'signup3';
+type Step = 'signup0' | 'signup1' | 'signup2' | 'signup3';
 
 type SignUp1Props = {
   setScreen: (screen: Step) => void;
@@ -38,186 +39,241 @@ type SignUp3Props = {
   isLoading: boolean;
 };
 
-  const ChevronRightIcon = ({ size = 24, color = '#ffffff' }) => (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
-      <Path d="M19 12H6M12 5l-7 7 7 7" />
-    </Svg>
+const ChevronRightIcon = ({ size = 24, color = '#ffffff' }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
+    <Path d="M19 12H6M12 5l-7 7 7 7" />
+  </Svg>
+);
+
+const ProgressBar = ({ step }: { step: number }) => {
+  const widthClass =
+    step === 0 ? "w-1/4" :
+      step === 1 ? "w-2/4" :
+        step === 2 ? "w-3/4" :
+          "w-full";
+
+  return (
+    <View className="w-full h-1 bg-gray-300 rounded-full mb-4">
+      <View className={`h-1 bg-red-700 rounded-full ${widthClass}`} />
+    </View>
   );
+};
 
-  const ProgressBar = ({ step }: { step: number }) => {
-    const widthClass =
-      step === 1 ? "w-1/3" :
-      step === 2 ? "w-2/3" :
-      "w-full";
+// ✅ Screen 0 – User Type Selection
+const SignUp0Screen = ({
+  setScreen,
+  formData,
+  setFormData
+}: { setScreen: (screen: Step) => void; formData: SignUpData; setFormData: React.Dispatch<React.SetStateAction<SignUpData>> }) => (
+  <SafeAreaView className="flex-1 bg-white px-4 m-2">
+    <TouchableOpacity onPress={() => router.back()} className="mb-5 w-4">
+      <ChevronRightIcon size={30} color="#000000" />
+    </TouchableOpacity>
 
-    return (
-      <View className="w-full h-1 bg-gray-300 rounded-full mb-4">
-        <View className={`h-1 bg-red-700 rounded-full ${widthClass}`} />
+    <ProgressBar step={0} />
+
+    <View className="mt-20 ml-8 mr-8">
+      <Text className="text-3xl font-bold mb-2 text-primary-900">I am a...</Text>
+      <Text className="text-base font-medium mb-8 text-gray-600">Choose your account type</Text>
+
+      <TouchableOpacity
+        onPress={() => {
+          setFormData((prev: SignUpData) => ({ ...prev, user_type: 'student' }));
+          setScreen('signup1');
+        }}
+        className={`p-6 mb-4 rounded-xl border-2 ${formData.user_type === 'student' ? 'border-primary-500 bg-primary-50' : 'border-gray-200 bg-white'}`}
+      >
+        <Text className="text-xl font-bold text-gray-800">📚 Student</Text>
+        <Text className="text-gray-600 mt-1">I want to manage my class schedule</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        onPress={() => {
+          setFormData((prev: SignUpData) => ({ ...prev, user_type: 'faculty' }));
+          setScreen('signup1');
+        }}
+        className={`p-6 mb-4 rounded-xl border-2 ${formData.user_type === 'faculty' ? 'border-primary-500 bg-primary-50' : 'border-gray-200 bg-white'}`}
+      >
+        <Text className="text-xl font-bold text-gray-800">👨‍🏫 Faculty</Text>
+        <Text className="text-gray-600 mt-1">I want to manage my teaching schedule</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        onPress={() => {
+          setFormData((prev: SignUpData) => ({ ...prev, user_type: 'parent' }));
+          setScreen('signup1');
+        }}
+        className={`p-6 mb-4 rounded-xl border-2 ${formData.user_type === 'parent' ? 'border-primary-500 bg-primary-50' : 'border-gray-200 bg-white'}`}
+      >
+        <Text className="text-xl font-bold text-gray-800">👪 Parent</Text>
+        <Text className="text-gray-600 mt-1">I want to view my child's schedule</Text>
+      </TouchableOpacity>
+    </View>
+  </SafeAreaView>
+);
+
+// ✅ Screen 1 – Photo + First Name
+const SignUp1Screen = ({
+  setScreen,
+  formData,
+  setFormData,
+  image,
+  pickImageOption
+}: SignUp1Props) => (
+  <SafeAreaView className="flex-1 bg-white px-4 m-2">
+    <TouchableOpacity onPress={() => setScreen('signup0')} className="mb-5 w-4">
+      <ChevronRightIcon size={30} color="#000000" />
+    </TouchableOpacity>
+
+    <ProgressBar step={1} />
+
+    <View className="mt-20 ml-8 mr-8">
+
+      <Text className="text-3xl font-bold mb-2 text-primary-900">What's your name?</Text>
+      <Text className="text-base font-medium mb-4 text-gray-600">Enter your name.</Text>
+
+      <View className='flex h-90 w-full items-center justify-center rounded-md border border-zinc-300 mb-8 bg-primary-200'>
+        <Image
+          source={image ? { uri: image } : require("../../assets/images/PlaceholderImage.png")}
+          style={{ width: 90, height: 90, borderRadius: 100, marginBottom: 20, margin: 6, marginTop: 6 }}
+        />
+
+        <TouchableOpacity onPress={pickImageOption} className="p-4 bg-blue-500 rounded-xl mb-6 w-80">
+          <Text className="text-white font-bold text-center">Upload Photo</Text>
+        </TouchableOpacity>
+
+        <View className='flex flex-row gap-6'>
+          <TextInput
+            className="bg-white rounded-xl p-4 mb-5 w-36"
+            placeholder="First Name"
+            value={formData.first_name}
+            onChangeText={(text) =>
+              setFormData((prev: SignUpData) => ({ ...prev, first_name: text }))
+            }
+          />
+          <TextInput
+            className="bg-white rounded-xl p-4 mb-5 w-36"
+            placeholder="Last Name"
+            value={formData.last_name}
+            onChangeText={(text) =>
+              setFormData((prev: SignUpData) => ({ ...prev, last_name: text }))
+            }
+          />
+        </View>
       </View>
-    );
-  };
-  // ✅ Screen 1 – Photo + First Name
-  const SignUp1Screen = ({
-    setScreen,
-    formData,
-    setFormData,
-    image,
-    pickImageOption
-  }: SignUp1Props) => (
-    <SafeAreaView className="flex-1 bg-white px-4 m-2">
-      <TouchableOpacity onPress={() => router.back()} className="mb-5 w-4">
+
+      <TouchableOpacity
+        className="bg-primary-900 rounded-2xl py-4 px-8 w-full flex items-center"
+        onPress={() => setScreen('signup2')}
+      >
+        <Text className="text-white font-bold">Next</Text>
+      </TouchableOpacity>
+    </View>
+  </SafeAreaView>
+);
+
+// ✅ Screen 2 – Email
+const SignUp2Screen = ({
+  setScreen,
+  formData,
+  setFormData
+}: SignUp2Props) => (
+  <SafeAreaView className="flex-1 bg-white">
+    <ScrollView className="flex-1 p-5">
+      <TouchableOpacity onPress={() => setScreen('signup1')} className="mb-5 w-4">
         <ChevronRightIcon size={30} color="#000000" />
       </TouchableOpacity>
-      
-      <ProgressBar step={1} />
+
+      <ProgressBar step={2} />
 
       <View className="mt-20 ml-8 mr-8">
 
-        <Text className="text-3xl font-bold mb-2 text-primary-900">What's your name?</Text>
-        <Text className="text-base font-medium mb-4 text-gray-600">Enter your name.</Text>
+        <Text className="text-3xl font-bold mb-2 text-primary-900">Whats your email?</Text>
+        <Text className="text-base font-medium mb-4 text-gray-600">Enter your email account.</Text>
 
-        <View className='flex h-90 w-full items-center justify-center rounded-md border border-zinc-300 mb-8 bg-primary-200'>
-          <Image
-            source={image ? { uri: image } : require("../../assets/images/PlaceholderImage.png")}
-            style={{ width: 90, height: 90, borderRadius: 100, marginBottom: 20, margin: 6, marginTop: 6 }}
-          />
-
-          <TouchableOpacity onPress={pickImageOption} className="p-4 bg-blue-500 rounded-xl mb-6 w-80">
-            <Text className="text-white font-bold text-center">Upload Photo</Text>
-          </TouchableOpacity>
-
-          <View className='flex flex-row gap-6'>
-            <TextInput
-              className="bg-white rounded-xl p-4 mb-5 w-36"
-              placeholder="First Name"
-              value={formData.first_name}
-              onChangeText={(text) =>
-                setFormData((prev: SignUpData) => ({ ...prev, first_name: text }))
-              }
-            />
-              <TextInput
-              className="bg-white rounded-xl p-4 mb-5 w-36"
-              placeholder="Last Name"
-              value={formData.last_name}
-              onChangeText={(text) =>
-                setFormData((prev: SignUpData) => ({ ...prev, last_name: text }))
-              }
-            />
-          </View>
-        </View>
+        <TextInput
+          className="bg-gray-100 rounded-xl p-4 mb-5"
+          placeholder="Email"
+          keyboardType="email-address"
+          value={formData.email}
+          onChangeText={(text) =>
+            setFormData((prev: SignUpData) => ({ ...prev, email: text }))
+          }
+        />
 
         <TouchableOpacity
-          className="bg-primary-900 rounded-2xl py-4 px-8 w-full flex items-center"
-          onPress={() => setScreen('signup2')}
+          className="bg-primary-900 rounded-xl py-5 items-center"
+          onPress={() => setScreen('signup3')}
         >
-          <Text className="text-white font-bold">Next</Text>
+          <Text className="text-white font-bold text-base">Next</Text>
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
-  );
+    </ScrollView>
+  </SafeAreaView>
+);
 
-  // ✅ Screen 2 – Email
-  const SignUp2Screen = ({
-    setScreen,
-    formData,
-    setFormData
-  }: SignUp2Props) => (
-    <SafeAreaView className="flex-1 bg-white">
-      <ScrollView className="flex-1 p-5">
-        <TouchableOpacity onPress={() => setScreen('signup1')} className="mb-5 w-4">
-          <ChevronRightIcon size={30} color="#000000" />
+
+// ✅ Screen 3 – Passwords
+const SignUp3Screen = ({
+  setScreen,
+  formData,
+  setFormData,
+  handleSignup,
+  isLoading
+}: SignUp3Props) => (
+  <SafeAreaView className="flex-1 bg-white">
+    <ScrollView className="flex-1 p-5">
+      <TouchableOpacity onPress={() => setScreen('signup2')} className="mb-5 w-4" disabled={isLoading}>
+        <ChevronRightIcon size={30} color="#000000" />
+      </TouchableOpacity>
+
+      <ProgressBar step={3} />
+
+      <View className="mt-20 ml-8 mr-8">
+        <Text className="text-3xl font-bold mb-2 text-primary-900">Create a password.</Text>
+        <Text className="text-md font-medium mb-4 text-gray-600">Create a password with at least 6 letters or numbers. It should be something others can't guess..</Text>
+
+        <TextInput
+          className="bg-gray-100 rounded-xl p-4 mb-4"
+          placeholder="Password"
+          secureTextEntry
+          value={formData.password}
+          onChangeText={(text) =>
+            setFormData((prev: SignUpData) => ({ ...prev, password: text }))
+          }
+          editable={!isLoading}
+        />
+
+        <TextInput
+          className="bg-gray-100 rounded-xl p-4 mb-6"
+          placeholder="Confirm Password"
+          secureTextEntry
+          value={formData.confirmPassword}
+          onChangeText={(text) =>
+            setFormData((prev: SignUpData) => ({ ...prev, confirmPassword: text }))
+          }
+          editable={!isLoading}
+        />
+
+        <TouchableOpacity
+          className="bg-primary-900 rounded-xl py-5 items-center"
+          onPress={handleSignup}
+        >
+          {isLoading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text className="text-white font-bold">Finish</Text>
+          )}
         </TouchableOpacity>
 
-        <ProgressBar step={2} />
-
-        <View className="mt-20 ml-8 mr-8">
-          
-          <Text className="text-3xl font-bold mb-2 text-primary-900">Whats your email?</Text>
-          <Text className="text-base font-medium mb-4 text-gray-600">Enter your email account.</Text>
-
-          <TextInput
-            className="bg-gray-100 rounded-xl p-4 mb-5"
-            placeholder="Email"
-            keyboardType="email-address"
-            value={formData.email}
-            onChangeText={(text) =>
-              setFormData((prev: SignUpData) => ({ ...prev, email: text }))
-            }
-          />
-
-          <TouchableOpacity
-            className="bg-primary-900 rounded-xl py-5 items-center"
-            onPress={() => setScreen('signup3')}
-          >
-            <Text className="text-white font-bold text-base">Next</Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    </SafeAreaView>
-  );
-
-  
-  // ✅ Screen 3 – Passwords
-  const SignUp3Screen = ({
-    setScreen,
-    formData,
-    setFormData,
-    handleSignup,
-    isLoading
-  }: SignUp3Props) => (
-    <SafeAreaView className="flex-1 bg-white">
-      <ScrollView className="flex-1 p-5">
-        <TouchableOpacity onPress={() => setScreen('signup2')} className="mb-5 w-4" disabled={isLoading}>
-          <ChevronRightIcon size={30} color="#000000" />
-        </TouchableOpacity>
-
-        <ProgressBar step={3} />
-        
-        <View className="mt-20 ml-8 mr-8">
-          <Text className="text-3xl font-bold mb-2 text-primary-900">Create a password.</Text>
-          <Text className="text-md font-medium mb-4 text-gray-600">Create a password with at least 6 letters or numbers. It should be something others can't guess..</Text>
-
-          <TextInput
-            className="bg-gray-100 rounded-xl p-4 mb-4"
-            placeholder="Password"
-            secureTextEntry
-            value={formData.password}
-            onChangeText={(text) =>
-              setFormData((prev: SignUpData) => ({ ...prev, password: text }))
-            }
-            editable={!isLoading}
-          />
-
-          <TextInput
-            className="bg-gray-100 rounded-xl p-4 mb-6"
-            placeholder="Confirm Password"
-            secureTextEntry
-            value={formData.confirmPassword}
-            onChangeText={(text) =>
-              setFormData((prev: SignUpData) => ({ ...prev, confirmPassword: text }))
-            }
-            editable={!isLoading}
-          />
-
-          <TouchableOpacity
-            className="bg-primary-900 rounded-xl py-5 items-center"
-            onPress={handleSignup}
-          >
-            {isLoading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text className="text-white font-bold">Finish</Text>
-            )}
-          </TouchableOpacity>
-
-        </View>
-      </ScrollView>
-    </SafeAreaView>
-  );
+      </View>
+    </ScrollView>
+  </SafeAreaView>
+);
 
 const AuthFlow = () => {
   const [image, setImage] = useState<string | null>(null);
-  const [screen, setScreen] = useState<Step>('signup1');
+  const [screen, setScreen] = useState<Step>('signup0');
   const [isLoading, setIsLoading] = useState(false);
   const { register } = useAuth();
 
@@ -226,7 +282,8 @@ const AuthFlow = () => {
     last_name: "",
     email: "",
     password: "",
-    confirmPassword: ""
+    confirmPassword: "",
+    user_type: 'student'
   });
 
   const pickImageOption = () => {
@@ -303,12 +360,13 @@ const AuthFlow = () => {
 
     try {
       setIsLoading(true);
-      
+
       await register({
         email: formData.email,
         password: formData.password,
         first_name: formData.first_name,
         last_name: formData.last_name,
+        user_type: formData.user_type,
         profile_picture: image || undefined,
       });
 
@@ -316,14 +374,18 @@ const AuthFlow = () => {
         {
           text: 'OK',
           onPress: () => {
-            // Navigate to login screen
-            router.replace('/Home/home');
+            // Navigate based on user type
+            if (formData.user_type === 'parent') {
+              router.replace('/Parent/home');
+            } else {
+              router.replace('/Home/home');
+            }
           },
         },
       ]);
     } catch (error: any) {
       let errorMessage = 'Registration failed. Please try again.';
-      
+
       if (error.message === 'Network Error' || !error.response) {
         errorMessage = 'Cannot connect to server. Please check:\n\n' +
           '1. Backend server is running (python manage.py runserver)\n' +
@@ -346,7 +408,7 @@ const AuthFlow = () => {
           errorMessage = Array.isArray(data.non_field_errors) ? data.non_field_errors[0] : data.non_field_errors;
         }
       }
-      
+
       Alert.alert('Registration Failed', errorMessage);
       console.error('Registration error:', error);
     } finally {
@@ -356,6 +418,14 @@ const AuthFlow = () => {
 
   return (
     <>
+      {screen === 'signup0' && (
+        <SignUp0Screen
+          setScreen={setScreen}
+          formData={formData}
+          setFormData={setFormData}
+        />
+      )}
+
       {screen === 'signup1' && (
         <SignUp1Screen
           setScreen={setScreen}

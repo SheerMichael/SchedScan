@@ -35,10 +35,16 @@ const LoginScreen = () => {
 
     try {
       setIsLoading(true);
-      await login({ email, password });
+      const response = await login({ email, password });
 
-      // Navigate to home screen after successful login
-      router.replace('/Home/home');
+      // Navigate based on user type
+      // Get user from response or stored user
+      const userType = response?.user?.user_type || 'student';
+      if (userType === 'parent') {
+        router.replace('/Parent/home');
+      } else {
+        router.replace('/Home/home');
+      }
     } catch (error: any) {
       let errorMessage = 'Login failed. Please check your credentials.';
 

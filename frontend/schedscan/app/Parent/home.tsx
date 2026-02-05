@@ -1,285 +1,347 @@
-import { View, Text, TouchableOpacity, ScrollView, Image } from "react-native";
-import React, { useState, useEffect } from "react";
+import { View, Text, TouchableOpacity, ScrollView, Image, ActivityIndicator, TextInput, Alert } from "react-native";
+import React, { useState, useEffect, useCallback } from "react";
 import { router } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
+import { useAuth } from "../../context/AuthContext";
+import { parentService, ChildInfo, ChildScheduleResponse } from "../../services/parentService";
 
 // --- Types ---
-type ScheduleItem = {
-  childId: number;
-  title: string;
-  time: string;
-  location: string;
-  priority_level: "low" | "medium" | "high";
-  date: string; // YYYY-MM-DD
-};
-
-type Child = {
+type Course = {
   id: number;
-  name: string;
-};
-
-// New Type for Attendance
-type AttendanceStats = {
-  present: number;
-  late: number;
-  absent: number;
-  percentage: number;
+  subject_code: string;
+  subject_name: string;
+  start_time: string;
+  end_time: string;
+  day: string;
+  location: string;
 };
 
 const ParentHomePage = () => {
-  const [childrenList, setChildrenList] = useState<Child[]>([
-    { id: 1, name: "John Doe" },
-    { id: 2, name: "Jane Doe" },
-  ]);
+  const { user, logout } = useAuth();
 
-  const [selectedChild, setSelectedChild] = useState<Child>(childrenList[0]);
+  // State
+  const [isLoading, setIsLoading] = useState(true);
+  const [linkedChild, setLinkedChild] = useState<ChildInfo | null>(null);
+  const [schedule, setSchedule] = useState<any | null>(null);
+  const [todaysCourses, setTodaysCourses] = useState<Course[]>([]);
 
-  const [selectedDate, setSelectedDate] = useState(
-    new Date().toISOString().split("T")[0]
+  // Link child modal state
+  const [showLinkModal, setShowLinkModal] = useState(false);
+  const [inviteCode, setInviteCode] = useState("");
+  const [isLinking, setIsLinking] = useState(false);
+
+  // Load data on focus
+  useFocusEffect(
+    useCallback(() => {
+      loadChildData();
+    }, [])
   );
 
-  const [daySchedule, setDaySchedule] = useState<ScheduleItem[]>([]);
+  const loadChildData = async () => {
+    try {
+      setIsLoading(true);
 
-  // --- Mock Data ---
+      // First check if we have a linked child
+      const childLink = await parentService.getLinkedChild();
 
-  // Mock Attendance Data (Keyed by Child ID)
-  const mockAttendance: Record<number, AttendanceStats> = {
-    1: { present: 45, late: 2, absent: 1, percentage: 94 }, // John
-    2: { present: 38, late: 5, absent: 3, percentage: 82 }, // Jane
-  };
+      if (childLink.has_linked_child && childLink.child) {
+        setLinkedChild(childLink.child);
 
-  const allSchedules: ScheduleItem[] = [
-    {
-      childId: 1,
-      title: "Math Class",
-      time: "8:00 AM - 9:00 AM",
-      location: "Room 204",
-      priority_level: "high",
-      date: "2025-12-07",
-    },
-    {
-      childId: 1,
-      title: "English",
-      time: "9:30 AM - 10:30 AM",
-      location: "Room 105",
-      priority_level: "medium",
-      date: "2025-12-08",
-    },
-    {
-      childId: 2,
-      title: "Science Project",
-      time: "10:00 AM - 11:30 AM",
-      location: "Lab 1",
-      priority_level: "high",
-      date: "2025-12-07",
-    },
-  ];
+        // Get the child's schedule
+        try {
+          const scheduleData = await parentService.getChildSchedule();
+          setSchedule(scheduleData.schedule);
 
-  // --- Effects ---
-
-  useEffect(() => {
-    const filtered = allSchedules.filter(
-      (item) =>
-        item.childId === selectedChild.id && item.date === selectedDate
-    );
-    setDaySchedule(filtered);
-  }, [selectedChild, selectedDate]);
-
-  // --- Helpers ---
-
-  const getPriorityColor = (level: string) => {
-    switch (level) {
-      case "high":
-        return "border-primary-500";
-      case "medium":
-        return "border-yellow-500";
-      case "low":
-        return "border-green-500";
-      default:
-        return "border-gray-300";
+          if (scheduleData.schedule?.courses) {
+            // Filter today's courses
+            const today = getDayAbbrev(new Date().getDay());
+            const filtered = scheduleData.schedule.courses.filter(
+              (c: Course) => c.day === today
+            );
+            setTodaysCourses(filtered);
+          }
+        } catch (scheduleError) {
+          console.log('No schedule available');
+          setSchedule(null);
+          setTodaysCourses([]);
+        }
+      } else {
+        setLinkedChild(null);
+        setSchedule(null);
+        setTodaysCourses([]);
+      }
+    } catch (error) {
+      console.error("Error loading child data:", error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  // Helper for attendance bar color
-  const getAttendanceColor = (percentage: number) => {
-    if (percentage >= 90) return "bg-green-500";
-    if (percentage >= 75) return "bg-yellow-500";
-    return "bg-primary-500";
+  const handleLinkChild = async () => {
+    if (!inviteCode.trim()) {
+      Alert.alert("Error", "Please enter an invite code");
+      return;
+    }
+
+    try {
+      setIsLinking(true);
+      const result = await parentService.useInviteCode(inviteCode.trim());
+
+      Alert.alert("Success!", result.message);
+      setShowLinkModal(false);
+      setInviteCode("");
+      loadChildData();
+    } catch (error: any) {
+      const message = error.response?.data?.error || "Failed to link. Please check the code and try again.";
+      Alert.alert("Link Failed", message);
+    } finally {
+      setIsLinking(false);
+    }
   };
 
-  // Get current child's stats
-  const currentStats = mockAttendance[selectedChild.id] || {
-    present: 0,
-    late: 0,
-    absent: 0,
-    percentage: 0,
+  const handleUnlink = async () => {
+    Alert.alert(
+      "Unlink Child",
+      `Are you sure you want to unlink from ${linkedChild?.full_name}?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Unlink",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await parentService.unlinkFromChild();
+              setLinkedChild(null);
+              setSchedule(null);
+              setTodaysCourses([]);
+              Alert.alert("Unlinked", "You have been unlinked from your child's account.");
+            } catch (error) {
+              Alert.alert("Error", "Failed to unlink. Please try again.");
+            }
+          }
+        }
+      ]
+    );
   };
 
+  const handleLogout = async () => {
+    Alert.alert("Logout", "Are you sure you want to logout?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Logout",
+        onPress: async () => {
+          await logout();
+          router.replace("/intro/getstarted");
+        }
+      }
+    ]);
+  };
+
+  const getDayAbbrev = (dayNum: number): string => {
+    const days = ['S', 'M', 'T', 'W', 'TH', 'F', 'S'];
+    return days[dayNum];
+  };
+
+  const formatTime = (time: string) => {
+    // Convert 24h to 12h format if needed
+    return time;
+  };
+
+  if (isLoading) {
+    return (
+      <View className="flex-1 bg-gray-50 justify-center items-center">
+        <ActivityIndicator size="large" color="#7C3AED" />
+        <Text className="mt-4 text-gray-600">Loading...</Text>
+      </View>
+    );
+  }
+
+  // No linked child - show link prompt
+  if (!linkedChild) {
+    return (
+      <View className="flex-1 bg-gray-50">
+        {/* Header */}
+        <View className="w-full h-14 bg-white border-b-2 border-gray-200 justify-between items-center flex-row px-4">
+          <View className="flex-row items-center">
+            <Image
+              source={require("../../assets/images/logo.png")}
+              className="w-12 h-12"
+            />
+            <View className="flex-col ml-2">
+              <Text className="text-xl font-bold text-primary-900/50 leading-none">Sched</Text>
+              <Text className="text-xl font-bold text-primary-900 leading-none">Scan</Text>
+            </View>
+          </View>
+          <TouchableOpacity onPress={handleLogout}>
+            <Text className="text-primary-600 font-semibold">Logout</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View className="flex-1 justify-center items-center px-8">
+          <Text className="text-6xl mb-4">👪</Text>
+          <Text className="text-2xl font-bold text-gray-800 text-center mb-2">
+            Welcome, {user?.first_name}!
+          </Text>
+          <Text className="text-gray-600 text-center mb-8">
+            Link to your child's account to view their schedule.
+          </Text>
+
+          <View className="w-full bg-white p-6 rounded-2xl shadow-sm">
+            <Text className="text-lg font-semibold text-gray-800 mb-4">
+              Enter Invite Code
+            </Text>
+            <Text className="text-gray-600 mb-4 text-sm">
+              Ask your child to generate an invite code from their SchedScan app and share it with you.
+            </Text>
+
+            <TextInput
+              className="bg-gray-100 rounded-xl p-4 mb-4 text-center text-xl font-bold tracking-widest"
+              placeholder="ABC123XYZ0"
+              placeholderTextColor="#9CA3AF"
+              value={inviteCode}
+              onChangeText={(text) => setInviteCode(text.toUpperCase())}
+              autoCapitalize="characters"
+              maxLength={10}
+            />
+
+            <TouchableOpacity
+              className={`bg-primary-600 rounded-xl py-4 ${isLinking ? 'opacity-50' : ''}`}
+              onPress={handleLinkChild}
+              disabled={isLinking}
+            >
+              {isLinking ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text className="text-white font-bold text-center">Link to Child</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  // Has linked child - show schedule
   return (
-    <>
-      <View className="w-full h-14 bg-white border-b-2 border-gray-200 justify-between items-center flex-row">
-        <View className="ml-8 flex-row justify-center items-center">
+    <View className="flex-1 bg-gray-50">
+      {/* Header */}
+      <View className="w-full h-14 bg-white border-b-2 border-gray-200 justify-between items-center flex-row px-4">
+        <View className="flex-row items-center">
           <Image
             source={require("../../assets/images/logo.png")}
             className="w-12 h-12"
           />
-          <View className="flex-col justify-center items-left">
-            <Text className="text-xl font-bold text-primary-900/50 leading-none">
-              Sched
-            </Text>
-            <Text className="text-xl font-bold text-primary-900 leading-none">
-              Scan
-            </Text>
+          <View className="flex-col ml-2">
+            <Text className="text-xl font-bold text-primary-900/50 leading-none">Sched</Text>
+            <Text className="text-xl font-bold text-primary-900 leading-none">Scan</Text>
           </View>
         </View>
-        <View className="flex-row justify-center items-center mr-4">
-          <TouchableOpacity
-            onPress={() => router.push("/Home/notification")}
-          ></TouchableOpacity>
-        </View>
+        <TouchableOpacity onPress={handleLogout}>
+          <Text className="text-primary-600 font-semibold">Logout</Text>
+        </TouchableOpacity>
       </View>
 
-      <ScrollView className="flex-1 bg-gray-50">
-        {/* Header */}
+      <ScrollView className="flex-1">
+        {/* Welcome Header */}
         <View className="bg-primary-600 m-4 p-6 rounded-2xl">
-          <Text className="text-3xl font-bold text-white mb-1">Hi, Jane!</Text>
+          <Text className="text-3xl font-bold text-white mb-1">Hi, {user?.first_name}!</Text>
           <Text className="text-base text-primary-200">
-            Viewing: {selectedChild.name}
+            Viewing: {linkedChild.full_name}'s Schedule
           </Text>
         </View>
 
-        {/* Child Switcher */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          className="px-4 mb-4"
-        >
-          {childrenList.map((child) => (
-            <TouchableOpacity
-              key={child.id}
-              onPress={() => setSelectedChild(child)}
-              className={`px-4 py-2 mr-2 rounded-full ${
-                selectedChild.id === child.id
-                  ? "bg-primary-500"
-                  : "bg-gray-200"
-              }`}
-            >
-              <Text
-                className={`${
-                  selectedChild.id === child.id
-                    ? "text-white"
-                    : "text-gray-700"
-                } font-semibold`}
-              >
-                {child.name}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-
-        {/* --- NEW: Quick Attendance View --- */}
-        <View className="mx-4 mb-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-            <View className="flex-row justify-between items-center mb-2">
-                <Text className="font-bold text-gray-800 text-lg">Attendance Rate</Text>
-                <Text className={`font-bold text-lg ${currentStats.percentage >= 90 ? 'text-green-600' : 'text-yellow-600'}`}>
-                    {currentStats.percentage}%
-                </Text>
+        {/* Child Info Card */}
+        <View className="mx-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex-row items-center mb-4">
+          {linkedChild.profile_picture ? (
+            <Image
+              source={{ uri: linkedChild.profile_picture }}
+              className="w-16 h-16 rounded-full"
+            />
+          ) : (
+            <View className="w-16 h-16 rounded-full bg-primary-100 justify-center items-center">
+              <Text className="text-2xl">{linkedChild.first_name[0]}</Text>
             </View>
-
-            {/* Progress Bar */}
-            <View className="w-full h-2 bg-gray-200 rounded-full mb-4 overflow-hidden">
-                <View 
-                    className={`h-full ${getAttendanceColor(currentStats.percentage)}`} 
-                    style={{ width: `${currentStats.percentage}%` }}
-                />
-            </View>
-
-            {/* Stats Grid */}
-            <View className="flex-row justify-between">
-                <View className="items-center bg-green-50 p-2 rounded-lg w-[30%]">
-                    <Text className="text-green-700 font-bold text-xl">{currentStats.present}</Text>
-                    <Text className="text-green-600 text-xs uppercase font-bold">Present</Text>
-                </View>
-                <View className="items-center bg-yellow-50 p-2 rounded-lg w-[30%]">
-                    <Text className="text-yellow-700 font-bold text-xl">{currentStats.late}</Text>
-                    <Text className="text-yellow-600 text-xs uppercase font-bold">Late</Text>
-                </View>
-                <View className="items-center bg-primary-50 p-2 rounded-lg w-[30%]">
-                    <Text className="text-primary-700 font-bold text-xl">{currentStats.absent}</Text>
-                    <Text className="text-primary-600 text-xs uppercase font-bold">Absent</Text>
-                </View>
-            </View>
+          )}
+          <View className="ml-4 flex-1">
+            <Text className="text-lg font-bold text-gray-800">{linkedChild.full_name}</Text>
+            <Text className="text-gray-500">{linkedChild.email}</Text>
+          </View>
+          <TouchableOpacity onPress={handleUnlink} className="p-2">
+            <Text className="text-red-500 text-sm">Unlink</Text>
+          </TouchableOpacity>
         </View>
 
-        {/* Date Selector */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          className="px-4 mb-4"
-          contentContainerStyle={{ paddingRight: 16 }}
-        >
-          {Array.from({ length: 7 }).map((_, i) => {
-            const date = new Date();
-            date.setDate(date.getDate() + i);
-            const isoDate = date.toISOString().split("T")[0];
-            const label = date.toDateString().slice(0, 10);
-
-            return (
-              <TouchableOpacity
-                key={i}
-                onPress={() => setSelectedDate(isoDate)}
-                className={`px-4 py-2 mr-3 rounded-lg ${
-                  selectedDate === isoDate ? "bg-primary-500" : "bg-gray-200"
-                }`}
-              >
-                <Text
-                  className={`${
-                    selectedDate === isoDate ? "text-white" : "text-gray-700"
-                  } text-xs text-center`}
-                >
-                  {label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-
-        {/* Schedule */}
+        {/* Today's Schedule */}
         <View className="px-4 mt-2 mb-20">
           <Text className="text-lg font-bold mb-3">
-            {selectedChild.name}'s Schedule Today
+            {linkedChild.first_name}'s Schedule Today
           </Text>
 
-          {daySchedule.length === 0 ? (
+          {!schedule ? (
             <View className="items-center justify-center p-8 bg-white rounded-xl border-dashed border-2 border-gray-200">
-                <Text className="text-gray-400 font-medium">No classes today</Text>
+              <Text className="text-gray-400 font-medium text-center">
+                No active schedule found.{"\n"}
+                Your child needs to upload their schedule first.
+              </Text>
+            </View>
+          ) : todaysCourses.length === 0 ? (
+            <View className="items-center justify-center p-8 bg-white rounded-xl border-dashed border-2 border-gray-200">
+              <Text className="text-gray-400 font-medium">No classes today</Text>
             </View>
           ) : (
-            daySchedule.map((item, index) => (
-              <TouchableOpacity
+            todaysCourses.map((course, index) => (
+              <View
                 key={index}
-                onPress={() =>
-                  router.push({
-                    pathname: "/Home/Subject/subjectdetails",
-                    params: {
-                      title: item.title,
-                    },
-                  })
-                }
-                className={`bg-white p-4 mb-3 rounded-xl shadow border-l-4 ${getPriorityColor(
-                  item.priority_level
-                )}`}
+                className="bg-white p-4 mb-3 rounded-xl shadow border-l-4 border-primary-500"
               >
                 <Text className="font-bold text-base text-black">
-                  {item.title}
+                  {course.subject_code}
                 </Text>
-                <Text className="text-sm text-gray-600">{item.time}</Text>
-                <Text className="text-sm text-gray-600">{item.location}</Text>
-              </TouchableOpacity>
+                {course.subject_name && (
+                  <Text className="text-sm text-gray-700">{course.subject_name}</Text>
+                )}
+                <Text className="text-sm text-gray-600">
+                  {formatTime(course.start_time)} - {formatTime(course.end_time)}
+                </Text>
+                {course.location && (
+                  <Text className="text-sm text-gray-600">{course.location}</Text>
+                )}
+              </View>
             ))
           )}
         </View>
+
+        {/* Full Week Schedule */}
+        {schedule && schedule.courses && schedule.courses.length > 0 && (
+          <View className="px-4 mb-20">
+            <Text className="text-lg font-bold mb-3">Full Week Schedule</Text>
+            {['M', 'T', 'W', 'TH', 'F', 'S'].map((day) => {
+              const dayCourses = schedule.courses.filter((c: Course) => c.day === day);
+              if (dayCourses.length === 0) return null;
+
+              const dayNames: Record<string, string> = {
+                'M': 'Monday', 'T': 'Tuesday', 'W': 'Wednesday',
+                'TH': 'Thursday', 'F': 'Friday', 'S': 'Saturday'
+              };
+
+              return (
+                <View key={day} className="mb-4">
+                  <Text className="font-semibold text-gray-700 mb-2">{dayNames[day]}</Text>
+                  {dayCourses.map((course: Course, idx: number) => (
+                    <View key={idx} className="bg-white p-3 mb-2 rounded-lg border border-gray-100">
+                      <Text className="font-medium">{course.subject_code}</Text>
+                      <Text className="text-sm text-gray-500">
+                        {course.start_time} - {course.end_time} {course.location && `• ${course.location}`}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              );
+            })}
+          </View>
+        )}
       </ScrollView>
-    </>
+    </View>
   );
 };
 

@@ -3,7 +3,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from rest_framework.validators import UniqueValidator
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import Course, Schedule, Task
+from .models import Course, Schedule, Task, ParentChildLink, InviteCode
 from .utils.timetable_generator import generate_and_save_timetable
 
 User = get_user_model()
@@ -15,7 +15,7 @@ class UserSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = User
-        fields = ['id', 'email', 'first_name', 'last_name', 'profile_picture', 'created_at']
+        fields = ['id', 'email', 'first_name', 'last_name', 'user_type', 'profile_picture', 'created_at']
         read_only_fields = ['id', 'created_at']
 
 
@@ -41,11 +41,17 @@ class RegisterSerializer(serializers.ModelSerializer):
     )
     first_name = serializers.CharField(required=True, max_length=150)
     last_name = serializers.CharField(required=True, max_length=150)
+    user_type = serializers.ChoiceField(
+        choices=['student', 'faculty', 'parent'],
+        default='student',
+        required=False,
+        help_text="Type of user account"
+    )
     profile_picture = serializers.ImageField(required=False, allow_null=True)
 
     class Meta:
         model = User
-        fields = ['email', 'password', 'password2', 'first_name', 'last_name', 'profile_picture']
+        fields = ['email', 'password', 'password2', 'first_name', 'last_name', 'user_type', 'profile_picture']
 
     def validate(self, attrs):
         """
@@ -397,3 +403,67 @@ class PushTokenSerializer(serializers.Serializer):
             )
         return value
 
+
+# ============================================
+# Parental View Serializers
+# ============================================
+
+class InviteCodeSerializer(serializers.ModelSerializer):
+    """
+    Serializer for InviteCode - used for generating and viewing invite codes
+    """
+    class Meta:
+        model = InviteCode
+        fields = ['id', 'code', 'created_at', 'is_active', 'used']
+        read_only_fields = ['id', 'code', 'created_at', 'is_active', 'used']
+
+
+class ParentChildLinkSerializer(serializers.ModelSerializer):
+    """
+    Serializer for ParentChildLink - used for viewing linked accounts
+    """
+    parent_name = serializers.SerializerMethodField()
+    parent_email = serializers.SerializerMethodField()
+    child_name = serializers.SerializerMethodField()
+    child_email = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ParentChildLink
+        fields = ['id', 'status', 'linked_at', 'parent_name', 'parent_email', 'child_name', 'child_email']
+        read_only_fields = ['id', 'linked_at']
+    
+    def get_parent_name(self, obj):
+        return obj.parent.get_full_name()
+    
+    def get_parent_email(self, obj):
+        return obj.parent.email
+    
+    def get_child_name(self, obj):
+        return obj.child.get_full_name()
+    
+    def get_child_email(self, obj):
+        return obj.child.email
+
+
+class ChildInfoSerializer(serializers.ModelSerializer):
+    """
+    Serializer for basic child (student) information - for parent's view
+    """
+    full_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = User
+        fields = ['id', 'email', 'first_name', 'last_name', 'full_name', 'profile_picture']
+        read_only_fields = ['id', 'email', 'first_name', 'last_name', 'full_name', 'profile_picture']
+    
+    def get_full_name(self, obj):
+        return obj.get_full_name()
+
+
+class ChildScheduleSerializer(serializers.Serializer):
+    """
+    Serializer for viewing child's active schedule - read only for parents
+    """
+    child = ChildInfoSerializer(read_only=True)
+    schedule = ScheduleSerializer(read_only=True, allow_null=True)
+    has_active_schedule = serializers.BooleanField(read_only=True)

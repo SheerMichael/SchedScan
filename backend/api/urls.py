@@ -41,4 +41,16 @@ urlpatterns = [
     
     # Push notification endpoints
     path('push-token/', views.RegisterPushTokenView.as_view(), name='register_push_token'),
+    
+    # Parental view endpoints - Invite codes
+    path('auth/invite-code/generate/', views.GenerateInviteCodeView.as_view(), name='generate_invite_code'),
+    path('auth/invite-code/use/', views.UseInviteCodeView.as_view(), name='use_invite_code'),
+    
+    # Parental view endpoints - Parent side
+    path('parent/child/', views.ChildLinkView.as_view(), name='child_link'),
+    path('parent/child/schedule/', views.ChildScheduleView.as_view(), name='child_schedule'),
+    
+    # Parental view endpoints - Student side
+    path('student/parents/', views.LinkedParentsView.as_view(), name='linked_parents'),
+    path('student/parents/<int:link_id>/revoke/', views.RevokeParentAccessView.as_view(), name='revoke_parent_access'),
 ]
