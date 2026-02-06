@@ -166,10 +166,17 @@ const LoginScreen = () => {
         </TouchableOpacity>
 
         {/* Bottom Sign Up */}
-        <View className="flex-row justify-center mt-2 mb-10">
+        <View className="flex-row justify-center mt-2 mb-4">
           <Text className="text-gray-600">Don't have an account? </Text>
           <TouchableOpacity onPress={() => router.push('/intro/signup')} disabled={isLoading}>
             <Text className="text-yellow-600 font-semibold">Sign up</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Parent Link */}
+        <View className="flex-row justify-center mb-10">
+          <TouchableOpacity onPress={() => router.push('/intro/parent_signup')} disabled={isLoading}>
+            <Text className="text-primary-600 font-medium">Are you a parent? Enter invite code</Text>
           </TouchableOpacity>
         </View>
 

@@ -44,6 +44,7 @@ urlpatterns = [
     
     # Parental view endpoints - Invite codes
     path('auth/invite-code/generate/', views.GenerateInviteCodeView.as_view(), name='generate_invite_code'),
+    path('auth/invite-code/validate/', views.ValidateInviteCodeView.as_view(), name='validate_invite_code'),
     path('auth/invite-code/use/', views.UseInviteCodeView.as_view(), name='use_invite_code'),
     
     # Parental view endpoints - Parent side

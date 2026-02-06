@@ -1462,6 +1462,48 @@ class GenerateInviteCodeView(APIView):
         return Response({"code": None, "message": "No active invite code"})
 
 
+class ValidateInviteCodeView(APIView):
+    """
+    API endpoint to validate an invite code without using it.
+    
+    GET /api/auth/invite-code/validate/?code=ABC123XYZ0
+    
+    Response: {
+        "valid": true,
+        "student_name": "John Doe"
+    }
+    
+    Any user (including unauthenticated) can validate a code.
+    """
+    permission_classes = []  # Allow unauthenticated access
+    
+    def get(self, request):
+        code = request.query_params.get('code', '').strip().upper()
+        
+        if not code or len(code) != 10:
+            return Response({
+                "valid": False,
+                "error": "Invalid code format"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        invite = InviteCode.objects.filter(
+            code=code,
+            is_active=True,
+            used=False
+        ).select_related('student').first()
+        
+        if invite:
+            return Response({
+                "valid": True,
+                "student_name": f"{invite.student.first_name} {invite.student.last_name}"
+            })
+        
+        return Response({
+            "valid": False,
+            "error": "Code not found or already used"
+        }, status=status.HTTP_404_NOT_FOUND)
+
+
 class UseInviteCodeView(APIView):
     """
     API endpoint for parents to use an invite code and link to a student.

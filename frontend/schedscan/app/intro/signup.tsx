@@ -12,10 +12,10 @@ type SignUpData = {
   email: string;
   password: string;
   confirmPassword: string;
-  user_type: 'student' | 'faculty' | 'parent';
+  user_type?: 'student' | 'faculty' | 'parent';  // Optional, defaults to student
 };
 
-type Step = 'signup0' | 'signup1' | 'signup2' | 'signup3';
+type Step = 'signup1' | 'signup2' | 'signup3';
 
 type SignUp1Props = {
   setScreen: (screen: Step) => void;
@@ -47,10 +47,9 @@ const ChevronRightIcon = ({ size = 24, color = '#ffffff' }) => (
 
 const ProgressBar = ({ step }: { step: number }) => {
   const widthClass =
-    step === 0 ? "w-1/4" :
-      step === 1 ? "w-2/4" :
-        step === 2 ? "w-3/4" :
-          "w-full";
+    step === 1 ? "w-1/3" :
+      step === 2 ? "w-2/3" :
+        "w-full";
 
   return (
     <View className="w-full h-1 bg-gray-300 rounded-full mb-4">
@@ -58,59 +57,6 @@ const ProgressBar = ({ step }: { step: number }) => {
     </View>
   );
 };
-
-// ✅ Screen 0 – User Type Selection
-const SignUp0Screen = ({
-  setScreen,
-  formData,
-  setFormData
-}: { setScreen: (screen: Step) => void; formData: SignUpData; setFormData: React.Dispatch<React.SetStateAction<SignUpData>> }) => (
-  <SafeAreaView className="flex-1 bg-white px-4 m-2">
-    <TouchableOpacity onPress={() => router.back()} className="mb-5 w-4">
-      <ChevronRightIcon size={30} color="#000000" />
-    </TouchableOpacity>
-
-    <ProgressBar step={0} />
-
-    <View className="mt-20 ml-8 mr-8">
-      <Text className="text-3xl font-bold mb-2 text-primary-900">I am a...</Text>
-      <Text className="text-base font-medium mb-8 text-gray-600">Choose your account type</Text>
-
-      <TouchableOpacity
-        onPress={() => {
-          setFormData((prev: SignUpData) => ({ ...prev, user_type: 'student' }));
-          setScreen('signup1');
-        }}
-        className={`p-6 mb-4 rounded-xl border-2 ${formData.user_type === 'student' ? 'border-primary-500 bg-primary-50' : 'border-gray-200 bg-white'}`}
-      >
-        <Text className="text-xl font-bold text-gray-800">📚 Student</Text>
-        <Text className="text-gray-600 mt-1">I want to manage my class schedule</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        onPress={() => {
-          setFormData((prev: SignUpData) => ({ ...prev, user_type: 'faculty' }));
-          setScreen('signup1');
-        }}
-        className={`p-6 mb-4 rounded-xl border-2 ${formData.user_type === 'faculty' ? 'border-primary-500 bg-primary-50' : 'border-gray-200 bg-white'}`}
-      >
-        <Text className="text-xl font-bold text-gray-800">👨‍🏫 Faculty</Text>
-        <Text className="text-gray-600 mt-1">I want to manage my teaching schedule</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        onPress={() => {
-          setFormData((prev: SignUpData) => ({ ...prev, user_type: 'parent' }));
-          setScreen('signup1');
-        }}
-        className={`p-6 mb-4 rounded-xl border-2 ${formData.user_type === 'parent' ? 'border-primary-500 bg-primary-50' : 'border-gray-200 bg-white'}`}
-      >
-        <Text className="text-xl font-bold text-gray-800">👪 Parent</Text>
-        <Text className="text-gray-600 mt-1">I want to view my child's schedule</Text>
-      </TouchableOpacity>
-    </View>
-  </SafeAreaView>
-);
 
 // ✅ Screen 1 – Photo + First Name
 const SignUp1Screen = ({
@@ -121,7 +67,7 @@ const SignUp1Screen = ({
   pickImageOption
 }: SignUp1Props) => (
   <SafeAreaView className="flex-1 bg-white px-4 m-2">
-    <TouchableOpacity onPress={() => setScreen('signup0')} className="mb-5 w-4">
+    <TouchableOpacity onPress={() => router.back()} className="mb-5 w-4">
       <ChevronRightIcon size={30} color="#000000" />
     </TouchableOpacity>
 
@@ -273,7 +219,7 @@ const SignUp3Screen = ({
 
 const AuthFlow = () => {
   const [image, setImage] = useState<string | null>(null);
-  const [screen, setScreen] = useState<Step>('signup0');
+  const [screen, setScreen] = useState<Step>('signup1');
   const [isLoading, setIsLoading] = useState(false);
   const { register } = useAuth();
 
@@ -418,14 +364,6 @@ const AuthFlow = () => {
 
   return (
     <>
-      {screen === 'signup0' && (
-        <SignUp0Screen
-          setScreen={setScreen}
-          formData={formData}
-          setFormData={setFormData}
-        />
-      )}
-
       {screen === 'signup1' && (
         <SignUp1Screen
           setScreen={setScreen}
