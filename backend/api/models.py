@@ -284,7 +284,7 @@ class Task(models.Model):
 class ParentChildLink(models.Model):
     """
     Links parent accounts to student accounts.
-    One parent can have one child (as per requirements).
+    One parent can have MULTIPLE children.
     One student can have multiple parent links.
     """
     STATUS_CHOICES = [
@@ -292,10 +292,10 @@ class ParentChildLink(models.Model):
         ('revoked', 'Revoked'),
     ]
     
-    parent = models.OneToOneField(
+    parent = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        related_name='child_link',
+        related_name='child_links',  # Changed from 'child_link' for multiple
         help_text="The parent user"
     )
     child = models.ForeignKey(
@@ -318,6 +318,14 @@ class ParentChildLink(models.Model):
         indexes = [
             models.Index(fields=['parent', 'status']),
             models.Index(fields=['child', 'status']),
+        ]
+        # Prevent duplicate active links between same parent-child pair
+        constraints = [
+            models.UniqueConstraint(
+                fields=['parent', 'child'],
+                condition=models.Q(status='active'),
+                name='unique_active_parent_child_link'
+            )
         ]
     
     def __str__(self):

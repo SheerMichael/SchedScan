@@ -4,6 +4,8 @@ import api from './api';
 // Parent Service - API calls for parental view feature
 // ============================================
 
+// --- Types ---
+
 export interface ChildInfo {
     id: number;
     email: string;
@@ -11,6 +13,12 @@ export interface ChildInfo {
     last_name: string;
     full_name: string;
     profile_picture: string | null;
+}
+
+export interface LinkedChild {
+    link_id: number;
+    child: ChildInfo;
+    linked_at: string;
 }
 
 export interface InviteCodeResponse {
@@ -34,11 +42,23 @@ export interface LinkedParent {
     linked_at: string;
 }
 
-export interface ChildLinkResponse {
-    child: ChildInfo | null;
-    linked_at?: string;
-    has_linked_child: boolean;
+export interface ChildrenListResponse {
+    children: LinkedChild[];
+    count: number;
+    has_linked_children: boolean;
 }
+
+export interface UseInviteCodeResponse {
+    message: string;
+    child: ChildInfo;
+    linked_at: string;
+}
+
+export interface ApiError {
+    error: string;
+}
+
+// --- Service ---
 
 export const parentService = {
     // ============================================
@@ -78,38 +98,61 @@ export const parentService = {
     },
 
     // ============================================
-    // Parent endpoints - Link to child and view schedule
+    // Parent endpoints - Link to children and view schedules
     // ============================================
 
     /**
      * Use an invite code to link to a student
      * Only parents can call this
+     * Now supports linking to multiple children
      */
-    useInviteCode: async (code: string): Promise<{ message: string; child: ChildInfo; linked_at: string }> => {
+    useInviteCode: async (code: string): Promise<UseInviteCodeResponse> => {
         const response = await api.post('/auth/invite-code/use/', { code });
         return response.data;
     },
 
     /**
-     * Get linked child info
+     * Get all linked children (supports multiple)
      */
-    getLinkedChild: async (): Promise<ChildLinkResponse> => {
+    getLinkedChildren: async (): Promise<ChildrenListResponse> => {
         const response = await api.get('/parent/child/');
         return response.data;
     },
 
     /**
-     * Get linked child's active schedule
+     * Get specific child's active schedule
+     * @param childId - ID of the child to get schedule for (optional, defaults to first child)
      */
-    getChildSchedule: async (): Promise<ChildScheduleResponse> => {
-        const response = await api.get('/parent/child/schedule/');
+    getChildSchedule: async (childId?: number): Promise<ChildScheduleResponse> => {
+        const url = childId
+            ? `/parent/child/schedule/?child_id=${childId}`
+            : '/parent/child/schedule/';
+        const response = await api.get(url);
         return response.data;
     },
 
     /**
-     * Unlink from child
+     * Unlink from a specific child
+     * @param childId - ID of the child to unlink
      */
-    unlinkFromChild: async (): Promise<void> => {
-        await api.delete('/parent/child/');
+    unlinkFromChild: async (childId: number): Promise<{ message: string }> => {
+        const response = await api.delete(`/parent/child/?child_id=${childId}`);
+        return response.data;
+    },
+
+    /**
+     * Validate an invite code (unauthenticated)
+     * Used before registration to check if code is valid
+     */
+    validateInviteCode: async (code: string): Promise<{ valid: boolean; student_name?: string; error?: string }> => {
+        try {
+            const response = await api.get(`/auth/invite-code/validate/?code=${code}`);
+            return response.data;
+        } catch (error: any) {
+            return {
+                valid: false,
+                error: error.response?.data?.error || 'Invalid code'
+            };
+        }
     },
 };

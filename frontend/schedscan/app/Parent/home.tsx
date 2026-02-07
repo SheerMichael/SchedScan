@@ -1,9 +1,10 @@
-import { View, Text, TouchableOpacity, ScrollView, Image, ActivityIndicator, TextInput, Alert } from "react-native";
-import React, { useState, useEffect, useCallback } from "react";
+import { View, Text, TouchableOpacity, ScrollView, Image, ActivityIndicator, TextInput, Alert, Modal } from "react-native";
+import React, { useState, useCallback } from "react";
 import { router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "../../context/AuthContext";
-import { parentService, ChildInfo, ChildScheduleResponse } from "../../services/parentService";
+import { parentService, LinkedChild, ChildInfo } from "../../services/parentService";
+import { Plus, X, Users, Calendar } from "lucide-react-native";
 
 // --- Types ---
 type Course = {
@@ -21,7 +22,8 @@ const ParentHomePage = () => {
 
   // State
   const [isLoading, setIsLoading] = useState(true);
-  const [linkedChild, setLinkedChild] = useState<ChildInfo | null>(null);
+  const [children, setChildren] = useState<LinkedChild[]>([]);
+  const [selectedChild, setSelectedChild] = useState<ChildInfo | null>(null);
   const [schedule, setSchedule] = useState<any | null>(null);
   const [todaysCourses, setTodaysCourses] = useState<Course[]>([]);
 
@@ -29,80 +31,96 @@ const ParentHomePage = () => {
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
   const [isLinking, setIsLinking] = useState(false);
+  const [linkError, setLinkError] = useState("");
 
   // Load data on focus
   useFocusEffect(
     useCallback(() => {
-      loadChildData();
+      loadChildrenData();
     }, [])
   );
 
-  const loadChildData = async () => {
+  const loadChildrenData = async () => {
     try {
       setIsLoading(true);
 
-      // First check if we have a linked child
-      const childLink = await parentService.getLinkedChild();
+      const response = await parentService.getLinkedChildren();
+      setChildren(response.children);
 
-      if (childLink.has_linked_child && childLink.child) {
-        setLinkedChild(childLink.child);
-
-        // Get the child's schedule
-        try {
-          const scheduleData = await parentService.getChildSchedule();
-          setSchedule(scheduleData.schedule);
-
-          if (scheduleData.schedule?.courses) {
-            // Filter today's courses
-            const today = getDayAbbrev(new Date().getDay());
-            const filtered = scheduleData.schedule.courses.filter(
-              (c: Course) => c.day === today
-            );
-            setTodaysCourses(filtered);
-          }
-        } catch (scheduleError) {
-          console.log('No schedule available');
-          setSchedule(null);
-          setTodaysCourses([]);
-        }
+      // Auto-select first child if available
+      if (response.children.length > 0 && !selectedChild) {
+        await selectChild(response.children[0].child);
+      } else if (selectedChild) {
+        // Refresh current child's schedule
+        await loadChildSchedule(selectedChild.id);
       } else {
-        setLinkedChild(null);
+        setSelectedChild(null);
         setSchedule(null);
         setTodaysCourses([]);
       }
-    } catch (error) {
-      console.error("Error loading child data:", error);
+    } catch (error: any) {
+      console.error("Error loading children:", error);
+      Alert.alert("Error", "Failed to load children. Please try again.");
     } finally {
       setIsLoading(false);
     }
   };
 
+  const selectChild = async (child: ChildInfo) => {
+    setSelectedChild(child);
+    await loadChildSchedule(child.id);
+  };
+
+  const loadChildSchedule = async (childId: number) => {
+    try {
+      const scheduleData = await parentService.getChildSchedule(childId);
+      setSchedule(scheduleData.schedule);
+
+      if (scheduleData.schedule?.courses) {
+        const today = getDayAbbrev(new Date().getDay());
+        const filtered = scheduleData.schedule.courses.filter(
+          (c: Course) => c.day === today
+        );
+        setTodaysCourses(filtered);
+      } else {
+        setTodaysCourses([]);
+      }
+    } catch (error: any) {
+      console.log('No schedule available for child');
+      setSchedule(null);
+      setTodaysCourses([]);
+    }
+  };
+
   const handleLinkChild = async () => {
-    if (!inviteCode.trim()) {
-      Alert.alert("Error", "Please enter an invite code");
+    const code = inviteCode.trim().toUpperCase();
+    if (!code || code.length !== 10) {
+      setLinkError("Please enter a valid 10-character invite code");
       return;
     }
 
     try {
       setIsLinking(true);
-      const result = await parentService.useInviteCode(inviteCode.trim());
+      setLinkError("");
 
-      Alert.alert("Success!", result.message);
+      const result = await parentService.useInviteCode(code);
+
+      Alert.alert("Success!", `You are now linked to ${result.child.full_name}!`);
       setShowLinkModal(false);
       setInviteCode("");
-      loadChildData();
+      await loadChildrenData();
     } catch (error: any) {
       const message = error.response?.data?.error || "Failed to link. Please check the code and try again.";
-      Alert.alert("Link Failed", message);
+      setLinkError(message);
     } finally {
       setIsLinking(false);
     }
   };
 
-  const handleUnlink = async () => {
+  const handleUnlink = async (child: ChildInfo) => {
     Alert.alert(
       "Unlink Child",
-      `Are you sure you want to unlink from ${linkedChild?.full_name}?`,
+      `Are you sure you want to unlink from ${child.full_name}?`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -110,11 +128,19 @@ const ParentHomePage = () => {
           style: "destructive",
           onPress: async () => {
             try {
-              await parentService.unlinkFromChild();
-              setLinkedChild(null);
-              setSchedule(null);
-              setTodaysCourses([]);
-              Alert.alert("Unlinked", "You have been unlinked from your child's account.");
+              await parentService.unlinkFromChild(child.id);
+
+              // Remove from local state
+              setChildren(prev => prev.filter(c => c.child.id !== child.id));
+
+              // If this was the selected child, clear selection
+              if (selectedChild?.id === child.id) {
+                setSelectedChild(null);
+                setSchedule(null);
+                setTodaysCourses([]);
+              }
+
+              Alert.alert("Unlinked", `You have been unlinked from ${child.full_name}.`);
             } catch (error) {
               Alert.alert("Error", "Failed to unlink. Please try again.");
             }
@@ -142,11 +168,15 @@ const ParentHomePage = () => {
     return days[dayNum];
   };
 
-  const formatTime = (time: string) => {
-    // Convert 24h to 12h format if needed
-    return time;
+  const getDayName = (abbrev: string): string => {
+    const dayNames: Record<string, string> = {
+      'M': 'Monday', 'T': 'Tuesday', 'W': 'Wednesday',
+      'TH': 'Thursday', 'F': 'Friday', 'S': 'Saturday'
+    };
+    return dayNames[abbrev] || abbrev;
   };
 
+  // Loading state
   if (isLoading) {
     return (
       <View className="flex-1 bg-gray-50 justify-center items-center">
@@ -156,81 +186,12 @@ const ParentHomePage = () => {
     );
   }
 
-  // No linked child - show link prompt
-  if (!linkedChild) {
-    return (
-      <View className="flex-1 bg-gray-50">
-        {/* Header */}
-        <View className="w-full h-14 bg-white border-b-2 border-gray-200 justify-between items-center flex-row px-4">
-          <View className="flex-row items-center">
-            <Image
-              source={require("../../assets/images/logo.png")}
-              className="w-12 h-12"
-            />
-            <View className="flex-col ml-2">
-              <Text className="text-xl font-bold text-primary-900/50 leading-none">Sched</Text>
-              <Text className="text-xl font-bold text-primary-900 leading-none">Scan</Text>
-            </View>
-          </View>
-          <TouchableOpacity onPress={handleLogout}>
-            <Text className="text-primary-600 font-semibold">Logout</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View className="flex-1 justify-center items-center px-8">
-          <Text className="text-6xl mb-4">👪</Text>
-          <Text className="text-2xl font-bold text-gray-800 text-center mb-2">
-            Welcome, {user?.first_name}!
-          </Text>
-          <Text className="text-gray-600 text-center mb-8">
-            Link to your child's account to view their schedule.
-          </Text>
-
-          <View className="w-full bg-white p-6 rounded-2xl shadow-sm">
-            <Text className="text-lg font-semibold text-gray-800 mb-4">
-              Enter Invite Code
-            </Text>
-            <Text className="text-gray-600 mb-4 text-sm">
-              Ask your child to generate an invite code from their SchedScan app and share it with you.
-            </Text>
-
-            <TextInput
-              className="bg-gray-100 rounded-xl p-4 mb-4 text-center text-xl font-bold tracking-widest"
-              placeholder="ABC123XYZ0"
-              placeholderTextColor="#9CA3AF"
-              value={inviteCode}
-              onChangeText={(text) => setInviteCode(text.toUpperCase())}
-              autoCapitalize="characters"
-              maxLength={10}
-            />
-
-            <TouchableOpacity
-              className={`bg-primary-600 rounded-xl py-4 ${isLinking ? 'opacity-50' : ''}`}
-              onPress={handleLinkChild}
-              disabled={isLinking}
-            >
-              {isLinking ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text className="text-white font-bold text-center">Link to Child</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    );
-  }
-
-  // Has linked child - show schedule
   return (
     <View className="flex-1 bg-gray-50">
       {/* Header */}
       <View className="w-full h-14 bg-white border-b-2 border-gray-200 justify-between items-center flex-row px-4">
         <View className="flex-row items-center">
-          <Image
-            source={require("../../assets/images/logo.png")}
-            className="w-12 h-12"
-          />
+          <Image source={require("../../assets/images/logo.png")} className="w-12 h-12" />
           <View className="flex-col ml-2">
             <Text className="text-xl font-bold text-primary-900/50 leading-none">Sched</Text>
             <Text className="text-xl font-bold text-primary-900 leading-none">Scan</Text>
@@ -246,101 +207,215 @@ const ParentHomePage = () => {
         <View className="bg-primary-600 m-4 p-6 rounded-2xl">
           <Text className="text-3xl font-bold text-white mb-1">Hi, {user?.first_name}!</Text>
           <Text className="text-base text-primary-200">
-            Viewing: {linkedChild.full_name}'s Schedule
+            {children.length > 0
+              ? `Managing ${children.length} child${children.length > 1 ? 'ren' : ''}`
+              : "Link to your child's account to get started"}
           </Text>
         </View>
 
-        {/* Child Info Card */}
-        <View className="mx-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex-row items-center mb-4">
-          {linkedChild.profile_picture ? (
-            <Image
-              source={{ uri: linkedChild.profile_picture }}
-              className="w-16 h-16 rounded-full"
-            />
-          ) : (
-            <View className="w-16 h-16 rounded-full bg-primary-100 justify-center items-center">
-              <Text className="text-2xl">{linkedChild.first_name[0]}</Text>
-            </View>
-          )}
-          <View className="ml-4 flex-1">
-            <Text className="text-lg font-bold text-gray-800">{linkedChild.full_name}</Text>
-            <Text className="text-gray-500">{linkedChild.email}</Text>
+        {/* Children List Section */}
+        <View className="px-4 mb-4">
+          <View className="flex-row justify-between items-center mb-3">
+            <Text className="text-lg font-bold text-gray-800">
+              <Users size={18} color="#374151" /> Linked Children
+            </Text>
+            <TouchableOpacity
+              className="bg-primary-600 px-3 py-2 rounded-lg flex-row items-center"
+              onPress={() => setShowLinkModal(true)}
+            >
+              <Plus size={16} color="#fff" />
+              <Text className="text-white font-semibold ml-1">Add Child</Text>
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity onPress={handleUnlink} className="p-2">
-            <Text className="text-red-500 text-sm">Unlink</Text>
-          </TouchableOpacity>
+
+          {children.length === 0 ? (
+            <View className="bg-white rounded-xl p-8 border-2 border-dashed border-gray-300 items-center">
+              <Text className="text-5xl mb-4">👪</Text>
+              <Text className="text-lg font-semibold text-gray-700 text-center mb-2">No children linked yet</Text>
+              <Text className="text-gray-500 text-center mb-4">
+                Ask your child to share their invite code with you
+              </Text>
+              <TouchableOpacity
+                className="bg-primary-600 px-6 py-3 rounded-xl"
+                onPress={() => setShowLinkModal(true)}
+              >
+                <Text className="text-white font-bold">Enter Invite Code</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2">
+              {children.map((item) => (
+                <TouchableOpacity
+                  key={item.link_id}
+                  onPress={() => selectChild(item.child)}
+                  className={`mr-3 p-4 rounded-xl border-2 min-w-[140px] ${selectedChild?.id === item.child.id
+                      ? 'bg-primary-50 border-primary-500'
+                      : 'bg-white border-gray-200'
+                    }`}
+                >
+                  <View className="items-center">
+                    {item.child.profile_picture ? (
+                      <Image
+                        source={{ uri: item.child.profile_picture }}
+                        className="w-14 h-14 rounded-full mb-2"
+                      />
+                    ) : (
+                      <View className="w-14 h-14 rounded-full bg-primary-100 justify-center items-center mb-2">
+                        <Text className="text-xl font-bold text-primary-600">
+                          {item.child.first_name[0]}
+                        </Text>
+                      </View>
+                    )}
+                    <Text className="font-semibold text-gray-800 text-center" numberOfLines={1}>
+                      {item.child.first_name}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => handleUnlink(item.child)}
+                      className="mt-2"
+                    >
+                      <Text className="text-red-500 text-xs">Unlink</Text>
+                    </TouchableOpacity>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          )}
         </View>
 
-        {/* Today's Schedule */}
-        <View className="px-4 mt-2 mb-20">
-          <Text className="text-lg font-bold mb-3">
-            {linkedChild.first_name}'s Schedule Today
-          </Text>
-
-          {!schedule ? (
-            <View className="items-center justify-center p-8 bg-white rounded-xl border-dashed border-2 border-gray-200">
-              <Text className="text-gray-400 font-medium text-center">
-                No active schedule found.{"\n"}
-                Your child needs to upload their schedule first.
+        {/* Selected Child's Schedule */}
+        {selectedChild && (
+          <View className="px-4 mb-20">
+            {/* Child Info */}
+            <View className="flex-row items-center mb-4">
+              <Calendar size={18} color="#374151" />
+              <Text className="text-lg font-bold text-gray-800 ml-2">
+                {selectedChild.first_name}'s Schedule
               </Text>
             </View>
-          ) : todaysCourses.length === 0 ? (
-            <View className="items-center justify-center p-8 bg-white rounded-xl border-dashed border-2 border-gray-200">
-              <Text className="text-gray-400 font-medium">No classes today</Text>
-            </View>
-          ) : (
-            todaysCourses.map((course, index) => (
-              <View
-                key={index}
-                className="bg-white p-4 mb-3 rounded-xl shadow border-l-4 border-primary-500"
-              >
-                <Text className="font-bold text-base text-black">
-                  {course.subject_code}
+
+            {/* Today's Classes */}
+            <Text className="font-semibold text-gray-600 mb-2">Today</Text>
+            {!schedule ? (
+              <View className="items-center justify-center p-6 bg-white rounded-xl border-dashed border-2 border-gray-200 mb-4">
+                <Text className="text-gray-400 font-medium text-center">
+                  No active schedule found.{"\n"}
+                  They need to upload their schedule first.
                 </Text>
-                {course.subject_name && (
-                  <Text className="text-sm text-gray-700">{course.subject_name}</Text>
-                )}
-                <Text className="text-sm text-gray-600">
-                  {formatTime(course.start_time)} - {formatTime(course.end_time)}
-                </Text>
-                {course.location && (
-                  <Text className="text-sm text-gray-600">{course.location}</Text>
-                )}
               </View>
-            ))
-          )}
-        </View>
-
-        {/* Full Week Schedule */}
-        {schedule && schedule.courses && schedule.courses.length > 0 && (
-          <View className="px-4 mb-20">
-            <Text className="text-lg font-bold mb-3">Full Week Schedule</Text>
-            {['M', 'T', 'W', 'TH', 'F', 'S'].map((day) => {
-              const dayCourses = schedule.courses.filter((c: Course) => c.day === day);
-              if (dayCourses.length === 0) return null;
-
-              const dayNames: Record<string, string> = {
-                'M': 'Monday', 'T': 'Tuesday', 'W': 'Wednesday',
-                'TH': 'Thursday', 'F': 'Friday', 'S': 'Saturday'
-              };
-
-              return (
-                <View key={day} className="mb-4">
-                  <Text className="font-semibold text-gray-700 mb-2">{dayNames[day]}</Text>
-                  {dayCourses.map((course: Course, idx: number) => (
-                    <View key={idx} className="bg-white p-3 mb-2 rounded-lg border border-gray-100">
-                      <Text className="font-medium">{course.subject_code}</Text>
-                      <Text className="text-sm text-gray-500">
-                        {course.start_time} - {course.end_time} {course.location && `• ${course.location}`}
-                      </Text>
-                    </View>
-                  ))}
+            ) : todaysCourses.length === 0 ? (
+              <View className="items-center justify-center p-6 bg-white rounded-xl border-dashed border-2 border-gray-200 mb-4">
+                <Text className="text-gray-400 font-medium">No classes today 🎉</Text>
+              </View>
+            ) : (
+              todaysCourses.map((course, index) => (
+                <View
+                  key={index}
+                  className="bg-white p-4 mb-3 rounded-xl shadow-sm border-l-4 border-primary-500"
+                >
+                  <Text className="font-bold text-base text-black">{course.subject_code}</Text>
+                  {course.subject_name && (
+                    <Text className="text-sm text-gray-700">{course.subject_name}</Text>
+                  )}
+                  <Text className="text-sm text-gray-600">
+                    {course.start_time} - {course.end_time}
+                  </Text>
+                  {course.location && (
+                    <Text className="text-sm text-gray-500">{course.location}</Text>
+                  )}
                 </View>
-              );
-            })}
+              ))
+            )}
+
+            {/* Full Week Schedule */}
+            {schedule && schedule.courses && schedule.courses.length > 0 && (
+              <View className="mt-4">
+                <Text className="font-semibold text-gray-600 mb-3">Full Week</Text>
+                {['M', 'T', 'W', 'TH', 'F', 'S'].map((day) => {
+                  const dayCourses = schedule.courses.filter((c: Course) => c.day === day);
+                  if (dayCourses.length === 0) return null;
+
+                  return (
+                    <View key={day} className="mb-4">
+                      <Text className="font-medium text-gray-700 mb-2">{getDayName(day)}</Text>
+                      {dayCourses.map((course: Course, idx: number) => (
+                        <View key={idx} className="bg-white p-3 mb-2 rounded-lg border border-gray-100">
+                          <Text className="font-medium">{course.subject_code}</Text>
+                          <Text className="text-sm text-gray-500">
+                            {course.start_time} - {course.end_time} {course.location && `• ${course.location}`}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  );
+                })}
+              </View>
+            )}
           </View>
         )}
       </ScrollView>
+
+      {/* Link Child Modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={showLinkModal}
+        onRequestClose={() => setShowLinkModal(false)}
+      >
+        <View className="flex-1 bg-black/50 justify-center items-center">
+          <View className="bg-white rounded-2xl p-6 w-11/12 max-w-md">
+            {/* Header */}
+            <View className="flex-row justify-between items-center mb-4">
+              <Text className="text-xl font-bold text-gray-800">Link to Child</Text>
+              <TouchableOpacity onPress={() => { setShowLinkModal(false); setLinkError(""); setInviteCode(""); }}>
+                <X size={24} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            <Text className="text-gray-600 mb-4">
+              Ask your child to share their invite code from the SchedScan app.
+            </Text>
+
+            {/* Error Message */}
+            {linkError ? (
+              <View className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+                <Text className="text-red-600 text-sm">{linkError}</Text>
+              </View>
+            ) : null}
+
+            {/* Code Input */}
+            <TextInput
+              className="bg-gray-100 rounded-xl p-4 text-center text-xl font-bold tracking-widest mb-4"
+              placeholder="ABC123XYZ0"
+              placeholderTextColor="#9CA3AF"
+              value={inviteCode}
+              onChangeText={(text) => { setInviteCode(text.toUpperCase()); setLinkError(""); }}
+              autoCapitalize="characters"
+              maxLength={10}
+            />
+
+            {/* Buttons */}
+            <View className="flex-row gap-3">
+              <TouchableOpacity
+                className="flex-1 bg-gray-200 rounded-xl py-3"
+                onPress={() => { setShowLinkModal(false); setLinkError(""); setInviteCode(""); }}
+              >
+                <Text className="text-gray-700 font-semibold text-center">Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                className={`flex-1 bg-primary-600 rounded-xl py-3 ${isLinking ? 'opacity-50' : ''}`}
+                onPress={handleLinkChild}
+                disabled={isLinking}
+              >
+                {isLinking ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text className="text-white font-bold text-center">Link</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };

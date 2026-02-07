@@ -1531,18 +1531,6 @@ class UseInviteCodeView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        # Check if parent already has a linked child
-        existing_link = ParentChildLink.objects.filter(
-            parent=user,
-            status='active'
-        ).first()
-        
-        if existing_link:
-            return Response(
-                {"error": "You already have a linked child. Unlink first to link a new child."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
         if not code:
             return Response(
                 {"error": "Invite code is required"},
@@ -1566,6 +1554,19 @@ class UseInviteCodeView(APIView):
         if invite.student == user:
             return Response(
                 {"error": "You cannot link to yourself"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if already linked to this specific child
+        existing_link = ParentChildLink.objects.filter(
+            parent=user,
+            child=invite.student,
+            status='active'
+        ).exists()
+        
+        if existing_link:
+            return Response(
+                {"error": f"You are already linked to {invite.student.get_full_name()}"},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -1597,18 +1598,21 @@ class ChildScheduleView(APIView):
     """
     API endpoint for parents to view their linked child's active schedule.
     
-    GET /api/parent/child/schedule/
+    GET /api/parent/child/schedule/?child_id=123
     
     Response: {
         "child": { ... },
         "schedule": { ... } or null,
         "has_active_schedule": true/false
     }
+    
+    If child_id is not provided, returns schedule for first linked child.
     """
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
         user = request.user
+        child_id = request.query_params.get('child_id')
         
         # Only parents can access this
         if user.user_type != 'parent':
@@ -1617,17 +1621,28 @@ class ChildScheduleView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        # Get the linked child
-        link = ParentChildLink.objects.filter(
+        # Get the linked child(ren)
+        links_query = ParentChildLink.objects.filter(
             parent=user,
             status='active'
-        ).select_related('child').first()
+        ).select_related('child')
         
-        if not link:
-            return Response(
-                {"error": "No linked child found. Please link to a student first."},
-                status=status.HTTP_404_NOT_FOUND
-            )
+        if child_id:
+            # Get specific child
+            link = links_query.filter(child_id=child_id).first()
+            if not link:
+                return Response(
+                    {"error": "Child not found or not linked to you."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        else:
+            # Get first linked child if no ID specified
+            link = links_query.first()
+            if not link:
+                return Response(
+                    {"error": "No linked child found. Please link to a student first."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
         
         child = link.child
         
@@ -1720,13 +1735,13 @@ class RevokeParentAccessView(APIView):
 
 class ChildLinkView(APIView):
     """
-    API endpoint for parents to view and manage their child link.
+    API endpoint for parents to view and manage their child links.
     
     GET /api/parent/child/
-    Returns linked child info.
+    Returns list of all linked children.
     
-    DELETE /api/parent/child/
-    Unlinks from child.
+    DELETE /api/parent/child/?child_id=123
+    Unlinks from specific child.
     """
     permission_classes = [IsAuthenticated]
     
@@ -1739,25 +1754,28 @@ class ChildLinkView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        link = ParentChildLink.objects.filter(
+        links = ParentChildLink.objects.filter(
             parent=user,
             status='active'
-        ).select_related('child').first()
+        ).select_related('child').order_by('-linked_at')
         
-        if not link:
-            return Response({
-                "child": None,
-                "has_linked_child": False
+        children = []
+        for link in links:
+            children.append({
+                "link_id": link.id,
+                "child": ChildInfoSerializer(link.child).data,
+                "linked_at": link.linked_at
             })
         
         return Response({
-            "child": ChildInfoSerializer(link.child).data,
-            "linked_at": link.linked_at,
-            "has_linked_child": True
+            "children": children,
+            "count": len(children),
+            "has_linked_children": len(children) > 0
         })
     
     def delete(self, request):
         user = request.user
+        child_id = request.query_params.get('child_id')
         
         if user.user_type != 'parent':
             return Response(
@@ -1765,21 +1783,28 @@ class ChildLinkView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
         
+        if not child_id:
+            return Response(
+                {"error": "child_id parameter is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         link = ParentChildLink.objects.filter(
             parent=user,
+            child_id=child_id,
             status='active'
         ).first()
         
         if not link:
             return Response(
-                {"error": "No linked child to unlink"},
+                {"error": "Link not found"},
                 status=status.HTTP_404_NOT_FOUND
             )
         
         child_name = link.child.get_full_name()
         link.delete()
         
-        logger.info(f"Parent {user.id} unlinked from their child")
+        logger.info(f"Parent {user.id} unlinked from child {child_id}")
         
         return Response({
             "message": f"Successfully unlinked from {child_name}"
