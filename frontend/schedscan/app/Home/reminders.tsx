@@ -82,7 +82,7 @@ const RemindersScreen = () => {
     const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const dayColors: Record<string, string> = {
       'Monday': 'bg-primary-500',
-      'Tuesday': 'bg-primary-500',
+      'Tuesday': 'bg-orange-500',
       'Wednesday': 'bg-green-500',
       'Thursday': 'bg-blue-800',
       'Friday': 'bg-yellow-500',
@@ -223,7 +223,7 @@ const RemindersScreen = () => {
       </View>
 
         {hasSchedules ? (
-        <ScrollView className="flex-1 px-6" keyboardShouldPersistTaps="handled">
+        <ScrollView className="flex-1 px-6 py-4" keyboardShouldPersistTaps="handled">
           {/* School Year and Semester card - commented out for now
           <View className="bg-primary-700 m-4 p-6 rounded-2xl">
             <View className="flex-row justify-between">
