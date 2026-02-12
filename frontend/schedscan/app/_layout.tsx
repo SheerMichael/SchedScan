@@ -45,7 +45,10 @@ export default function RootLayout() {
         <Stack.Screen name="intro/getstarted" />
         <Stack.Screen name="intro/login" />
         <Stack.Screen name="intro/signup" />
-        <Stack.Screen name="Home" />
+        <Stack.Screen name="Home" options={{ gestureEnabled: false, animation: 'none' }} />
+        <Stack.Screen name="Parent" options={{ gestureEnabled: false, animation: 'none' }} />
+        <Stack.Screen name="profile" options={{ gestureEnabled: false }} />
+        <Stack.Screen name="payment" options={{ gestureEnabled: false }} />
       </Stack>
     </AuthProvider>
   );
