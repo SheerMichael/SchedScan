@@ -397,3 +397,83 @@ class InviteCode(models.Model):
             if not cls.objects.filter(code=code).exists():
                 return code
         raise RuntimeError("Failed to generate unique invite code after 100 attempts")
+
+
+class PasswordResetCode(models.Model):
+    """
+    Stores 6-digit codes for password reset flow.
+    Codes expire after 10 minutes and can only be used once.
+    After verification, a UUID reset_token is issued for the final password change.
+    """
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='password_reset_codes',
+        help_text="The user requesting a password reset"
+    )
+    code = models.CharField(
+        max_length=6,
+        help_text="6-digit verification code"
+    )
+    reset_token = models.UUIDField(
+        null=True,
+        blank=True,
+        unique=True,
+        help_text="UUID token issued after code verification, used to set new password"
+    )
+    is_used = models.BooleanField(
+        default=False,
+        help_text="Whether this code/token has been fully used to reset the password"
+    )
+    is_verified = models.BooleanField(
+        default=False,
+        help_text="Whether the 6-digit code has been verified"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(
+        help_text="When this code expires (10 minutes after creation)"
+    )
+
+    class Meta:
+        verbose_name = 'Password Reset Code'
+        verbose_name_plural = 'Password Reset Codes'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'code']),
+            models.Index(fields=['reset_token']),
+        ]
+
+    def __str__(self):
+        status = "Used" if self.is_used else ("Verified" if self.is_verified else "Pending")
+        return f"Reset code for {self.user.email} ({status})"
+
+    @property
+    def is_expired(self):
+        """Check if the code has expired."""
+        from django.utils import timezone
+        return timezone.now() > self.expires_at
+
+    @classmethod
+    def generate_code(cls):
+        """Generate a random 6-digit numeric code."""
+        import secrets
+        return f"{secrets.randbelow(1000000):06d}"
+
+    @classmethod
+    def create_for_user(cls, user):
+        """
+        Create a new reset code for a user.
+        Invalidates any existing unused codes for this user.
+        """
+        from django.utils import timezone
+        from datetime import timedelta
+
+        # Invalidate old unused codes
+        cls.objects.filter(user=user, is_used=False).update(is_used=True)
+
+        code = cls.generate_code()
+        return cls.objects.create(
+            user=user,
+            code=code,
+            expires_at=timezone.now() + timedelta(minutes=10),
+        )

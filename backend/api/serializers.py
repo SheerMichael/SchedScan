@@ -467,3 +467,49 @@ class ChildScheduleSerializer(serializers.Serializer):
     child = ChildInfoSerializer(read_only=True)
     schedule = ScheduleSerializer(read_only=True, allow_null=True)
     has_active_schedule = serializers.BooleanField(read_only=True)
+
+
+# ============================================
+# Password Reset Serializers
+# ============================================
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """
+    Serializer for requesting a password reset code.
+    """
+    email = serializers.EmailField(required=True)
+
+    def validate_email(self, value):
+        """Validate that a user with this email exists."""
+        try:
+            User.objects.get(email=value)
+        except User.DoesNotExist:
+            # Don't reveal whether email exists for security
+            pass
+        return value
+
+
+class PasswordResetVerifySerializer(serializers.Serializer):
+    """
+    Serializer for verifying a password reset code.
+    """
+    email = serializers.EmailField(required=True)
+    code = serializers.CharField(required=True, max_length=6, min_length=6)
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    """
+    Serializer for confirming password reset with the reset token.
+    """
+    reset_token = serializers.UUIDField(required=True)
+    new_password = serializers.CharField(
+        required=True,
+        write_only=True,
+        style={'input_type': 'password'}
+    )
+
+    def validate_new_password(self, value):
+        """Validate the new password meets Django's password requirements."""
+        validate_password(value)
+        return value
+

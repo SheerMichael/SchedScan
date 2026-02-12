@@ -10,12 +10,12 @@ import Constants from 'expo-constants';
 const getApiUrl = () => {
   // Check if we have a custom API URL from app.json (for physical devices)
   const customApiUrl = Constants.expoConfig?.extra?.apiUrl;
-  
+
   if (customApiUrl) {
     console.log('Using custom API URL from config:', customApiUrl);
     return customApiUrl;
   }
-  
+
   // Fallback to platform-specific defaults (for emulators/simulators)
   if (Platform.OS === 'android') {
     return 'http://10.0.2.2:8000/api';
@@ -45,12 +45,12 @@ const api = axios.create({
 api.interceptors.request.use(
   async (config) => {
     console.log('API Request:', config.method?.toUpperCase(), config.url);
-    
+
     // Skip adding Authorization header for public endpoints
     // These endpoints don't require authentication
-    const publicEndpoints = ['/auth/login/', '/auth/register/', '/auth/token/refresh/'];
+    const publicEndpoints = ['/auth/login/', '/auth/register/', '/auth/token/refresh/', '/auth/password-reset/'];
     const isPublicEndpoint = publicEndpoints.some(endpoint => config.url?.includes(endpoint));
-    
+
     if (!isPublicEndpoint) {
       try {
         const token = await SecureStore.getItemAsync('access_token');
@@ -95,7 +95,7 @@ api.interceptors.response.use(
 
       try {
         const refreshToken = await SecureStore.getItemAsync('refresh_token');
-        
+
         if (!refreshToken) {
           // No refresh token available, clear everything
           await clearAuthData();
@@ -103,7 +103,7 @@ api.interceptors.response.use(
         }
 
         console.log('Attempting to refresh token...');
-        
+
         // Try to refresh the token
         const response = await axios.post(`${API_URL}/auth/token/refresh/`, {
           refresh: refreshToken,
@@ -118,7 +118,7 @@ api.interceptors.response.use(
         // Retry original request with new token
         originalRequest.headers.Authorization = `Bearer ${access}`;
         return api(originalRequest);
-        
+
       } catch (refreshError: any) {
         // Refresh failed, clear tokens
         console.error('Token refresh failed:', refreshError.response?.data || refreshError.message);

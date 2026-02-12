@@ -19,6 +19,12 @@ urlpatterns = [
     path('auth/change-password/', views.ChangePasswordView.as_view(), name='change_password'),
     path('auth/delete-account/', views.DeleteAccountView.as_view(), name='delete_account'),
     
+    # Password reset
+    path('auth/password-reset/request/', views.PasswordResetRequestView.as_view(), name='password_reset_request'),
+    path('auth/password-reset/verify/', views.PasswordResetVerifyView.as_view(), name='password_reset_verify'),
+    path('auth/password-reset/confirm/', views.PasswordResetConfirmView.as_view(), name='password_reset_confirm'),
+
+    
     # Course/Schedule endpoints (legacy)
     path('upload-cor/student/', views.UploadStudentCORView.as_view(), name='upload_student_cor'),
     path('upload-cor/faculty/', views.UploadFacultyCORView.as_view(), name='upload_faculty_cor'),

@@ -160,4 +160,47 @@ export const authService = {
       return null;
     }
   },
+
+  /**
+   * Request a password reset code to be sent via email
+   */
+  requestPasswordReset: async (email: string): Promise<{ message: string }> => {
+    try {
+      const response = await api.post('/auth/password-reset/request/', { email });
+      return response.data;
+    } catch (error: any) {
+      console.error('Password reset request error:', error.response?.data || error.message);
+      throw error;
+    }
+  },
+
+  /**
+   * Verify the 6-digit reset code
+   */
+  verifyResetCode: async (email: string, code: string): Promise<{ valid: boolean; reset_token: string }> => {
+    try {
+      const response = await api.post('/auth/password-reset/verify/', { email, code });
+      return response.data;
+    } catch (error: any) {
+      console.error('Reset code verify error:', error.response?.data || error.message);
+      throw error;
+    }
+  },
+
+  /**
+   * Set a new password using the reset token
+   */
+  confirmPasswordReset: async (resetToken: string, newPassword: string): Promise<{ message: string }> => {
+    try {
+      const response = await api.post('/auth/password-reset/confirm/', {
+        reset_token: resetToken,
+        new_password: newPassword,
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error('Password reset confirm error:', error.response?.data || error.message);
+      throw error;
+    }
+  },
 };
+

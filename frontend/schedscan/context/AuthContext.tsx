@@ -2,6 +2,8 @@ import React, { createContext, useState, useContext, useEffect, useCallback, use
 import { authService, User, LoginData, RegisterData, AuthResponse } from '../services/authService';
 import { scheduleStorageService, SavedSchedule } from '../services/scheduleStorageService';
 import { usePushNotification } from '../usePushNotification';
+import { offlineService } from '../services/offlineService';
+import { taskService } from '../services/taskService';
 
 // Cache TTL for active schedule (30 seconds)
 const SCHEDULE_CACHE_TTL_MS = 30 * 1000;
@@ -10,6 +12,7 @@ interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  isOffline: boolean;
   login: (data: LoginData) => Promise<AuthResponse>;
   register: (data: RegisterData) => Promise<void>;
   logout: () => Promise<void>;
@@ -26,6 +29,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isOffline, setIsOffline] = useState(false);
 
   // Active schedule cache state
   const [cachedActiveSchedule, setCachedActiveSchedule] = useState<SavedSchedule | null>(null);
@@ -34,9 +38,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Get push notification hook
   const { expoPushToken, registerTokenWithBackend } = usePushNotification();
 
-  // Check authentication on mount
+  // Initialize offline service & check auth on mount
   useEffect(() => {
+    offlineService.init();
+    const unsubscribe = offlineService.onConnectivityChange((connected) => {
+      setIsOffline(!connected);
+    });
     checkAuth();
+    return () => {
+      unsubscribe();
+      offlineService.destroy();
+    };
   }, []);
 
   // Register push token when user becomes authenticated and token is available
@@ -118,11 +130,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       // Clear schedule cache on logout
       invalidateScheduleCache();
+      // Clear all offline data (cache + sync queue) and task caches
+      await offlineService.clearAll();
+      await taskService.clearAllCaches();
     } catch (error) {
       console.error('Logout failed:', error);
       // Clear user and cache anyway
       setUser(null);
       invalidateScheduleCache();
+      await offlineService.clearAll();
+      await taskService.clearAllCaches();
     } finally {
       setIsLoading(false);
     }
@@ -186,10 +203,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const schedule = await scheduleStorageService.getActiveSchedule(user.id);
       setCachedActiveSchedule(schedule);
       scheduleCacheTimestamp.current = now;
+      // Persist to disk for offline access
+      if (schedule) {
+        await offlineService.cacheActiveSchedule(schedule);
+      }
       return schedule;
     } catch (error) {
       console.error('Error fetching active schedule:', error);
-      return cachedActiveSchedule; // Return stale cache on error
+      // Try in-memory stale cache first, then disk cache
+      if (cachedActiveSchedule) return cachedActiveSchedule;
+      const diskCache = await offlineService.getCachedActiveSchedule();
+      if (diskCache) {
+        setCachedActiveSchedule(diskCache);
+        console.log('Using disk-cached active schedule');
+      }
+      return diskCache;
     }
   }, [user?.id, cachedActiveSchedule]);
 
@@ -199,6 +227,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         isAuthenticated: !!user,
         isLoading,
+        isOffline,
         login,
         register,
         logout,

@@ -16,7 +16,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 export default function SchedScanApp() {
-  const { user, getActiveSchedule } = useAuth();
+  const { user, getActiveSchedule, isOffline } = useAuth();
   const startYear = 2025;
   const endYear = 2050;
   const now = new Date();
@@ -550,6 +550,13 @@ export default function SchedScanApp() {
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* Offline Banner */}
+      {isOffline && (
+        <View className="bg-amber-500 px-4 py-2 flex-row items-center justify-center">
+          <Text className="text-white text-sm font-semibold">⚡ You're offline — changes will sync when reconnected</Text>
+        </View>
+      )}
 
       {/* Banner */}
       <ScrollView className="flex-1">

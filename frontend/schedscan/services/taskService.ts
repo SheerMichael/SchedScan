@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from './api';
+import { offlineService } from './offlineService';
 
 /**
  * Interface for Task data
@@ -103,7 +104,16 @@ export const taskService = {
 
       await taskService.addToCache(data.subject_code, localTask);
 
-      throw error; // Re-throw to let UI know it failed
+      // Queue for sync when back online
+      await offlineService.enqueue({
+        type: 'CREATE_TASK',
+        endpoint: '/tasks/',
+        method: 'POST',
+        data,
+        metadata: { subject_code: data.subject_code, local_id: localTask.id },
+      });
+
+      return localTask; // Return local task so UI works seamlessly
     }
   },
 
@@ -127,12 +137,25 @@ export const taskService = {
       // Update in cache even if backend fails (optimistic update)
       const cachedTasks = await taskService.getFromCache(subjectCode);
       const taskIndex = cachedTasks.findIndex(t => t.id === taskId);
+      let optimisticTask: Task;
       if (taskIndex !== -1) {
-        cachedTasks[taskIndex] = { ...cachedTasks[taskIndex], ...data, updated_at: new Date().toISOString() };
+        optimisticTask = { ...cachedTasks[taskIndex], ...data, updated_at: new Date().toISOString() };
+        cachedTasks[taskIndex] = optimisticTask;
         await AsyncStorage.setItem(getCacheKey(subjectCode), JSON.stringify(cachedTasks));
+      } else {
+        optimisticTask = { id: taskId, subject_code: subjectCode, text: '', is_completed: false, created_at: '', updated_at: new Date().toISOString(), ...data };
       }
 
-      throw error;
+      // Queue for sync when back online
+      await offlineService.enqueue({
+        type: 'UPDATE_TASK',
+        endpoint: `/tasks/${taskId}/`,
+        method: 'PATCH',
+        data,
+        metadata: { subject_code: subjectCode, task_id: taskId },
+      });
+
+      return optimisticTask;
     }
   },
 
@@ -141,15 +164,22 @@ export const taskService = {
    * Removes from backend and local cache.
    */
   deleteTask: async (taskId: number, subjectCode: string): Promise<void> => {
+    // Optimistically remove from cache first
+    await taskService.removeFromCache(subjectCode, taskId);
+
     try {
       // Delete from backend
       await api.delete(`/tasks/${taskId}/`);
-
-      // Remove from local cache
-      await taskService.removeFromCache(subjectCode, taskId);
     } catch (error: any) {
       console.error('Error deleting task:', error.response?.data || error.message);
-      throw error;
+
+      // Queue for sync when back online
+      await offlineService.enqueue({
+        type: 'DELETE_TASK',
+        endpoint: `/tasks/${taskId}/`,
+        method: 'DELETE',
+        metadata: { subject_code: subjectCode, task_id: taskId },
+      });
     }
   },
 
