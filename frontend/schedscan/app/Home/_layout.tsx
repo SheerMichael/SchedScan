@@ -22,7 +22,7 @@ export default function HomeLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaView className="flex-1 bg-white">
           <KeyboardAvoidingView className="flex-1 "behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0}>
-          <Slot />
+            <Slot />
           </KeyboardAvoidingView>
           {!shouldHideFooter && <Footer />}
       </SafeAreaView>
