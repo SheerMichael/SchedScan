@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from "react";
-import { View, Text, TouchableOpacity, ScrollView, Image, Alert, Platform, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Image, Alert, Platform, ActivityIndicator, RefreshControl } from 'react-native';
 import { router, useFocusEffect } from "expo-router";
 import Svg, { Path } from 'react-native-svg';
 import { File, Paths } from 'expo-file-system';
@@ -13,15 +13,16 @@ import { facultyTaskService, ClassCode } from '../../../services/facultyTaskServ
 import { useAuth } from '../../../context/AuthContext';
 
 const FacultySchedule = () => {
-  const { user, invalidateScheduleCache } = useAuth();
+  const { user, invalidateScheduleCache, getFacultySchedules, getClassCodes, invalidateFacultyDataCache } = useAuth();
   const [facultySchedules, setFacultySchedules] = useState<SavedSchedule[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Class code state — map of subject_code → ClassCode
   const [classCodes, setClassCodes] = useState<Record<string, ClassCode>>({});
   const [generatingCodeFor, setGeneratingCodeFor] = useState<string | null>(null);
 
-  const loadSchedules = useCallback(async () => {
+  const loadSchedules = useCallback(async (forceRefresh: boolean = false) => {
     if (!user?.id) {
       console.error('No user ID available');
       setIsLoading(false);
@@ -30,12 +31,13 @@ const FacultySchedule = () => {
 
     try {
       setIsLoading(true);
-      const schedules = await scheduleStorageService.getSchedules('faculty', user.id);
+      // Use cached faculty schedules from AuthContext
+      const schedules = await getFacultySchedules(forceRefresh);
       setFacultySchedules(schedules);
 
-      // Load existing class codes for all unique subjects across faculty schedules
+      // Use cached class codes from AuthContext
       try {
-        const allCodes = await facultyTaskService.getClassCodes();
+        const allCodes = await getClassCodes(forceRefresh);
         const codeMap: Record<string, ClassCode> = {};
         allCodes.forEach((code) => {
           codeMap[code.subject_code] = code;
@@ -50,14 +52,22 @@ const FacultySchedule = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [user?.id]);
+  }, [user?.id, getFacultySchedules, getClassCodes]);
 
   // Load schedules when screen comes into focus
   useFocusEffect(
     React.useCallback(() => {
-      loadSchedules();
+      // Use cached data on first load, only force refresh if explicitly needed
+      loadSchedules(false);
     }, [loadSchedules])
   );
+
+  // Handle pull-to-refresh
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadSchedules(true); // Force refresh
+    setRefreshing(false);
+  }, [loadSchedules]);
 
   // Get all unique subject codes across all faculty schedules
   const uniqueSubjects = React.useMemo(() => {
@@ -77,6 +87,8 @@ const FacultySchedule = () => {
       setGeneratingCodeFor(subjectCode);
       const newCode = await facultyTaskService.generateClassCode(subjectCode);
       setClassCodes((prev) => ({ ...prev, [subjectCode]: newCode }));
+      // Invalidate cache since we generated a new code
+      invalidateFacultyDataCache();
       Alert.alert('Class Code Generated', `Your new class code is: ${newCode.code}\n\nShare this with your students so they can join your class.`);
     } catch (error) {
       console.error('Error generating code:', error);
@@ -108,9 +120,10 @@ const FacultySchedule = () => {
 
       // Invalidate cache so home screen fetches fresh active schedule
       invalidateScheduleCache();
+      invalidateFacultyDataCache();
 
       // Reload schedules to update UI
-      await loadSchedules();
+      await loadSchedules(true); // Force refresh
 
       Alert.alert(
         'Success!',
@@ -150,9 +163,10 @@ const FacultySchedule = () => {
 
               // Invalidate cache in case the deleted schedule was active
               invalidateScheduleCache();
+              invalidateFacultyDataCache();
 
               // Reload schedules to update UI
-              await loadSchedules();
+              await loadSchedules(true); // Force refresh
 
               Alert.alert('Success', 'Schedule deleted successfully');
             } catch (error) {
@@ -242,7 +256,12 @@ const FacultySchedule = () => {
           <Text className="text-gray-500">Loading schedules...</Text>
         </View>
       ) : facultySchedules.length > 0 ? (
-        <ScrollView className="flex-1 pt-4">
+        <ScrollView 
+          className="flex-1 pt-4"
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+        >
           {facultySchedules.map((schedule) => (
             <SchedulePreviewCard
               key={schedule.id}

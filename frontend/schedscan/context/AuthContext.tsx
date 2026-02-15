@@ -1,12 +1,15 @@
 import React, { createContext, useState, useContext, useEffect, useCallback, useRef } from 'react';
 import { authService, User, LoginData, RegisterData, AuthResponse } from '../services/authService';
 import { scheduleStorageService, SavedSchedule } from '../services/scheduleStorageService';
+import { facultyTaskService, ClassCode } from '../services/facultyTaskService';
 import { usePushNotification } from '../usePushNotification';
 import { offlineService } from '../services/offlineService';
 import { taskService } from '../services/taskService';
 
 // Cache TTL for active schedule (30 seconds)
 const SCHEDULE_CACHE_TTL_MS = 30 * 1000;
+// Cache TTL for faculty schedules and class codes (60 seconds)
+const FACULTY_DATA_CACHE_TTL_MS = 60 * 1000;
 
 interface AuthContextType {
   user: User | null;
@@ -22,6 +25,10 @@ interface AuthContextType {
   cachedActiveSchedule: SavedSchedule | null;
   getActiveSchedule: (forceRefresh?: boolean) => Promise<SavedSchedule | null>;
   invalidateScheduleCache: () => void;
+  // Faculty data caching
+  getFacultySchedules: (forceRefresh?: boolean) => Promise<SavedSchedule[]>;
+  getClassCodes: (forceRefresh?: boolean) => Promise<ClassCode[]>;
+  invalidateFacultyDataCache: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -34,6 +41,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Active schedule cache state
   const [cachedActiveSchedule, setCachedActiveSchedule] = useState<SavedSchedule | null>(null);
   const scheduleCacheTimestamp = useRef<number | null>(null);
+
+  // Faculty data cache state
+  const [cachedFacultySchedules, setCachedFacultySchedules] = useState<SavedSchedule[] | null>(null);
+  const [cachedClassCodes, setCachedClassCodes] = useState<ClassCode[] | null>(null);
+  const facultyDataCacheTimestamp = useRef<number | null>(null);
 
   // Get push notification hook
   const { expoPushToken, registerTokenWithBackend } = usePushNotification();
@@ -86,6 +98,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Clear any stale schedule cache from previous session
       invalidateScheduleCache();
+      invalidateFacultyDataCache();
 
       // Migrate/clear legacy schedules for this user
       if (response.user?.id) {
@@ -109,6 +122,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Clear any stale schedule cache
       invalidateScheduleCache();
+      invalidateFacultyDataCache();
 
       // Migrate/clear legacy schedules for this user
       if (response.user?.id) {
@@ -130,6 +144,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       // Clear schedule cache on logout
       invalidateScheduleCache();
+      invalidateFacultyDataCache();
       // Clear all offline data (cache + sync queue) and task caches
       await offlineService.clearAll();
       await taskService.clearAllCaches();
@@ -138,6 +153,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Clear user and cache anyway
       setUser(null);
       invalidateScheduleCache();
+      invalidateFacultyDataCache();
       await offlineService.clearAll();
       await taskService.clearAllCaches();
     } finally {
@@ -173,6 +189,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const invalidateScheduleCache = useCallback(() => {
     setCachedActiveSchedule(null);
     scheduleCacheTimestamp.current = null;
+  }, []);
+
+  /**
+   * Invalidate the faculty data cache (schedules and class codes).
+   * Call this after modifying faculty schedules or generating class codes.
+   */
+  const invalidateFacultyDataCache = useCallback(() => {
+    setCachedFacultySchedules(null);
+    setCachedClassCodes(null);
+    facultyDataCacheTimestamp.current = null;
   }, []);
 
   /**
@@ -221,6 +247,78 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [user?.id, cachedActiveSchedule]);
 
+  /**
+   * Get faculty schedules with caching.
+   * Uses cached data if available and not expired, otherwise fetches fresh data.
+   * 
+   * @param forceRefresh - If true, bypasses cache and fetches fresh data
+   * @returns Array of faculty schedules
+   */
+  const getFacultySchedules = useCallback(async (forceRefresh: boolean = false): Promise<SavedSchedule[]> => {
+    if (!user?.id) {
+      return [];
+    }
+
+    const now = Date.now();
+    const cacheIsValid = facultyDataCacheTimestamp.current &&
+      (now - facultyDataCacheTimestamp.current) < FACULTY_DATA_CACHE_TTL_MS;
+
+    // Return cached data if valid and not forcing refresh
+    if (!forceRefresh && cacheIsValid && cachedFacultySchedules !== null) {
+      console.log('Using cached faculty schedules');
+      return cachedFacultySchedules;
+    }
+
+    // Fetch fresh data from API
+    try {
+      console.log('Fetching fresh faculty schedules from API');
+      const schedules = await scheduleStorageService.getSchedules('faculty', user.id);
+      setCachedFacultySchedules(schedules);
+      facultyDataCacheTimestamp.current = now;
+      return schedules;
+    } catch (error) {
+      console.error('Error fetching faculty schedules:', error);
+      // Return stale cache if available
+      return cachedFacultySchedules || [];
+    }
+  }, [user?.id, cachedFacultySchedules]);
+
+  /**
+   * Get class codes with caching.
+   * Uses cached data if available and not expired, otherwise fetches fresh data.
+   * 
+   * @param forceRefresh - If true, bypasses cache and fetches fresh data
+   * @returns Array of class codes
+   */
+  const getClassCodes = useCallback(async (forceRefresh: boolean = false): Promise<ClassCode[]> => {
+    if (!user?.id) {
+      return [];
+    }
+
+    const now = Date.now();
+    const cacheIsValid = facultyDataCacheTimestamp.current &&
+      (now - facultyDataCacheTimestamp.current) < FACULTY_DATA_CACHE_TTL_MS;
+
+    // Return cached data if valid and not forcing refresh
+    if (!forceRefresh && cacheIsValid && cachedClassCodes !== null) {
+      console.log('Using cached class codes');
+      return cachedClassCodes;
+    }
+
+    // Fetch fresh data from API
+    try {
+      console.log('Fetching fresh class codes from API');
+      const codes = await facultyTaskService.getClassCodes();
+      setCachedClassCodes(codes);
+      facultyDataCacheTimestamp.current = now;
+      return codes;
+    } catch (error) {
+      console.error('Error fetching class codes:', error);
+      // Return stale cache if available
+      return cachedClassCodes || [];
+    }
+  }, [user?.id, cachedClassCodes]);
+
   return (
     <AuthContext.Provider
       value={{
@@ -237,6 +335,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         cachedActiveSchedule,
         getActiveSchedule,
         invalidateScheduleCache,
+        // Faculty data caching
+        getFacultySchedules,
+        getClassCodes,
+        invalidateFacultyDataCache,
       }}
     >
       {children}
