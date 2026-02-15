@@ -1,0 +1,811 @@
+"""
+Faculty-Student Connection views.
+Handles class codes, enrollment, faculty tasks, and completion tracking.
+"""
+from django.utils import timezone
+from django.db.models import Q, Prefetch, Count, Subquery, OuterRef, BooleanField, Value
+from rest_framework import status, generics
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.pagination import PageNumberPagination
+
+from ..models import (
+    ClassCode, ClassEnrollment, FacultyTask, FacultyTaskCompletion, Course, Schedule
+)
+from ..serializers import (
+    ClassCodeSerializer, ClassEnrollmentSerializer,
+    FacultyTaskSerializer, FacultyTaskWithStatsSerializer,
+    FacultyTaskStudentSerializer,
+)
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+# ============================================
+# Pagination
+# ============================================
+
+class StandardResultsSetPagination(PageNumberPagination):
+    page_size = 50
+    page_size_query_param = 'page_size'
+    max_page_size = 200
+
+
+# ============================================
+# Class Code Endpoints (Faculty only)
+# ============================================
+
+class ClassCodeView(APIView):
+    """
+    Generate or list class codes for a subject.
+
+    POST /api/faculty/class-code/
+    Body: {"subject_code": "CS101"}
+    → Generates a new 8-char code, deactivates the previous one.
+
+    GET /api/faculty/class-code/?subject_code=CS101
+    → Lists active class codes (optionally filtered by subject_code).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        if user.user_type != 'faculty':
+            return Response(
+                {"error": "Only faculty can generate class codes."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        subject_code = request.data.get('subject_code')
+        if not subject_code:
+            return Response(
+                {"error": "subject_code is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Deactivate any existing active codes for this faculty + subject
+        ClassCode.objects.filter(
+            faculty=user,
+            subject_code=subject_code,
+            is_active=True
+        ).update(is_active=False)
+
+        # Generate new code
+        code = ClassCode.objects.create(
+            faculty=user,
+            subject_code=subject_code,
+            code=ClassCode.generate_code()
+        )
+
+        serializer = ClassCodeSerializer(code)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    def get(self, request):
+        user = request.user
+        if user.user_type != 'faculty':
+            return Response(
+                {"error": "Only faculty can view class codes."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        codes = ClassCode.objects.filter(faculty=user, is_active=True)
+        subject_code = request.query_params.get('subject_code')
+        if subject_code:
+            codes = codes.filter(subject_code=subject_code)
+
+        serializer = ClassCodeSerializer(codes, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+# ============================================
+# Enrollment Endpoints
+# ============================================
+
+class StudentEnrollView(APIView):
+    """
+    Enroll a student in a faculty's class using a class code.
+
+    POST /api/student/enroll/
+    Body: {"code": "ABCD1234"}
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        if user.user_type != 'student':
+            return Response(
+                {"error": "Only students can enroll using class codes."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        code_str = request.data.get('code', '').strip().upper()
+        if not code_str:
+            return Response(
+                {"error": "code is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Find the class code
+        try:
+            class_code = ClassCode.objects.get(code=code_str, is_active=True)
+        except ClassCode.DoesNotExist:
+            return Response(
+                {"error": "Invalid or expired class code."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Check for existing active enrollment
+        existing = ClassEnrollment.objects.filter(
+            student=user,
+            faculty=class_code.faculty,
+            subject_code=class_code.subject_code,
+            status='active'
+        ).first()
+
+        if existing:
+            return Response(
+                {"error": "You are already enrolled in this class.",
+                 "enrollment": ClassEnrollmentSerializer(existing).data},
+                status=status.HTTP_409_CONFLICT
+            )
+
+        # Create enrollment
+        enrollment = ClassEnrollment.objects.create(
+            faculty=class_code.faculty,
+            student=user,
+            subject_code=class_code.subject_code,
+            enrollment_type='code',
+            status='active'
+        )
+
+        logger.info(
+            f"Student {user.email} enrolled in {class_code.subject_code} "
+            f"with faculty {class_code.faculty.email} via code {code_str}"
+        )
+
+        serializer = ClassEnrollmentSerializer(enrollment)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class StudentEnrollmentListView(APIView):
+    """
+    List a student's active enrollments.
+
+    GET /api/student/enrollments/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if user.user_type != 'student':
+            return Response(
+                {"error": "Only students can view enrollments."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        enrollments = ClassEnrollment.objects.filter(
+            student=user,
+            status='active'
+        ).select_related('faculty', 'student')
+        serializer = ClassEnrollmentSerializer(enrollments, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class FacultyEnrolledStudentsView(APIView):
+    """
+    List students enrolled in a faculty's class for a specific subject.
+
+    GET /api/faculty/enrolled-students/?subject_code=CS101
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if user.user_type != 'faculty':
+            return Response(
+                {"error": "Only faculty can view enrolled students."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        subject_code = request.query_params.get('subject_code')
+        if not subject_code:
+            return Response(
+                {"error": "subject_code query param is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        enrollments = ClassEnrollment.objects.filter(
+            faculty=user,
+            subject_code=subject_code,
+            status='active'
+        ).select_related('student')
+
+        serializer = ClassEnrollmentSerializer(enrollments, many=True)
+        return Response({
+            "subject_code": subject_code,
+            "enrolled_count": enrollments.count(),
+            "enrollments": serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+# ============================================
+# Faculty Task Endpoints (Faculty side)
+# ============================================
+
+class FacultyTaskListCreateView(APIView):
+    """
+    List and create faculty tasks for a subject.
+
+    GET /api/faculty/tasks/?subject_code=CS101
+    POST /api/faculty/tasks/
+    Body: {"subject_code": "CS101", "text": "Submit lab report", "due_date": null}
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if user.user_type != 'faculty':
+            return Response(
+                {"error": "Only faculty can manage faculty tasks."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        tasks = FacultyTask.objects.filter(faculty=user).prefetch_related('completions')
+        subject_code = request.query_params.get('subject_code')
+        if subject_code:
+            tasks = tasks.filter(subject_code=subject_code)
+
+        # Paginate
+        paginator = StandardResultsSetPagination()
+        page = paginator.paginate_queryset(tasks, request)
+        if page is not None:
+            serializer = FacultyTaskWithStatsSerializer(
+                page, many=True, context={'request': request}
+            )
+            return paginator.get_paginated_response(serializer.data)
+
+        serializer = FacultyTaskWithStatsSerializer(
+            tasks, many=True, context={'request': request}
+        )
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        user = request.user
+        if user.user_type != 'faculty':
+            return Response(
+                {"error": "Only faculty can create faculty tasks."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Validate that the faculty actually teaches this subject
+        subject_code = request.data.get('subject_code')
+        if subject_code:
+            teaches_subject = Course.objects.filter(
+                user=user,
+                subject_code=subject_code,
+                schedule__upload_type='faculty'
+            ).exists()
+            if not teaches_subject:
+                return Response(
+                    {"error": f"You don't have '{subject_code}' in any of your faculty schedules."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        serializer = FacultyTaskSerializer(
+            data=request.data,
+            context={'request': request}
+        )
+        if serializer.is_valid():
+            task = serializer.save()
+            # Return with stats
+            stats_serializer = FacultyTaskWithStatsSerializer(task)
+            return Response(stats_serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class FacultyTaskDetailView(APIView):
+    """
+    Update or delete a faculty task.
+
+    PATCH /api/faculty/tasks/<id>/
+    Body: {"text": "Updated text"}
+
+    DELETE /api/faculty/tasks/<id>/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        user = request.user
+        if user.user_type != 'faculty':
+            return Response(
+                {"error": "Only faculty can modify faculty tasks."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        try:
+            task = FacultyTask.objects.get(pk=pk, faculty=user)
+        except FacultyTask.DoesNotExist:
+            return Response(
+                {"error": "Task not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = FacultyTaskSerializer(task, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            stats_serializer = FacultyTaskWithStatsSerializer(task)
+            return Response(stats_serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, pk):
+        user = request.user
+        if user.user_type != 'faculty':
+            return Response(
+                {"error": "Only faculty can delete faculty tasks."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        try:
+            task = FacultyTask.objects.get(pk=pk, faculty=user)
+        except FacultyTask.DoesNotExist:
+            return Response(
+                {"error": "Task not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        task.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class FacultyTaskStatsView(APIView):
+    """
+    Get detailed completion stats for a faculty task.
+
+    GET /api/faculty/tasks/<id>/stats/
+    Returns: completion count, enrolled count, and list of students with status.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        user = request.user
+        if user.user_type != 'faculty':
+            return Response(
+                {"error": "Only faculty can view task stats."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        try:
+            task = FacultyTask.objects.get(pk=pk, faculty=user)
+        except FacultyTask.DoesNotExist:
+            return Response(
+                {"error": "Task not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Get all enrolled students
+        enrollments = ClassEnrollment.objects.filter(
+            faculty=user,
+            subject_code=task.subject_code,
+            status='active'
+        ).select_related('student')
+
+        # Get completions
+        completions = {
+            c.student_id: c
+            for c in task.completions.all()
+        }
+
+        students = []
+        for enrollment in enrollments:
+            completion = completions.get(enrollment.student_id)
+            students.append({
+                "student_id": enrollment.student_id,
+                "student_name": enrollment.student.get_full_name(),
+                "student_email": enrollment.student.email,
+                "is_completed": completion.is_completed if completion else False,
+                "completed_at": completion.completed_at if completion and completion.is_completed else None,
+            })
+
+        completed_count = sum(1 for s in students if s['is_completed'])
+
+        return Response({
+            "task_id": task.id,
+            "text": task.text,
+            "subject_code": task.subject_code,
+            "completed_count": completed_count,
+            "total_enrolled": len(students),
+            "students": students,
+        }, status=status.HTTP_200_OK)
+
+
+# ============================================
+# Student Faculty Task Endpoints
+# ============================================
+
+class StudentFacultyTaskListView(APIView):
+    """
+    Get faculty tasks for subjects the student is enrolled in.
+
+    GET /api/student/faculty-tasks/?subject_code=CS101
+    Returns tasks from enrolled faculty, with the student's completion status.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if user.user_type != 'student':
+            return Response(
+                {"error": "Only students can view faculty tasks."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        subject_code = request.query_params.get('subject_code')
+
+        # Get faculty IDs the student is enrolled with for this subject
+        enrollment_filter = Q(student=user, status='active')
+        if subject_code:
+            enrollment_filter &= Q(subject_code=subject_code)
+
+        enrolled_faculty_ids = ClassEnrollment.objects.filter(
+            enrollment_filter
+        ).values_list('faculty_id', flat=True).distinct()
+
+        if not enrolled_faculty_ids:
+            return Response([], status=status.HTTP_200_OK)
+
+        # Get faculty tasks for those enrollments
+        task_filter = Q(faculty_id__in=enrolled_faculty_ids)
+        if subject_code:
+            task_filter &= Q(subject_code=subject_code)
+
+        # Prefetch only this student's completions to avoid N+1
+        tasks = FacultyTask.objects.filter(task_filter).prefetch_related(
+            Prefetch(
+                'completions',
+                queryset=FacultyTaskCompletion.objects.filter(student=user),
+                to_attr='student_completions'
+            )
+        ).select_related('faculty').order_by('-created_at')
+
+        # Paginate
+        paginator = StandardResultsSetPagination()
+        page = paginator.paginate_queryset(tasks, request)
+        if page is not None:
+            serializer = FacultyTaskStudentSerializer(
+                page, many=True,
+                context={'request': request}
+            )
+            return paginator.get_paginated_response(serializer.data)
+
+        serializer = FacultyTaskStudentSerializer(
+            tasks, many=True,
+            context={'request': request}
+        )
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class StudentFacultyTaskCompleteView(APIView):
+    """
+    Toggle completion of a faculty task for the current student.
+
+    POST /api/student/faculty-tasks/<id>/complete/
+    Body: {"is_completed": true}
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        user = request.user
+        if user.user_type != 'student':
+            return Response(
+                {"error": "Only students can complete faculty tasks."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        try:
+            task = FacultyTask.objects.get(pk=pk)
+        except FacultyTask.DoesNotExist:
+            return Response(
+                {"error": "Task not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Verify student is enrolled for this subject
+        is_enrolled = ClassEnrollment.objects.filter(
+            student=user,
+            faculty=task.faculty,
+            subject_code=task.subject_code,
+            status='active'
+        ).exists()
+
+        if not is_enrolled:
+            return Response(
+                {"error": "You are not enrolled in this class."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        is_completed = request.data.get('is_completed', True)
+
+        # Get or create completion record
+        completion, created = FacultyTaskCompletion.objects.get_or_create(
+            task=task,
+            student=user,
+            defaults={
+                'is_completed': is_completed,
+                'completed_at': timezone.now() if is_completed else None,
+            }
+        )
+
+        if not created:
+            completion.is_completed = is_completed
+            completion.completed_at = timezone.now() if is_completed else None
+            completion.save()
+
+        return Response({
+            "task_id": task.id,
+            "is_completed": completion.is_completed,
+            "completed_at": completion.completed_at,
+        }, status=status.HTTP_200_OK)
+
+
+class StudentFacultyTaskCountsView(APIView):
+    """
+    Get faculty task counts for multiple subject codes in a single request.
+    Similar to TaskCountsView but for faculty tasks.
+
+    POST /api/student/faculty-tasks/counts/
+    Body: {"subject_codes": ["CS101", "MATH201"]}
+    Response: {"CS101": {"total": 3, "incomplete": 2}, ...}
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        if user.user_type != 'student':
+            return Response(
+                {"error": "Only students can view faculty task counts."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        subject_codes = request.data.get('subject_codes', [])
+
+        if not isinstance(subject_codes, list):
+            return Response(
+                {"error": "subject_codes must be a list"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Get enrolled faculty for these subjects
+        enrollments = ClassEnrollment.objects.filter(
+            student=user,
+            subject_code__in=subject_codes,
+            status='active'
+        ).values('faculty_id', 'subject_code')
+
+        # Build a map of subject_code -> faculty_ids
+        subject_faculty = {}
+        for e in enrollments:
+            subject_faculty.setdefault(e['subject_code'], []).append(e['faculty_id'])
+
+        counts = {}
+        for code in subject_codes:
+            faculty_ids = subject_faculty.get(code, [])
+            if not faculty_ids:
+                counts[code] = {'total': 0, 'incomplete': 0}
+                continue
+
+            tasks = FacultyTask.objects.filter(
+                faculty_id__in=faculty_ids,
+                subject_code=code
+            )
+            total = tasks.count()
+
+            # Count completed by this student
+            completed = FacultyTaskCompletion.objects.filter(
+                task__in=tasks,
+                student=user,
+                is_completed=True
+            ).count()
+
+            counts[code] = {
+                'total': total,
+                'incomplete': total - completed
+            }
+
+        return Response(counts, status=status.HTTP_200_OK)
+
+
+# ============================================
+# Unenroll / Remove Endpoints
+# ============================================
+
+class StudentUnenrollView(APIView):
+    """
+    Allow a student to leave (unenroll from) a faculty's class.
+
+    POST /api/student/unenroll/
+    Body: {"enrollment_id": 5}
+      or: {"faculty_email": "prof@test.com", "subject_code": "CS101"}
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        if user.user_type != 'student':
+            return Response(
+                {"error": "Only students can unenroll from classes."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        enrollment_id = request.data.get('enrollment_id')
+        if enrollment_id:
+            try:
+                enrollment = ClassEnrollment.objects.get(
+                    pk=enrollment_id, student=user, status='active'
+                )
+            except ClassEnrollment.DoesNotExist:
+                return Response(
+                    {"error": "Enrollment not found."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        else:
+            # Fallback: look up by faculty + subject_code
+            subject_code = request.data.get('subject_code')
+            faculty_email = request.data.get('faculty_email')
+            if not subject_code or not faculty_email:
+                return Response(
+                    {"error": "Provide enrollment_id, or both faculty_email and subject_code."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            try:
+                enrollment = ClassEnrollment.objects.get(
+                    student=user,
+                    faculty__email=faculty_email,
+                    subject_code=subject_code,
+                    status='active'
+                )
+            except ClassEnrollment.DoesNotExist:
+                return Response(
+                    {"error": "Enrollment not found."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+        enrollment.status = 'removed'
+        enrollment.save(update_fields=['status'])
+
+        logger.info(
+            f"Student {user.email} unenrolled from {enrollment.subject_code} "
+            f"with faculty {enrollment.faculty.email}"
+        )
+
+        return Response(
+            {"message": "Successfully unenrolled.", "enrollment_id": enrollment.id},
+            status=status.HTTP_200_OK
+        )
+
+
+class FacultyRemoveStudentView(APIView):
+    """
+    Allow a faculty member to remove a student from their class.
+
+    POST /api/faculty/remove-student/
+    Body: {"enrollment_id": 5}
+      or: {"student_email": "student@test.com", "subject_code": "CS101"}
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        if user.user_type != 'faculty':
+            return Response(
+                {"error": "Only faculty can remove students."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        enrollment_id = request.data.get('enrollment_id')
+        if enrollment_id:
+            try:
+                enrollment = ClassEnrollment.objects.get(
+                    pk=enrollment_id, faculty=user, status='active'
+                )
+            except ClassEnrollment.DoesNotExist:
+                return Response(
+                    {"error": "Enrollment not found."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        else:
+            subject_code = request.data.get('subject_code')
+            student_email = request.data.get('student_email')
+            if not subject_code or not student_email:
+                return Response(
+                    {"error": "Provide enrollment_id, or both student_email and subject_code."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            try:
+                enrollment = ClassEnrollment.objects.get(
+                    faculty=user,
+                    student__email=student_email,
+                    subject_code=subject_code,
+                    status='active'
+                )
+            except ClassEnrollment.DoesNotExist:
+                return Response(
+                    {"error": "Enrollment not found."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+        enrollment.status = 'removed'
+        enrollment.save(update_fields=['status'])
+
+        logger.info(
+            f"Faculty {user.email} removed student {enrollment.student.email} "
+            f"from {enrollment.subject_code}"
+        )
+
+        return Response(
+            {"message": "Student removed.", "enrollment_id": enrollment.id},
+            status=status.HTTP_200_OK
+        )
+
+
+# ============================================
+# Auto-Enrollment Helper
+# ============================================
+
+def auto_enroll_on_schedule_create(user, subject_codes):
+    """
+    Auto-enroll students/faculty based on matching subject codes.
+    Called after a schedule is created.
+
+    - If user is a student: find faculty with matching subject codes and enroll.
+    - If user is faculty: find students with matching subject codes and enroll.
+    """
+    if not subject_codes:
+        return
+
+    unique_codes = list(set(subject_codes))
+    created_count = 0
+
+    if user.user_type == 'student':
+        # Find faculty who teach these subjects (from their courses/schedules)
+        faculty_courses = Course.objects.filter(
+            subject_code__in=unique_codes,
+            user__user_type='faculty'
+        ).values('user_id', 'subject_code').distinct()
+
+        for fc in faculty_courses:
+            _, created = ClassEnrollment.objects.get_or_create(
+                student=user,
+                faculty_id=fc['user_id'],
+                subject_code=fc['subject_code'],
+                status='active',
+                defaults={'enrollment_type': 'auto'}
+            )
+            if created:
+                created_count += 1
+
+    elif user.user_type == 'faculty':
+        # Find students who have these subjects
+        student_courses = Course.objects.filter(
+            subject_code__in=unique_codes,
+            user__user_type='student'
+        ).values('user_id', 'subject_code').distinct()
+
+        for sc in student_courses:
+            _, created = ClassEnrollment.objects.get_or_create(
+                student_id=sc['user_id'],
+                faculty=user,
+                subject_code=sc['subject_code'],
+                status='active',
+                defaults={'enrollment_type': 'auto'}
+            )
+            if created:
+                created_count += 1
+
+    if created_count > 0:
+        logger.info(
+            f"Auto-enrolled {created_count} connections for {user.email} "
+            f"with subject codes: {unique_codes}"
+        )

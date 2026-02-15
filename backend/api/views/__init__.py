@@ -65,3 +65,19 @@ from .parent_views import (
     RevokeParentAccessView,
     ChildLinkView,
 )
+
+# Faculty-Student Connection views
+from .faculty_task_views import (
+    ClassCodeView,
+    StudentEnrollView,
+    StudentEnrollmentListView,
+    StudentUnenrollView,
+    FacultyEnrolledStudentsView,
+    FacultyRemoveStudentView,
+    FacultyTaskListCreateView,
+    FacultyTaskDetailView,
+    FacultyTaskStatsView,
+    StudentFacultyTaskListView,
+    StudentFacultyTaskCompleteView,
+    StudentFacultyTaskCountsView,
+)

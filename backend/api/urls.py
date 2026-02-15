@@ -60,4 +60,18 @@ urlpatterns = [
     # Parental view endpoints - Student side
     path('student/parents/', views.LinkedParentsView.as_view(), name='linked_parents'),
     path('student/parents/<int:link_id>/revoke/', views.RevokeParentAccessView.as_view(), name='revoke_parent_access'),
+    
+    # Faculty-Student Connection endpoints
+    path('faculty/class-code/', views.ClassCodeView.as_view(), name='class_code'),
+    path('faculty/tasks/', views.FacultyTaskListCreateView.as_view(), name='faculty_task_list_create'),
+    path('faculty/tasks/<int:pk>/', views.FacultyTaskDetailView.as_view(), name='faculty_task_detail'),
+    path('faculty/tasks/<int:pk>/stats/', views.FacultyTaskStatsView.as_view(), name='faculty_task_stats'),
+    path('faculty/enrolled-students/', views.FacultyEnrolledStudentsView.as_view(), name='faculty_enrolled_students'),
+    path('faculty/remove-student/', views.FacultyRemoveStudentView.as_view(), name='faculty_remove_student'),
+    path('student/enroll/', views.StudentEnrollView.as_view(), name='student_enroll'),
+    path('student/unenroll/', views.StudentUnenrollView.as_view(), name='student_unenroll'),
+    path('student/enrollments/', views.StudentEnrollmentListView.as_view(), name='student_enrollments'),
+    path('student/faculty-tasks/', views.StudentFacultyTaskListView.as_view(), name='student_faculty_tasks'),
+    path('student/faculty-tasks/counts/', views.StudentFacultyTaskCountsView.as_view(), name='student_faculty_task_counts'),
+    path('student/faculty-tasks/<int:pk>/complete/', views.StudentFacultyTaskCompleteView.as_view(), name='student_faculty_task_complete'),
 ]

@@ -101,6 +101,26 @@ class ScheduleListCreateView(generics.ListCreateAPIView):
             queryset = queryset.prefetch_related('courses')
         return queryset
 
+    def perform_create(self, serializer):
+        """
+        After creating a schedule, auto-enroll the user with matching
+        faculty/students based on shared subject codes.
+        """
+        schedule = serializer.save()
+
+        # Extract subject codes from the newly created courses
+        subject_codes = list(
+            schedule.courses.values_list('subject_code', flat=True)
+        )
+
+        if subject_codes:
+            from .faculty_task_views import auto_enroll_on_schedule_create
+            try:
+                auto_enroll_on_schedule_create(self.request.user, subject_codes)
+            except Exception as e:
+                logger.error(f"Auto-enrollment failed for user {self.request.user.email}: {e}")
+                # Don't fail the schedule creation if auto-enrollment fails
+
 
 class ScheduleDetailView(generics.RetrieveUpdateDestroyAPIView):
     """

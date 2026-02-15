@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.translation import gettext_lazy as _
-from .models import User
+from .models import User, ClassCode, ClassEnrollment, FacultyTask, FacultyTaskCompletion
 
 
 @admin.register(User)
@@ -29,3 +29,32 @@ class UserAdmin(BaseUserAdmin):
     )
     
     readonly_fields = ['created_at', 'updated_at', 'last_login']
+
+
+@admin.register(ClassCode)
+class ClassCodeAdmin(admin.ModelAdmin):
+    list_display = ['code', 'faculty', 'subject_code', 'is_active', 'created_at']
+    list_filter = ['is_active', 'created_at']
+    search_fields = ['code', 'faculty__email', 'subject_code']
+
+
+@admin.register(ClassEnrollment)
+class ClassEnrollmentAdmin(admin.ModelAdmin):
+    list_display = ['student', 'faculty', 'subject_code', 'enrollment_type', 'status', 'enrolled_at']
+    list_filter = ['status', 'enrollment_type', 'enrolled_at']
+    search_fields = ['student__email', 'faculty__email', 'subject_code']
+
+
+@admin.register(FacultyTask)
+class FacultyTaskAdmin(admin.ModelAdmin):
+    list_display = ['text', 'faculty', 'subject_code', 'due_date', 'created_at']
+    list_filter = ['created_at', 'due_date']
+    search_fields = ['text', 'faculty__email', 'subject_code']
+
+
+@admin.register(FacultyTaskCompletion)
+class FacultyTaskCompletionAdmin(admin.ModelAdmin):
+    list_display = ['task', 'student', 'is_completed', 'completed_at']
+    list_filter = ['is_completed', 'completed_at']
+    search_fields = ['student__email', 'task__text']
+

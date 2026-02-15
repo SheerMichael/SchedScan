@@ -3,7 +3,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from rest_framework.validators import UniqueValidator
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import Course, Schedule, Task, ParentChildLink, InviteCode
+from .models import Course, Schedule, Task, ParentChildLink, InviteCode, ClassCode, ClassEnrollment, FacultyTask, FacultyTaskCompletion
 from .utils.timetable_generator import generate_and_save_timetable
 
 User = get_user_model()
@@ -512,4 +512,152 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
         """Validate the new password meets Django's password requirements."""
         validate_password(value)
         return value
+
+
+# ============================================
+# Faculty-Student Connection Serializers
+# ============================================
+
+class ClassCodeSerializer(serializers.ModelSerializer):
+    """
+    Serializer for ClassCode - used for generating and viewing class codes.
+    """
+    faculty_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ClassCode
+        fields = ['id', 'subject_code', 'code', 'is_active', 'faculty_name', 'created_at']
+        read_only_fields = ['id', 'code', 'is_active', 'faculty_name', 'created_at']
+
+    def get_faculty_name(self, obj):
+        return obj.faculty.get_full_name()
+
+
+class ClassEnrollmentSerializer(serializers.ModelSerializer):
+    """
+    Serializer for ClassEnrollment - shows enrollment info.
+    """
+    faculty_name = serializers.SerializerMethodField()
+    faculty_email = serializers.SerializerMethodField()
+    student_name = serializers.SerializerMethodField()
+    student_email = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ClassEnrollment
+        fields = [
+            'id', 'subject_code', 'enrollment_type', 'status', 'enrolled_at',
+            'faculty_name', 'faculty_email', 'student_name', 'student_email'
+        ]
+        read_only_fields = ['id', 'enrolled_at']
+
+    def get_faculty_name(self, obj):
+        return obj.faculty.get_full_name()
+
+    def get_faculty_email(self, obj):
+        return obj.faculty.email
+
+    def get_student_name(self, obj):
+        return obj.student.get_full_name()
+
+    def get_student_email(self, obj):
+        return obj.student.email
+
+
+class FacultyTaskSerializer(serializers.ModelSerializer):
+    """
+    Serializer for FacultyTask - used by faculty to create/manage tasks.
+    """
+    class Meta:
+        model = FacultyTask
+        fields = ['id', 'subject_code', 'text', 'due_date', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def create(self, validated_data):
+        faculty = self.context['request'].user
+        return FacultyTask.objects.create(faculty=faculty, **validated_data)
+
+
+class FacultyTaskWithStatsSerializer(serializers.ModelSerializer):
+    """
+    Faculty-side view of a task with completion statistics.
+    Shows how many students completed vs total enrolled for this subject.
+    Uses prefetched completions when available to avoid N+1.
+    """
+    completed_count = serializers.SerializerMethodField()
+    total_enrolled = serializers.SerializerMethodField()
+
+    class Meta:
+        model = FacultyTask
+        fields = [
+            'id', 'subject_code', 'text', 'due_date',
+            'completed_count', 'total_enrolled',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_completed_count(self, obj):
+        # Use prefetched completions if available
+        if hasattr(obj, '_prefetched_objects_cache') and 'completions' in obj._prefetched_objects_cache:
+            return sum(1 for c in obj.completions.all() if c.is_completed)
+        return obj.completions.filter(is_completed=True).count()
+
+    def get_total_enrolled(self, obj):
+        # Cache enrollment counts per subject to avoid repeated queries
+        request = self.context.get('request')
+        if request and hasattr(request, '_enrollment_count_cache'):
+            cache = request._enrollment_count_cache
+        else:
+            cache = {}
+            if request:
+                request._enrollment_count_cache = cache
+
+        cache_key = f"{obj.faculty_id}:{obj.subject_code}"
+        if cache_key not in cache:
+            cache[cache_key] = ClassEnrollment.objects.filter(
+                faculty=obj.faculty,
+                subject_code=obj.subject_code,
+                status='active'
+            ).count()
+        return cache[cache_key]
+
+
+class FacultyTaskStudentSerializer(serializers.ModelSerializer):
+    """
+    Student-side view of a faculty task with their personal completion status.
+    Uses prefetched 'student_completions' (via Prefetch with to_attr) to avoid N+1.
+    Falls back to query if not prefetched.
+    """
+    is_completed = serializers.SerializerMethodField()
+    completed_at = serializers.SerializerMethodField()
+    faculty_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = FacultyTask
+        fields = [
+            'id', 'subject_code', 'text', 'due_date',
+            'is_completed', 'completed_at', 'faculty_name',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = fields
+
+    def _get_completion(self, obj):
+        """Get the student's completion record, using prefetch if available."""
+        if hasattr(obj, 'student_completions'):
+            # Prefetched via Prefetch(..., to_attr='student_completions')
+            completions = obj.student_completions
+            return completions[0] if completions else None
+        # Fallback: query directly
+        student = self.context['request'].user
+        return obj.completions.filter(student=student).first()
+
+    def get_is_completed(self, obj):
+        completion = self._get_completion(obj)
+        return completion.is_completed if completion else False
+
+    def get_completed_at(self, obj):
+        completion = self._get_completion(obj)
+        return completion.completed_at if completion else None
+
+    def get_faculty_name(self, obj):
+        return obj.faculty.get_full_name()
 

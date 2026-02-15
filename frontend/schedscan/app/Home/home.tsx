@@ -6,6 +6,7 @@ import { useAuth } from '../../context/AuthContext';
 import { Course } from '../../services/courseService';
 import { SavedSchedule } from '../../services/scheduleStorageService';
 import { taskService } from '../../services/taskService';
+import { studentEnrollmentService } from '../../services/facultyTaskService';
 import { useFocusEffect } from '@react-navigation/native';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, {
@@ -233,6 +234,7 @@ export default function SchedScanApp() {
 
   const [daySchedule, setDaySchedule] = useState<ScheduleItem[]>([]);
   const [taskCounts, setTaskCounts] = useState<Record<string, { total: number; incomplete: number }>>({});
+  const [facultyTaskCounts, setFacultyTaskCounts] = useState<Record<string, { total: number; incomplete: number }>>({});
 
   // Handle drag end and reorder
   const handleDragEnd = (fromIndex: number, toIndex: number) => {
@@ -280,6 +282,19 @@ export default function SchedScanApp() {
         if (subjectCodes.length > 0) {
           const counts = await taskService.getTaskCounts(subjectCodes);
           setTaskCounts(counts);
+
+          // Load faculty task counts for students
+          if (user?.user_type === 'student') {
+            try {
+              const fCounts = await studentEnrollmentService.getFacultyTaskCounts(subjectCodes);
+              setFacultyTaskCounts(fCounts);
+            } catch (e: any) {
+              // Silently ignore if endpoint is not available (e.g., not deployed yet)
+              if (e?.response?.status !== 404) {
+                console.log('Faculty task counts not available:', e);
+              }
+            }
+          }
         }
       } else {
         setCourses([]);
@@ -784,6 +799,17 @@ export default function SchedScanApp() {
                         <Text className="text-xs font-semibold text-amber-700 ml-1">
                           {taskCounts[item.title]?.incomplete > 0
                             ? `${taskCounts[item.title].incomplete}`
+                            : '✓'}
+                        </Text>
+                      </View>
+                    )}
+                    {/* Faculty task badge for students */}
+                    {facultyTaskCounts[item.title]?.total > 0 && (
+                      <View className="flex-row items-center bg-orange-100 px-2 py-1 rounded-full ml-1">
+                        <Text className="text-xs">📋</Text>
+                        <Text className="text-xs font-semibold text-orange-700 ml-1">
+                          {facultyTaskCounts[item.title]?.incomplete > 0
+                            ? `${facultyTaskCounts[item.title].incomplete}`
                             : '✓'}
                         </Text>
                       </View>
