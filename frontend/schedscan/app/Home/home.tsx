@@ -760,6 +760,7 @@ export default function SchedScanApp() {
                         endTime: item.endTime,
                         location: item.location,
                         day: item.day,
+                        sourceType: item.source_type || activeSchedule?.uploadType || '',
                       }
                     });
                   }}

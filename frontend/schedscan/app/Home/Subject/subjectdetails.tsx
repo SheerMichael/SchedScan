@@ -28,7 +28,11 @@ export default function SubjectDetails() {
     endTime,         // end_time
     location,        // location
     day,             // day code
+    sourceType,      // 'student' | 'faculty' | 'merged' — schedule source type
   } = useLocalSearchParams();
+
+  // Determine if this course is from a faculty-extracted schedule
+  const isFacultyCourse = sourceType === 'faculty';
 
   const subjectCode = Array.isArray(title) ? title[0] : title || '';
 
@@ -536,8 +540,8 @@ export default function SubjectDetails() {
                     </View>
                   </View>
                 ))
-              ) : !isEnrolled ? (
-                /* Join Class Code */
+              ) : !isEnrolled && !isFacultyCourse ? (
+                /* Join Class Code — only show for student-type courses, not faculty-extracted ones */
                 <View className="bg-gray-50 p-4 rounded-xl border border-gray-200">
                   <Text className="text-gray-600 text-sm mb-2">
                     Enter a class code from your instructor to see their tasks.
