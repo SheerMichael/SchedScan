@@ -64,6 +64,33 @@ export interface TaskStats {
     students: TaskCompletionStudent[];
 }
 
+/** Faculty mode check response */
+export interface FacultyModeStatus {
+    is_faculty: boolean;
+    has_faculty_schedule: boolean;
+    faculty_schedule_count: number;
+    user_type: string;
+}
+
+/** Subject detail from class code preview */
+export interface ClassCodeSubjectDetail {
+    subject_name: string;
+    day: string;
+    start_time: string;
+    end_time: string;
+    location: string;
+}
+
+/** Class code preview response */
+export interface ClassCodePreview {
+    code: string;
+    subject_code: string;
+    faculty_name: string;
+    faculty_email: string;
+    subject_details: ClassCodeSubjectDetail[];
+    already_enrolled: boolean;
+}
+
 // ============================================
 // Faculty-Side Service
 // ============================================
@@ -142,6 +169,20 @@ export const facultyTaskService = {
         const response = await api.post('/faculty/remove-student/', data);
         return response.data;
     },
+
+    // --- Faculty Mode ---
+
+    /** Check whether the current user is eligible for faculty mode */
+    checkFacultyMode: async (): Promise<FacultyModeStatus> => {
+        const response = await api.get('/faculty/check/');
+        return response.data;
+    },
+
+    /** Activate faculty mode for the current user */
+    activateFacultyMode: async (): Promise<{ message: string; user: any }> => {
+        const response = await api.post('/faculty/activate/');
+        return response.data;
+    },
 };
 
 // ============================================
@@ -149,6 +190,12 @@ export const facultyTaskService = {
 // ============================================
 
 export const studentEnrollmentService = {
+    /** Preview a class code before enrolling (returns subject info for confirmation) */
+    previewClassCode: async (code: string): Promise<ClassCodePreview> => {
+        const response = await api.post('/student/enroll/preview/', { code });
+        return response.data;
+    },
+
     /** Enroll using a class code */
     enrollWithCode: async (code: string): Promise<ClassEnrollment> => {
         const response = await api.post('/student/enroll/', { code });

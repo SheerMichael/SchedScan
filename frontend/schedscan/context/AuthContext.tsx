@@ -1,7 +1,7 @@
 import React, { createContext, useState, useContext, useEffect, useCallback, useRef } from 'react';
 import { authService, User, LoginData, RegisterData, AuthResponse } from '../services/authService';
 import { scheduleStorageService, SavedSchedule } from '../services/scheduleStorageService';
-import { facultyTaskService, ClassCode } from '../services/facultyTaskService';
+import { facultyTaskService, ClassCode, FacultyModeStatus } from '../services/facultyTaskService';
 import { usePushNotification } from '../usePushNotification';
 import { offlineService } from '../services/offlineService';
 import { taskService } from '../services/taskService';
@@ -29,6 +29,11 @@ interface AuthContextType {
   getFacultySchedules: (forceRefresh?: boolean) => Promise<SavedSchedule[]>;
   getClassCodes: (forceRefresh?: boolean) => Promise<ClassCode[]>;
   invalidateFacultyDataCache: () => void;
+  // Faculty mode
+  activateFacultyMode: () => Promise<boolean>;
+  checkFacultyMode: () => Promise<FacultyModeStatus | null>;
+  hasPendingFacultyUnlock: boolean;
+  setPendingFacultyUnlock: (pending: boolean) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -46,6 +51,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [cachedFacultySchedules, setCachedFacultySchedules] = useState<SavedSchedule[] | null>(null);
   const [cachedClassCodes, setCachedClassCodes] = useState<ClassCode[] | null>(null);
   const facultyDataCacheTimestamp = useRef<number | null>(null);
+
+  // Faculty mode unlock state
+  const [hasPendingFacultyUnlock, setHasPendingFacultyUnlock] = useState(false);
 
   // Get push notification hook
   const { expoPushToken, registerTokenWithBackend } = usePushNotification();
@@ -319,6 +327,54 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [user?.id, cachedClassCodes]);
 
+  /**
+   * Check whether the current user is eligible for faculty mode.
+   */
+  const checkFacultyMode = useCallback(async (): Promise<FacultyModeStatus | null> => {
+    if (!user?.id) return null;
+    try {
+      return await facultyTaskService.checkFacultyMode();
+    } catch (error) {
+      console.error('Error checking faculty mode:', error);
+      return null;
+    }
+  }, [user?.id]);
+
+  /**
+   * Activate faculty mode for the current user.
+   * Updates the local user state and stored user data.
+   * Returns true on success.
+   */
+  const activateFacultyMode = useCallback(async (): Promise<boolean> => {
+    if (!user?.id) return false;
+    try {
+      const result = await facultyTaskService.activateFacultyMode();
+      // Update local user state with the new user_type
+      const updatedUser = { ...user, user_type: 'faculty' as const };
+      setUser(updatedUser);
+      // Persist to SecureStore
+      const SecureStore = require('expo-secure-store');
+      await SecureStore.setItemAsync('user', JSON.stringify(updatedUser));
+      // Clear faculty mode pending flag
+      setHasPendingFacultyUnlock(false);
+      // Invalidate caches so faculty-specific data loads fresh
+      invalidateFacultyDataCache();
+      console.log('Faculty mode activated successfully');
+      return true;
+    } catch (error) {
+      console.error('Error activating faculty mode:', error);
+      return false;
+    }
+  }, [user, invalidateFacultyDataCache]);
+
+  /**
+   * Set/clear the pending faculty unlock flag.
+   * Used by scanner screen after detecting a faculty schedule upload.
+   */
+  const setPendingFacultyUnlock = useCallback((pending: boolean) => {
+    setHasPendingFacultyUnlock(pending);
+  }, []);
+
   return (
     <AuthContext.Provider
       value={{
@@ -339,6 +395,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         getFacultySchedules,
         getClassCodes,
         invalidateFacultyDataCache,
+        // Faculty mode
+        activateFacultyMode,
+        checkFacultyMode,
+        hasPendingFacultyUnlock,
+        setPendingFacultyUnlock,
       }}
     >
       {children}

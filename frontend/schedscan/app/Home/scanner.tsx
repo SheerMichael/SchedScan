@@ -8,10 +8,11 @@ import * as ImagePicker from 'expo-image-picker';
 import { courseService, Course } from '../../services/courseService';
 import { scheduleStorageService } from '../../services/scheduleStorageService';
 import { useAuth } from '../../context/AuthContext';
+import FacultyModeModal from '../../components/FacultyModeModal';
 
 export default function Scanner() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, activateFacultyMode, setPendingFacultyUnlock } = useAuth();
 
   const [selectedFile, setSelectedFile] = useState<any>(null);
   const [selectedRole, setSelectedRole] = useState<'faculty' | 'student' | null>(null);
@@ -19,6 +20,9 @@ export default function Scanner() {
   const [showTitleModal, setShowTitleModal] = useState(false);
   const [scheduleTitle, setScheduleTitle] = useState('');
   const [uploadedCourses, setUploadedCourses] = useState<Course[]>([]);
+
+  // Faculty mode unlock modal
+  const [showFacultyModeModal, setShowFacultyModeModal] = useState(false);
 
   // --- Logic Helpers (Rate Limit, Upload, Etc) ---
 
@@ -134,9 +138,15 @@ export default function Scanner() {
     try {
       await scheduleStorageService.saveSchedule(scheduleTitle.trim(), uploadedCourses, selectedRole!, user.id, false);
       setShowTitleModal(false);
-      Alert.alert('Saved!', `Schedule "${scheduleTitle}" saved.`, [
-        { text: 'OK', onPress: () => { resetScanner(); router.push(selectedRole === 'student' ? '/Home/Schedules/student' : '/Home/Schedules/faculty'); } }
-      ]);
+
+      // If this was a faculty schedule and user is not yet faculty, show unlock modal
+      if (selectedRole === 'faculty' && user.user_type !== 'faculty') {
+        setShowFacultyModeModal(true);
+      } else {
+        Alert.alert('Saved!', `Schedule "${scheduleTitle}" saved.`, [
+          { text: 'OK', onPress: () => { resetScanner(); router.push(selectedRole === 'student' ? '/Home/Schedules/student' : '/Home/Schedules/faculty'); } }
+        ]);
+      }
     } catch (error) { Alert.alert('Error', 'Failed to save schedule.'); }
   };
 
@@ -146,10 +156,41 @@ export default function Scanner() {
     try {
       await scheduleStorageService.saveSchedule(scheduleTitle.trim(), uploadedCourses, selectedRole!, user.id, true);
       setShowTitleModal(false);
-      Alert.alert('Success!', `Schedule "${scheduleTitle}" is now active!`, [
-        { text: 'OK', onPress: () => { resetScanner(); router.replace('/Home/home'); } }
-      ]);
+
+      // If this was a faculty schedule and user is not yet faculty, show unlock modal
+      if (selectedRole === 'faculty' && user.user_type !== 'faculty') {
+        setShowFacultyModeModal(true);
+      } else {
+        Alert.alert('Success!', `Schedule "${scheduleTitle}" is now active!`, [
+          { text: 'OK', onPress: () => { resetScanner(); router.replace('/Home/home'); } }
+        ]);
+      }
     } catch (error) { Alert.alert('Error', 'Failed to save schedule.'); }
+  };
+
+  const handleFacultyModeConfirm = async () => {
+    const success = await activateFacultyMode();
+    setShowFacultyModeModal(false);
+    if (success) {
+      Alert.alert(
+        'Faculty Mode Activated! 🎉',
+        'You now have access to class management features — generate class codes, assign tasks, and track student progress.',
+        [{ text: 'View Faculty Schedules', onPress: () => { resetScanner(); router.push('/Home/Schedules/faculty'); } }]
+      );
+    } else {
+      Alert.alert('Error', 'Failed to activate faculty mode. Please try again from Settings.');
+      resetScanner();
+      router.replace('/Home/home');
+    }
+  };
+
+  const handleFacultyModeDismiss = () => {
+    setShowFacultyModeModal(false);
+    // Set pending flag so the banner appears on home screen
+    setPendingFacultyUnlock(true);
+    Alert.alert('Saved!', `Schedule "${scheduleTitle}" saved. You can switch to Faculty Mode anytime from your account settings.`, [
+      { text: 'OK', onPress: () => { resetScanner(); router.replace('/Home/home'); } }
+    ]);
   };
 
   const resetScanner = () => {
@@ -333,6 +374,13 @@ export default function Scanner() {
           </View>
         </View>
       </Modal>
+
+      {/* Faculty Mode Unlock Modal */}
+      <FacultyModeModal
+        visible={showFacultyModeModal}
+        onConfirm={handleFacultyModeConfirm}
+        onDismiss={handleFacultyModeDismiss}
+      />
 
     </View>
   );

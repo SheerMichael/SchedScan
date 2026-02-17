@@ -15,9 +15,11 @@ import Animated, {
   withSpring,
   runOnJS,
 } from 'react-native-reanimated';
+import FacultyModeModal from '../../components/FacultyModeModal';
+import JoinClassModal from '../../components/JoinClassModal';
 
 export default function SchedScanApp() {
-  const { user, getActiveSchedule, isOffline } = useAuth();
+  const { user, getActiveSchedule, isOffline, hasPendingFacultyUnlock, activateFacultyMode, setPendingFacultyUnlock } = useAuth();
   const startYear = 2025;
   const endYear = 2050;
   const now = new Date();
@@ -235,6 +237,10 @@ export default function SchedScanApp() {
   const [daySchedule, setDaySchedule] = useState<ScheduleItem[]>([]);
   const [taskCounts, setTaskCounts] = useState<Record<string, { total: number; incomplete: number }>>({});
   const [facultyTaskCounts, setFacultyTaskCounts] = useState<Record<string, { total: number; incomplete: number }>>({});
+
+  // Modals
+  const [showFacultyModeModal, setShowFacultyModeModal] = useState(false);
+  const [showJoinClassModal, setShowJoinClassModal] = useState(false);
 
   // Handle drag end and reorder
   const handleDragEnd = (fromIndex: number, toIndex: number) => {
@@ -573,6 +579,24 @@ export default function SchedScanApp() {
         </View>
       )}
 
+      {/* Faculty Mode Unlock Banner */}
+      {hasPendingFacultyUnlock && user?.user_type !== 'faculty' && (
+        <TouchableOpacity
+          onPress={() => setShowFacultyModeModal(true)}
+          className="bg-orange-500 mx-4 mt-3 px-4 py-3 rounded-xl flex-row items-center justify-between"
+          activeOpacity={0.8}
+        >
+          <View className="flex-row items-center flex-1">
+            <Text className="text-lg mr-2">🎓</Text>
+            <View className="flex-1">
+              <Text className="text-white font-bold text-sm">Faculty features available</Text>
+              <Text className="text-white/80 text-xs">Tap to switch to Faculty Mode</Text>
+            </View>
+          </View>
+          <Text className="text-white font-bold text-lg">→</Text>
+        </TouchableOpacity>
+      )}
+
       {/* Banner */}
       <ScrollView className="flex-1">
         <View className="bg-primary-600 m-4 p-6 rounded-2xl">
@@ -660,6 +684,17 @@ export default function SchedScanApp() {
             </Text>
           </TouchableOpacity>
         </View>
+
+        {/* Join a Class Button (Students) */}
+        {user?.user_type === 'student' && (
+          <TouchableOpacity
+            onPress={() => setShowJoinClassModal(true)}
+            className="mx-4 mt-3 bg-orange-50 border border-orange-200 px-4 py-3 rounded-xl flex-row items-center justify-center"
+            activeOpacity={0.7}
+          >
+            <Text className="text-orange-600 font-semibold text-sm">📋 Join a Class with Code</Text>
+          </TouchableOpacity>
+        )}
 
         {/* Month Selector */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-4 mt-4" contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}>
@@ -823,6 +858,29 @@ export default function SchedScanApp() {
         </View>
 
       </ScrollView>
+
+      {/* Faculty Mode Unlock Modal */}
+      <FacultyModeModal
+        visible={showFacultyModeModal}
+        onConfirm={async () => {
+          const success = await activateFacultyMode();
+          setShowFacultyModeModal(false);
+          if (success) {
+            setPendingFacultyUnlock(false);
+          }
+        }}
+        onDismiss={() => setShowFacultyModeModal(false)}
+      />
+
+      {/* Join Class Modal (Students) */}
+      <JoinClassModal
+        visible={showJoinClassModal}
+        onClose={() => setShowJoinClassModal(false)}
+        onEnrolled={() => {
+          // Refresh schedule data after enrollment
+          loadActiveSchedule();
+        }}
+      />
 
     </>
   );

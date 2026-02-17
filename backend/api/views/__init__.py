@@ -69,6 +69,9 @@ from .parent_views import (
 # Faculty-Student Connection views
 from .faculty_task_views import (
     ClassCodeView,
+    FacultyModeActivateView,
+    FacultyModeCheckView,
+    ClassCodePreviewView,
     StudentEnrollView,
     StudentEnrollmentListView,
     StudentUnenrollView,

@@ -13,6 +13,7 @@ import {
   StudentFacultyTask,
   ClassCode,
 } from "../../../services/facultyTaskService";
+import JoinClassModal from "../../../components/JoinClassModal";
 
 export default function SubjectDetails() {
   const { user } = useAuth();
@@ -62,9 +63,8 @@ export default function SubjectDetails() {
   // ============================================
   // Enrollment State (Student only)
   // ============================================
-  const [joinCode, setJoinCode] = useState<string>("");
-  const [isEnrolling, setIsEnrolling] = useState(false);
   const [isEnrolled, setIsEnrolled] = useState(false);
+  const [showJoinClassModal, setShowJoinClassModal] = useState(false);
 
   // ============================================
   // Load Data
@@ -246,23 +246,14 @@ export default function SubjectDetails() {
   // ============================================
   // Student Enrollment Handlers
   // ============================================
-  const handleEnroll = async () => {
-    if (!joinCode.trim()) return;
+  const handleJoinClassEnrolled = async (enrolledSubjectCode: string) => {
+    setIsEnrolled(true);
+    // Reload faculty tasks after enrollment
     try {
-      setIsEnrolling(true);
-      await studentEnrollmentService.enrollWithCode(joinCode.trim());
-      setJoinCode("");
-      setIsEnrolled(true);
-      // Reload faculty tasks after enrollment
       const fTasks = await studentEnrollmentService.getFacultyTasks(subjectCode);
       setStudentFacultyTasks(fTasks);
-      Alert.alert('Enrolled!', 'You have been enrolled in this class.');
-    } catch (error: any) {
-      console.error('Error enrolling:', error);
-      const msg = error?.response?.data?.error || 'Failed to enroll. Check your class code.';
-      Alert.alert('Error', msg);
-    } finally {
-      setIsEnrolling(false);
+    } catch (e) {
+      console.error('Error reloading faculty tasks after enrollment:', e);
     }
   };
 
@@ -541,34 +532,17 @@ export default function SubjectDetails() {
                   </View>
                 ))
               ) : !isEnrolled && !isFacultyCourse ? (
-                /* Join Class Code — only show for student-type courses, not faculty-extracted ones */
+                /* Join Class Code — opens the verification modal */
                 <View className="bg-gray-50 p-4 rounded-xl border border-gray-200">
-                  <Text className="text-gray-600 text-sm mb-2">
-                    Enter a class code from your instructor to see their tasks.
+                  <Text className="text-gray-600 text-sm mb-3">
+                    Enter a class code from your instructor to see their tasks and join the class.
                   </Text>
-                  <View className="flex-row items-center">
-                    <TextInput
-                      value={joinCode}
-                      onChangeText={setJoinCode}
-                      placeholder="Enter class code..."
-                      className="flex-1 bg-white p-3 rounded-lg border border-gray-200 text-base font-medium tracking-widest"
-                      autoCapitalize="characters"
-                      maxLength={8}
-                      editable={!isEnrolling}
-                    />
-                    <TouchableOpacity
-                      onPress={handleEnroll}
-                      disabled={isEnrolling || !joinCode.trim()}
-                      className={`px-4 py-3 rounded-lg ml-2 ${isEnrolling || !joinCode.trim() ? 'bg-gray-300' : 'bg-orange-500'
-                        }`}
-                    >
-                      {isEnrolling ? (
-                        <ActivityIndicator size="small" color="#ffffff" />
-                      ) : (
-                        <Text className="text-white font-bold">Join</Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
+                  <TouchableOpacity
+                    onPress={() => setShowJoinClassModal(true)}
+                    className="bg-orange-500 py-3 rounded-xl items-center"
+                  >
+                    <Text className="text-white font-bold">Enter Class Code</Text>
+                  </TouchableOpacity>
                 </View>
               ) : (
                 <Text className="text-gray-500 text-sm">No faculty tasks assigned yet.</Text>
@@ -662,6 +636,15 @@ export default function SubjectDetails() {
         )}
 
       </ScrollView>
+
+      {/* Join Class Modal (Student) */}
+      {isStudent && (
+        <JoinClassModal
+          visible={showJoinClassModal}
+          onClose={() => setShowJoinClassModal(false)}
+          onEnrolled={handleJoinClassEnrolled}
+        />
+      )}
     </>
   );
 }

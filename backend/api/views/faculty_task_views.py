@@ -1,6 +1,7 @@
 """
 Faculty-Student Connection views.
-Handles class codes, enrollment, faculty tasks, and completion tracking.
+Handles class codes, enrollment, faculty tasks, completion tracking,
+faculty mode activation, and enrollment preview.
 """
 from django.utils import timezone
 from django.db.models import Q, Prefetch, Count, Subquery, OuterRef, BooleanField, Value
@@ -11,12 +12,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.pagination import PageNumberPagination
 
 from ..models import (
-    ClassCode, ClassEnrollment, FacultyTask, FacultyTaskCompletion, Course, Schedule
+    ClassCode, ClassEnrollment, FacultyTask, FacultyTaskCompletion, Course, Schedule, User
 )
 from ..serializers import (
     ClassCodeSerializer, ClassEnrollmentSerializer,
     FacultyTaskSerializer, FacultyTaskWithStatsSerializer,
-    FacultyTaskStudentSerializer,
+    FacultyTaskStudentSerializer, UserSerializer,
 )
 
 import logging
@@ -98,6 +99,175 @@ class ClassCodeView(APIView):
 
         serializer = ClassCodeSerializer(codes, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+# ============================================
+# Faculty Mode Activation
+# ============================================
+
+class FacultyModeActivateView(APIView):
+    """
+    Activate faculty mode for the current user.
+    This is called when a user uploads a faculty schedule and confirms
+    they want to switch to faculty mode.
+
+    POST /api/faculty/activate/
+    Body: (empty)
+
+    Requirements:
+    - The user must have at least one schedule with upload_type='faculty'.
+    - The user must currently be a student (guard against redundant calls).
+
+    Response: Updated user object with user_type='faculty'.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+
+        if user.user_type == 'faculty':
+            return Response(
+                {"message": "You are already in faculty mode.",
+                 "user": UserSerializer(user).data},
+                status=status.HTTP_200_OK
+            )
+
+        if user.user_type == 'parent':
+            return Response(
+                {"error": "Parent accounts cannot switch to faculty mode."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Verify the user actually has a faculty schedule
+        has_faculty_schedule = Schedule.objects.filter(
+            user=user,
+            upload_type='faculty'
+        ).exists()
+
+        if not has_faculty_schedule:
+            return Response(
+                {"error": "You must upload a faculty schedule before activating faculty mode."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Promote user to faculty
+        user.user_type = 'faculty'
+        user.save(update_fields=['user_type'])
+
+        logger.info(f"User {user.email} activated faculty mode")
+
+        return Response({
+            "message": "Faculty mode activated successfully.",
+            "user": UserSerializer(user).data,
+        }, status=status.HTTP_200_OK)
+
+
+class FacultyModeCheckView(APIView):
+    """
+    Check whether the current user is eligible for faculty mode.
+
+    GET /api/faculty/check/
+
+    Returns:
+    - is_faculty: whether user_type is already 'faculty'
+    - has_faculty_schedule: whether they have at least one faculty schedule
+    - faculty_schedule_count: number of faculty schedules
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        faculty_count = Schedule.objects.filter(
+            user=user,
+            upload_type='faculty'
+        ).count()
+
+        return Response({
+            "is_faculty": user.user_type == 'faculty',
+            "has_faculty_schedule": faculty_count > 0,
+            "faculty_schedule_count": faculty_count,
+            "user_type": user.user_type,
+        }, status=status.HTTP_200_OK)
+
+
+# ============================================
+# Class Code Preview (for students)
+# ============================================
+
+class ClassCodePreviewView(APIView):
+    """
+    Preview class code details before enrolling.
+    Returns subject metadata so the student can confirm before joining.
+
+    POST /api/student/enroll/preview/
+    Body: {"code": "ABCD1234"}
+
+    Response: {
+        "code": "ABCD1234",
+        "subject_code": "CS101",
+        "faculty_name": "Prof. John Doe",
+        "faculty_email": "john@school.edu",
+        "subject_details": [
+            {
+                "subject_name": "Software Engineering",
+                "day": "M",
+                "start_time": "07:00AM",
+                "end_time": "09:00AM",
+                "location": "LR7"
+            },
+            ...
+        ],
+        "already_enrolled": false
+    }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+
+        code_str = request.data.get('code', '').strip().upper()
+        if not code_str:
+            return Response(
+                {"error": "code is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Find the class code
+        try:
+            class_code = ClassCode.objects.select_related('faculty').get(
+                code=code_str, is_active=True
+            )
+        except ClassCode.DoesNotExist:
+            return Response(
+                {"error": "Invalid or expired class code."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Get the faculty's course details for this subject
+        faculty_courses = Course.objects.filter(
+            user=class_code.faculty,
+            subject_code=class_code.subject_code,
+            schedule__upload_type='faculty'
+        ).values(
+            'subject_name', 'day', 'start_time', 'end_time', 'location'
+        ).distinct()
+
+        # Check if already enrolled
+        already_enrolled = ClassEnrollment.objects.filter(
+            student=user,
+            faculty=class_code.faculty,
+            subject_code=class_code.subject_code,
+            status='active'
+        ).exists()
+
+        return Response({
+            "code": class_code.code,
+            "subject_code": class_code.subject_code,
+            "faculty_name": class_code.faculty.get_full_name(),
+            "faculty_email": class_code.faculty.email,
+            "subject_details": list(faculty_courses),
+            "already_enrolled": already_enrolled,
+        }, status=status.HTTP_200_OK)
 
 
 # ============================================
