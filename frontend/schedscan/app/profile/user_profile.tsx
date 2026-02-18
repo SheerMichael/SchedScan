@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, ScrollView, Image, Modal, Alert, TextInpu
 import { router } from "expo-router";
 import Svg, { Path, Circle } from 'react-native-svg';
 import * as Device from 'expo-device';
-import { Gem, ScrollText, BellRing, CalendarDays, FileText, EyeOff, Trash2, Users, X, Copy } from "lucide-react-native";
+import { Gem, ScrollText, BellRing, CalendarDays, FileText, EyeOff, Trash2, Users, X, Copy, GraduationCap } from "lucide-react-native";
 import { useAuth } from '../../context/AuthContext';
 import { scheduleStorageService } from '../../services/scheduleStorageService';
 import * as ExpoClipboard from 'expo-clipboard';
@@ -171,11 +171,22 @@ const UserProfile = () => {
                                 <Text className="text-base">Upgrade to Premium</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
-                                className="p-4 flex-row items-center gap-2"
+                                className="p-4 border-b border-gray-500/50 flex-row items-center gap-2"
                                 onPress={handleParentalCodeAccess}>
                                 <Users />
                                 <Text className="text-base">Share with Parent</Text>
                             </TouchableOpacity>
+                            {user?.user_type === 'faculty' && (
+                                <TouchableOpacity
+                                    className="p-4 flex-row items-center gap-2"
+                                    onPress={() => router.push('/profile/faculty_dashboard')}>
+                                    <GraduationCap color="#f97316" />
+                                    <Text className="text-base">Faculty Dashboard</Text>
+                                    <View className="bg-orange-400 rounded-full p-1 px-2 ml-auto">
+                                        <Text className="text-white font-semibold text-xs">FACULTY</Text>
+                                    </View>
+                                </TouchableOpacity>
+                            )}
                             {premiumuser && (
                                 <TouchableOpacity
                                     className="p-4 flex-row items-center gap-2"
