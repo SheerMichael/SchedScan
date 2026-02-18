@@ -154,11 +154,13 @@ export default function FacultyDashboard() {
       setIsTasksLoading(true);
       setIsStudentsLoading(true);
       try {
-        const [tasks, studentsResp] = await Promise.all([
+        const [tasksResp, studentsResp] = await Promise.all([
           facultyTaskService.getFacultyTasks(subjectCode),
           facultyTaskService.getEnrolledStudents(subjectCode),
         ]);
-        setFacultyTasks(tasks);
+        // API may return paginated { results: [...] } or a plain array
+        const tasksArray = Array.isArray(tasksResp) ? tasksResp : (tasksResp as any).results ?? [];
+        setFacultyTasks(tasksArray);
         setEnrolledStudents(studentsResp.enrollments || []);
       } catch (err) {
         console.error("Error loading subject detail:", err);
