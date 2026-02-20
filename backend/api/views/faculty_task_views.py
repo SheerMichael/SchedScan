@@ -285,9 +285,9 @@ class StudentEnrollView(APIView):
 
     def post(self, request):
         user = request.user
-        if user.user_type != 'student':
+        if user.user_type not in ('student', 'faculty'):
             return Response(
-                {"error": "Only students can enroll using class codes."},
+                {"error": "Only students and faculty can enroll using class codes."},
                 status=status.HTTP_403_FORBIDDEN
             )
 
@@ -322,6 +322,13 @@ class StudentEnrollView(APIView):
                 status=status.HTTP_409_CONFLICT
             )
 
+        # Prevent faculty from enrolling in their own class
+        if user == class_code.faculty:
+            return Response(
+                {"error": "You cannot enroll in your own class."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         # Create enrollment
         enrollment = ClassEnrollment.objects.create(
             faculty=class_code.faculty,
@@ -350,9 +357,9 @@ class StudentEnrollmentListView(APIView):
 
     def get(self, request):
         user = request.user
-        if user.user_type != 'student':
+        if user.user_type not in ('student', 'faculty'):
             return Response(
-                {"error": "Only students can view enrollments."},
+                {"error": "Only students and faculty can view enrollments."},
                 status=status.HTTP_403_FORBIDDEN
             )
 
@@ -803,9 +810,9 @@ class StudentUnenrollView(APIView):
 
     def post(self, request):
         user = request.user
-        if user.user_type != 'student':
+        if user.user_type not in ('student', 'faculty'):
             return Response(
-                {"error": "Only students can unenroll from classes."},
+                {"error": "Only students and faculty can unenroll from classes."},
                 status=status.HTTP_403_FORBIDDEN
             )
 
@@ -918,6 +925,230 @@ class FacultyRemoveStudentView(APIView):
             {"message": "Student removed.", "enrollment_id": enrollment.id},
             status=status.HTTP_200_OK
         )
+
+
+# ============================================
+# Enroll + Sync to Calendar
+# ============================================
+
+class StudentEnrollSyncView(APIView):
+    """
+    Enroll via class code AND sync the faculty's courses to the
+    student's active schedule, with conflict detection.
+
+    POST /api/student/enroll/sync/
+    Body: {"code": "ABCD1234", "force": false}
+
+    Response (success, no conflicts):
+    {
+        "enrolled": true,
+        "synced": true,
+        "courses_added": 3,
+        "enrollment": { ... }
+    }
+
+    Response (conflicts detected, force=false):
+    {
+        "enrolled": true,
+        "synced": false,
+        "has_conflicts": true,
+        "conflicts": [
+            {
+                "day": "M",
+                "new_course": {"subject_code": "CS101", ...},
+                "existing_course": {"subject_code": "MATH201", ...},
+                "overlap_minutes": 30
+            }
+        ],
+        "enrollment": { ... }
+    }
+
+    If force=true, courses are added despite conflicts.
+    If user has no active schedule, a new one is created automatically.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def _parse_time(self, time_str: str) -> int:
+        """Convert time string (e.g., '08:00AM') to minutes from midnight."""
+        import re
+        match = re.match(r'(\d{1,2}):(\d{2})(AM|PM)', time_str.upper())
+        if not match:
+            return 0
+        hours = int(match.group(1))
+        minutes = int(match.group(2))
+        period = match.group(3)
+        if period == 'PM' and hours != 12:
+            hours += 12
+        elif period == 'AM' and hours == 12:
+            hours = 0
+        return hours * 60 + minutes
+
+    def post(self, request):
+        user = request.user
+        if user.user_type not in ('student', 'faculty'):
+            return Response(
+                {"error": "Only students and faculty can use this endpoint."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        code_str = request.data.get('code', '').strip().upper()
+        force = request.data.get('force', False)
+
+        if not code_str:
+            return Response(
+                {"error": "code is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # --- Step 1: Find class code ---
+        try:
+            class_code = ClassCode.objects.select_related('faculty').get(
+                code=code_str, is_active=True
+            )
+        except ClassCode.DoesNotExist:
+            return Response(
+                {"error": "Invalid or expired class code."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Prevent self-enrollment
+        if user == class_code.faculty:
+            return Response(
+                {"error": "You cannot enroll in your own class."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # --- Step 2: Enroll (idempotent) ---
+        enrollment, enrolled_now = ClassEnrollment.objects.get_or_create(
+            student=user,
+            faculty=class_code.faculty,
+            subject_code=class_code.subject_code,
+            status='active',
+            defaults={'enrollment_type': 'code'}
+        )
+
+        if not enrolled_now:
+            # Already enrolled — still allow syncing
+            pass
+
+        # --- Step 3: Fetch faculty courses for this subject ---
+        faculty_courses = list(Course.objects.filter(
+            user=class_code.faculty,
+            subject_code=class_code.subject_code,
+            schedule__upload_type='faculty'
+        ).values(
+            'subject_code', 'subject_name', 'start_time',
+            'end_time', 'day', 'location'
+        ).distinct())
+
+        if not faculty_courses:
+            return Response({
+                "enrolled": True,
+                "synced": False,
+                "message": "Enrolled successfully, but no schedule data available from the instructor to sync.",
+                "enrollment": ClassEnrollmentSerializer(enrollment).data,
+            }, status=status.HTTP_200_OK)
+
+        # --- Step 4: Get or create active schedule ---
+        active_schedule = Schedule.objects.filter(
+            user=user, is_active=True
+        ).first()
+
+        if not active_schedule:
+            # Create a new schedule for the user
+            active_schedule = Schedule.objects.create(
+                user=user,
+                title="My Schedule",
+                upload_type='student',
+                is_active=True,
+            )
+
+        # --- Step 5: Check for conflicts ---
+        existing_courses = list(active_schedule.courses.values(
+            'subject_code', 'subject_name', 'start_time',
+            'end_time', 'day', 'location'
+        ))
+
+        conflicts = []
+        for new_c in faculty_courses:
+            for existing_c in existing_courses:
+                if new_c['day'] != existing_c['day']:
+                    continue
+
+                s1 = self._parse_time(new_c['start_time'])
+                e1 = self._parse_time(new_c['end_time'])
+                s2 = self._parse_time(existing_c['start_time'])
+                e2 = self._parse_time(existing_c['end_time'])
+
+                overlap_start = max(s1, s2)
+                overlap_end = min(e1, e2)
+
+                if overlap_start < overlap_end:
+                    conflicts.append({
+                        "day": new_c['day'],
+                        "new_course": {
+                            "subject_code": new_c['subject_code'],
+                            "subject_name": new_c.get('subject_name', ''),
+                            "start_time": new_c['start_time'],
+                            "end_time": new_c['end_time'],
+                            "location": new_c.get('location', ''),
+                        },
+                        "existing_course": {
+                            "subject_code": existing_c['subject_code'],
+                            "subject_name": existing_c.get('subject_name', ''),
+                            "start_time": existing_c['start_time'],
+                            "end_time": existing_c['end_time'],
+                            "location": existing_c.get('location', ''),
+                        },
+                        "overlap_minutes": overlap_end - overlap_start,
+                    })
+
+        if conflicts and not force:
+            return Response({
+                "enrolled": True,
+                "synced": False,
+                "has_conflicts": True,
+                "conflicts": conflicts,
+                "enrollment": ClassEnrollmentSerializer(enrollment).data,
+            }, status=status.HTTP_200_OK)
+
+        # --- Step 6: Add courses to active schedule ---
+        # Skip courses that already exist (same subject, day, time)
+        added = 0
+        for course_data in faculty_courses:
+            exists = active_schedule.courses.filter(
+                subject_code=course_data['subject_code'],
+                day=course_data['day'],
+                start_time=course_data['start_time'],
+                end_time=course_data['end_time'],
+            ).exists()
+
+            if not exists:
+                Course.objects.create(
+                    user=user,
+                    schedule=active_schedule,
+                    subject_code=course_data['subject_code'],
+                    subject_name=course_data.get('subject_name', ''),
+                    start_time=course_data['start_time'],
+                    end_time=course_data['end_time'],
+                    day=course_data['day'],
+                    location=course_data.get('location', ''),
+                    source_type='student',
+                )
+                added += 1
+
+        logger.info(
+            f"User {user.email} enrolled in {class_code.subject_code} "
+            f"via code {code_str} and synced {added} courses"
+        )
+
+        return Response({
+            "enrolled": True,
+            "synced": True,
+            "courses_added": added,
+            "has_conflicts": len(conflicts) > 0,
+            "enrollment": ClassEnrollmentSerializer(enrollment).data,
+        }, status=status.HTTP_201_CREATED)
 
 
 # ============================================

@@ -452,7 +452,7 @@ export default function FacultyDashboard() {
           {/* ---- Class Code Card ---- */}
           <View className="bg-orange-50 rounded-xl p-4 mb-4 border border-orange-200">
             <Text className="font-bold text-orange-800 mb-2">
-              📋 Class Code
+              <Text className="font-bold text-orange-800 mb-2">Class Code</Text>
             </Text>
             {currentCode ? (
               <View className="flex-row items-center justify-between">
@@ -505,28 +505,24 @@ export default function FacultyDashboard() {
           <View className="flex-row mb-4 bg-gray-100 rounded-xl p-1">
             <TouchableOpacity
               onPress={() => setActiveTab("tasks")}
-              className={`flex-1 py-2.5 rounded-lg items-center ${
-                activeTab === "tasks" ? "bg-orange-500" : ""
-              }`}
+              className={`flex-1 py-2.5 rounded-lg items-center ${activeTab === "tasks" ? "bg-orange-500" : ""
+                }`}
             >
               <Text
-                className={`font-semibold text-sm ${
-                  activeTab === "tasks" ? "text-white" : "text-gray-600"
-                }`}
+                className={`font-semibold text-sm ${activeTab === "tasks" ? "text-white" : "text-gray-600"
+                  }`}
               >
                 Tasks
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => setActiveTab("students")}
-              className={`flex-1 py-2.5 rounded-lg items-center ${
-                activeTab === "students" ? "bg-orange-500" : ""
-              }`}
+              className={`flex-1 py-2.5 rounded-lg items-center ${activeTab === "students" ? "bg-orange-500" : ""
+                }`}
             >
               <Text
-                className={`font-semibold text-sm ${
-                  activeTab === "students" ? "text-white" : "text-gray-600"
-                }`}
+                className={`font-semibold text-sm ${activeTab === "students" ? "text-white" : "text-gray-600"
+                  }`}
               >
                 Students ({enrolledStudents.length})
               </Text>
@@ -603,11 +599,10 @@ export default function FacultyDashboard() {
                   <TouchableOpacity
                     onPress={handleAddTask}
                     disabled={isAddingTask || !newTaskText.trim()}
-                    className={`px-4 py-2 rounded-xl ml-2 ${
-                      isAddingTask || !newTaskText.trim()
+                    className={`px-4 py-2 rounded-xl ml-2 ${isAddingTask || !newTaskText.trim()
                         ? "bg-gray-300"
                         : "bg-orange-500"
-                    }`}
+                      }`}
                   >
                     {isAddingTask ? (
                       <ActivityIndicator size="small" color="#fff" />
@@ -714,13 +709,12 @@ export default function FacultyDashboard() {
                   <View
                     className="bg-orange-500 h-full rounded-full"
                     style={{
-                      width: `${
-                        taskStatsModal.total_enrolled > 0
+                      width: `${taskStatsModal.total_enrolled > 0
                           ? (taskStatsModal.completed_count /
-                              taskStatsModal.total_enrolled) *
-                            100
+                            taskStatsModal.total_enrolled) *
+                          100
                           : 0
-                      }%`,
+                        }%`,
                     }}
                   />
                 </View>
@@ -742,18 +736,16 @@ export default function FacultyDashboard() {
                         className="flex-row items-center py-2.5 border-b border-gray-100"
                       >
                         <View
-                          className={`w-6 h-6 rounded-full items-center justify-center mr-3 ${
-                            student.is_completed
+                          className={`w-6 h-6 rounded-full items-center justify-center mr-3 ${student.is_completed
                               ? "bg-green-100"
                               : "bg-gray-100"
-                          }`}
+                            }`}
                         >
                           <Text
-                            className={`text-xs font-bold ${
-                              student.is_completed
+                            className={`text-xs font-bold ${student.is_completed
                                 ? "text-green-600"
                                 : "text-gray-400"
-                            }`}
+                              }`}
                           >
                             {student.is_completed ? "✓" : "○"}
                           </Text>

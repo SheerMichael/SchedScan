@@ -71,6 +71,7 @@ urlpatterns = [
     path('faculty/enrolled-students/', views.FacultyEnrolledStudentsView.as_view(), name='faculty_enrolled_students'),
     path('faculty/remove-student/', views.FacultyRemoveStudentView.as_view(), name='faculty_remove_student'),
     path('student/enroll/', views.StudentEnrollView.as_view(), name='student_enroll'),
+    path('student/enroll/sync/', views.StudentEnrollSyncView.as_view(), name='student_enroll_sync'),
     path('student/enroll/preview/', views.ClassCodePreviewView.as_view(), name='student_enroll_preview'),
     path('student/unenroll/', views.StudentUnenrollView.as_view(), name='student_unenroll'),
     path('student/enrollments/', views.StudentEnrollmentListView.as_view(), name='student_enrollments'),

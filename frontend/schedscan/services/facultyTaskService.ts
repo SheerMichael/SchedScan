@@ -91,6 +91,37 @@ export interface ClassCodePreview {
     already_enrolled: boolean;
 }
 
+/** Conflict detail from enroll+sync */
+export interface EnrollSyncConflict {
+    day: string;
+    new_course: {
+        subject_code: string;
+        subject_name: string;
+        start_time: string;
+        end_time: string;
+        location: string;
+    };
+    existing_course: {
+        subject_code: string;
+        subject_name: string;
+        start_time: string;
+        end_time: string;
+        location: string;
+    };
+    overlap_minutes: number;
+}
+
+/** Response from enroll+sync endpoint */
+export interface EnrollSyncResponse {
+    enrolled: boolean;
+    synced: boolean;
+    courses_added?: number;
+    has_conflicts?: boolean;
+    conflicts?: EnrollSyncConflict[];
+    message?: string;
+    enrollment?: ClassEnrollment;
+}
+
 // ============================================
 // Faculty-Side Service
 // ============================================
@@ -245,6 +276,12 @@ export const studentEnrollmentService = {
         subject_code?: string;
     }): Promise<{ message: string; enrollment_id: number }> => {
         const response = await api.post('/student/unenroll/', data);
+        return response.data;
+    },
+
+    /** Enroll using a class code AND sync courses to active schedule */
+    enrollAndSync: async (code: string, force: boolean = false): Promise<EnrollSyncResponse> => {
+        const response = await api.post('/student/enroll/sync/', { code, force });
         return response.data;
     },
 };

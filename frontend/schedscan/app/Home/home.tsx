@@ -685,14 +685,14 @@ export default function SchedScanApp() {
           </TouchableOpacity>
         </View>
 
-        {/* Join a Class Button (Students) */}
-        {user?.user_type === 'student' && (
+        {/* Join a Class Button (Students & Faculty) */}
+        {(user?.user_type === 'student' || user?.user_type === 'faculty') && (
           <TouchableOpacity
             onPress={() => setShowJoinClassModal(true)}
             className="mx-4 mt-3 bg-orange-50 border border-orange-200 px-4 py-3 rounded-xl flex-row items-center justify-center"
             activeOpacity={0.7}
           >
-            <Text className="text-orange-600 font-semibold text-sm">📋 Join a Class with Code</Text>
+            <Text className="text-orange-600 font-semibold text-sm">Join a Class with Code</Text>
           </TouchableOpacity>
         )}
 
@@ -839,10 +839,10 @@ export default function SchedScanApp() {
                         </Text>
                       </View>
                     )}
-                    {/* Faculty task badge for students */}
+                    {/* Faculty Mode Active for students */}
                     {facultyTaskCounts[item.title]?.total > 0 && (
                       <View className="flex-row items-center bg-orange-100 px-2 py-1 rounded-full ml-1">
-                        <Text className="text-xs">📋</Text>
+                        <Text className="text-xs">Faculty</Text>
                         <Text className="text-xs font-semibold text-orange-700 ml-1">
                           {facultyTaskCounts[item.title]?.incomplete > 0
                             ? `${facultyTaskCounts[item.title].incomplete}`

@@ -509,3 +509,194 @@ class UserTypeCheckTests(TestCase):
             format='json'
         )
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class FacultyEnrollmentTests(TestCase):
+    """Tests for faculty enrolling in classes via class codes."""
+
+    def setUp(self):
+        self.faculty1 = User.objects.create_user(
+            email='faculty1@test.com', password='testpass123',
+            first_name='Dr.', last_name='Smith', user_type='faculty'
+        )
+        self.faculty2 = User.objects.create_user(
+            email='faculty2@test.com', password='testpass123',
+            first_name='Prof.', last_name='Jones', user_type='faculty'
+        )
+        # faculty2's class code
+        self.code = ClassCode.objects.create(
+            faculty=self.faculty2, subject_code='MATH201',
+            code=ClassCode.generate_code()
+        )
+        self.faculty1_client = APIClient()
+        self.faculty1_client.force_authenticate(user=self.faculty1)
+        self.faculty2_client = APIClient()
+        self.faculty2_client.force_authenticate(user=self.faculty2)
+
+    def test_faculty_can_enroll_with_class_code(self):
+        response = self.faculty1_client.post('/api/student/enroll/', {
+            'code': self.code.code
+        })
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(ClassEnrollment.objects.filter(
+            student=self.faculty1, faculty=self.faculty2,
+            subject_code='MATH201', status='active'
+        ).exists())
+
+    def test_faculty_cannot_self_enroll(self):
+        response = self.faculty2_client.post('/api/student/enroll/', {
+            'code': self.code.code
+        })
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('own class', response.data['error'])
+
+    def test_faculty_can_list_enrollments(self):
+        ClassEnrollment.objects.create(
+            student=self.faculty1, faculty=self.faculty2,
+            subject_code='MATH201', enrollment_type='code'
+        )
+        response = self.faculty1_client.get('/api/student/enrollments/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+
+    def test_faculty_can_unenroll(self):
+        enrollment = ClassEnrollment.objects.create(
+            student=self.faculty1, faculty=self.faculty2,
+            subject_code='MATH201', enrollment_type='code'
+        )
+        response = self.faculty1_client.post('/api/student/unenroll/', {
+            'enrollment_id': enrollment.id
+        })
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        enrollment.refresh_from_db()
+        self.assertEqual(enrollment.status, 'removed')
+
+
+class EnrollSyncTests(TestCase):
+    """Tests for the enroll + sync to calendar endpoint."""
+
+    def setUp(self):
+        self.faculty = User.objects.create_user(
+            email='faculty@test.com', password='testpass123',
+            first_name='Dr.', last_name='Smith', user_type='faculty'
+        )
+        self.student = User.objects.create_user(
+            email='student@test.com', password='testpass123',
+            first_name='John', last_name='Doe', user_type='student'
+        )
+
+        # Faculty schedule with courses
+        self.faculty_schedule = Schedule.objects.create(
+            user=self.faculty, title='Faculty Schedule', upload_type='faculty'
+        )
+        Course.objects.create(
+            user=self.faculty, schedule=self.faculty_schedule,
+            subject_code='CS101', subject_name='Intro CS',
+            start_time='8:00AM', end_time='9:00AM', day='M'
+        )
+        Course.objects.create(
+            user=self.faculty, schedule=self.faculty_schedule,
+            subject_code='CS101', subject_name='Intro CS',
+            start_time='8:00AM', end_time='9:00AM', day='W'
+        )
+
+        self.code = ClassCode.objects.create(
+            faculty=self.faculty, subject_code='CS101',
+            code=ClassCode.generate_code()
+        )
+
+        self.student_client = APIClient()
+        self.student_client.force_authenticate(user=self.student)
+
+    def test_enroll_sync_no_conflicts(self):
+        """Syncing when student has no conflicting courses."""
+        # Create student schedule with non-conflicting course
+        student_schedule = Schedule.objects.create(
+            user=self.student, title='Student Schedule',
+            upload_type='student', is_active=True
+        )
+        Course.objects.create(
+            user=self.student, schedule=student_schedule,
+            subject_code='ENG101', subject_name='English',
+            start_time='10:00AM', end_time='11:00AM', day='M'
+        )
+
+        response = self.student_client.post('/api/student/enroll/sync/', {
+            'code': self.code.code
+        })
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.data['enrolled'])
+        self.assertTrue(response.data['synced'])
+        self.assertEqual(response.data['courses_added'], 2)
+
+        # Verify courses were added to schedule
+        self.assertEqual(student_schedule.courses.count(), 3)  # 1 existing + 2 new
+
+    def test_enroll_sync_with_conflicts(self):
+        """Syncing detects time conflicts and returns them."""
+        student_schedule = Schedule.objects.create(
+            user=self.student, title='Student Schedule',
+            upload_type='student', is_active=True
+        )
+        # Add a conflicting course (same day & overlapping time)
+        Course.objects.create(
+            user=self.student, schedule=student_schedule,
+            subject_code='MATH201', subject_name='Math',
+            start_time='8:30AM', end_time='10:00AM', day='M'
+        )
+
+        response = self.student_client.post('/api/student/enroll/sync/', {
+            'code': self.code.code
+        })
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['enrolled'])
+        self.assertFalse(response.data['synced'])
+        self.assertTrue(response.data['has_conflicts'])
+        self.assertEqual(len(response.data['conflicts']), 1)
+
+        # Course should NOT have been added
+        self.assertEqual(student_schedule.courses.count(), 1)
+
+    def test_enroll_sync_force_with_conflicts(self):
+        """Force-adding courses despite conflicts."""
+        student_schedule = Schedule.objects.create(
+            user=self.student, title='Student Schedule',
+            upload_type='student', is_active=True
+        )
+        Course.objects.create(
+            user=self.student, schedule=student_schedule,
+            subject_code='MATH201', subject_name='Math',
+            start_time='8:30AM', end_time='10:00AM', day='M'
+        )
+
+        response = self.student_client.post(
+            '/api/student/enroll/sync/',
+            {'code': self.code.code, 'force': True},
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.data['enrolled'])
+        self.assertTrue(response.data['synced'])
+        self.assertEqual(response.data['courses_added'], 2)
+
+    def test_enroll_sync_no_active_schedule(self):
+        """Creates a new schedule if user has none."""
+        response = self.student_client.post('/api/student/enroll/sync/', {
+            'code': self.code.code
+        })
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.data['synced'])
+
+        # Should have created a new schedule
+        self.assertTrue(Schedule.objects.filter(
+            user=self.student, is_active=True
+        ).exists())
+
+    def test_enroll_sync_self_enrollment(self):
+        """Faculty cannot sync enroll in their own class."""
+        faculty_client = APIClient()
+        faculty_client.force_authenticate(user=self.faculty)
+        response = faculty_client.post('/api/student/enroll/sync/', {
+            'code': self.code.code
+        })
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

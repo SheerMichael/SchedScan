@@ -11,14 +11,15 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { UserPlus, Clock, MapPin, BookOpen, User, X } from 'lucide-react-native';
+import { UserPlus, Clock, MapPin, BookOpen, User, X, Calendar, AlertTriangle } from 'lucide-react-native';
 import {
   studentEnrollmentService,
   ClassCodePreview,
   ClassCodeSubjectDetail,
+  EnrollSyncConflict,
 } from '../services/facultyTaskService';
 
-type JoinStep = 'input' | 'preview';
+type JoinStep = 'input' | 'preview' | 'sync';
 
 interface JoinClassModalProps {
   visible: boolean;
@@ -30,9 +31,10 @@ interface JoinClassModalProps {
 }
 
 /**
- * Two-step join class flow:
+ * Three-step join class flow:
  * 1. Enter class code
  * 2. Preview subject info → confirm enrollment
+ * 3. Sync to calendar (with conflict detection)
  *
  * The preview step fetches full subject metadata (name, time, location,
  * faculty name) so the student knows exactly what they're joining.
@@ -47,8 +49,10 @@ export default function JoinClassModal({
   const [code, setCode] = useState(initialCode);
   const [isLoading, setIsLoading] = useState(false);
   const [isEnrolling, setIsEnrolling] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [preview, setPreview] = useState<ClassCodePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [conflicts, setConflicts] = useState<EnrollSyncConflict[]>([]);
 
   // Reset state when modal opens / closes
   useEffect(() => {
@@ -57,6 +61,7 @@ export default function JoinClassModal({
       setCode(initialCode);
       setPreview(null);
       setError(null);
+      setConflicts([]);
     }
   }, [visible, initialCode]);
 
@@ -92,13 +97,9 @@ export default function JoinClassModal({
     setIsEnrolling(true);
     try {
       await studentEnrollmentService.enrollWithCode(preview.code);
-      Alert.alert(
-        'Enrolled! 🎉',
-        `You've joined ${preview.subject_code} with ${preview.faculty_name}.`,
-        [{ text: 'OK' }],
-      );
-      onEnrolled?.(preview.subject_code);
-      onClose();
+      // Move to sync step instead of closing
+      setStep('sync');
+      setConflicts([]);
     } catch (err: any) {
       const msg =
         err?.response?.data?.error || 'Failed to enroll. Please try again.';
@@ -106,6 +107,51 @@ export default function JoinClassModal({
     } finally {
       setIsEnrolling(false);
     }
+  };
+
+  // ── Step 3: Sync to calendar ─────────────────────────
+  const handleSyncToCalendar = async (force: boolean = false) => {
+    if (!preview) return;
+
+    setIsSyncing(true);
+    try {
+      const result = await studentEnrollmentService.enrollAndSync(preview.code, force);
+
+      if (result.has_conflicts && !result.synced && result.conflicts) {
+        // Show conflicts
+        setConflicts(result.conflicts);
+        return;
+      }
+
+      // Success
+      const coursesMsg = result.courses_added
+        ? ` ${result.courses_added} course(s) added to your calendar.`
+        : '';
+      Alert.alert(
+        'Synced! 🎉',
+        `You've joined ${preview.subject_code} with ${preview.faculty_name}.${coursesMsg}`,
+        [{ text: 'OK' }],
+      );
+      onEnrolled?.(preview.subject_code);
+      onClose();
+    } catch (err: any) {
+      const msg =
+        err?.response?.data?.error || 'Failed to sync. Please try again.';
+      Alert.alert('Error', msg);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // ── Skip sync (enroll only) ──────────────────────────
+  const handleSkipSync = () => {
+    Alert.alert(
+      'Enrolled! 🎉',
+      `You've joined ${preview?.subject_code} with ${preview?.faculty_name}.`,
+      [{ text: 'OK' }],
+    );
+    onEnrolled?.(preview?.subject_code || '');
+    onClose();
   };
 
   return (
@@ -124,12 +170,20 @@ export default function JoinClassModal({
             {/* Header */}
             <View className="bg-orange-500 px-5 py-4 flex-row items-center justify-between">
               <View className="flex-row items-center">
-                <UserPlus size={20} color="#ffffff" />
+                {step === 'sync' ? (
+                  <Calendar size={20} color="#ffffff" />
+                ) : (
+                  <UserPlus size={20} color="#ffffff" />
+                )}
                 <Text className="text-white font-bold text-lg ml-2">
-                  {step === 'input' ? 'Join a Class' : 'Confirm Enrollment'}
+                  {step === 'input'
+                    ? 'Join a Class'
+                    : step === 'preview'
+                      ? 'Confirm Enrollment'
+                      : 'Sync to Calendar'}
                 </Text>
               </View>
-              <TouchableOpacity onPress={onClose} disabled={isEnrolling}>
+              <TouchableOpacity onPress={onClose} disabled={isEnrolling || isSyncing}>
                 <X size={22} color="#ffffff" />
               </TouchableOpacity>
             </View>
@@ -167,11 +221,10 @@ export default function JoinClassModal({
                   <TouchableOpacity
                     onPress={handlePreview}
                     disabled={isLoading || !code.trim()}
-                    className={`mt-4 py-3.5 rounded-xl items-center ${
-                      isLoading || !code.trim()
+                    className={`mt-4 py-3.5 rounded-xl items-center ${isLoading || !code.trim()
                         ? 'bg-gray-300'
                         : 'bg-orange-500'
-                    }`}
+                      }`}
                   >
                     {isLoading ? (
                       <ActivityIndicator size="small" color="#ffffff" />
@@ -182,7 +235,7 @@ export default function JoinClassModal({
                     )}
                   </TouchableOpacity>
                 </>
-              ) : preview ? (
+              ) : step === 'preview' && preview ? (
                 /* ─── PREVIEW / CONFIRM STEP ─── */
                 <>
                   {/* Subject header */}
@@ -267,6 +320,111 @@ export default function JoinClassModal({
                         ← Enter a different code
                       </Text>
                     </TouchableOpacity>
+                  </View>
+                </>
+              ) : step === 'sync' && preview ? (
+                /* ─── SYNC TO CALENDAR STEP ─── */
+                <>
+                  <View className="bg-green-50 rounded-xl p-4 mb-4 border border-green-200">
+                    <Text className="text-green-800 font-bold text-base">
+                      ✅ Enrolled in {preview.subject_code}
+                    </Text>
+                    <Text className="text-green-600 text-sm mt-1">
+                      Would you like to add this subject's schedule to your calendar?
+                    </Text>
+                  </View>
+
+                  {/* Conflict display */}
+                  {conflicts.length > 0 && (
+                    <View className="mb-4">
+                      <View className="flex-row items-center mb-2">
+                        <AlertTriangle size={16} color="#D97706" />
+                        <Text className="text-amber-700 font-bold text-sm ml-1.5">
+                          Schedule Conflicts Detected
+                        </Text>
+                      </View>
+
+                      <ScrollView style={{ maxHeight: 150 }}>
+                        {conflicts.map((conflict, idx) => (
+                          <View
+                            key={idx}
+                            className="bg-amber-50 rounded-lg p-3 mb-2 border border-amber-200"
+                          >
+                            <Text className="text-amber-800 font-semibold text-xs mb-1">
+                              {formatDay(conflict.day)} — {conflict.overlap_minutes} min overlap
+                            </Text>
+                            <Text className="text-gray-700 text-xs">
+                              🆕 {conflict.new_course.subject_code}: {conflict.new_course.start_time} – {conflict.new_course.end_time}
+                            </Text>
+                            <Text className="text-gray-700 text-xs">
+                              📅 {conflict.existing_course.subject_code}: {conflict.existing_course.start_time} – {conflict.existing_course.end_time}
+                            </Text>
+                          </View>
+                        ))}
+                      </ScrollView>
+                    </View>
+                  )}
+
+                  {/* Actions */}
+                  <View className="gap-3">
+                    {conflicts.length > 0 ? (
+                      /* Show force-add option when conflicts exist */
+                      <>
+                        <TouchableOpacity
+                          onPress={() => handleSyncToCalendar(true)}
+                          disabled={isSyncing}
+                          className="bg-amber-500 py-3.5 rounded-xl items-center"
+                        >
+                          {isSyncing ? (
+                            <ActivityIndicator size="small" color="#ffffff" />
+                          ) : (
+                            <Text className="text-white font-bold text-base">
+                              Add Anyway
+                            </Text>
+                          )}
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          onPress={handleSkipSync}
+                          disabled={isSyncing}
+                          className="py-2 items-center"
+                        >
+                          <Text className="text-gray-400 font-medium text-sm">
+                            Skip — Don't sync to calendar
+                          </Text>
+                        </TouchableOpacity>
+                      </>
+                    ) : (
+                      /* Normal sync options */
+                      <>
+                        <TouchableOpacity
+                          onPress={() => handleSyncToCalendar(false)}
+                          disabled={isSyncing}
+                          className="bg-orange-500 py-3.5 rounded-xl items-center flex-row justify-center"
+                        >
+                          {isSyncing ? (
+                            <ActivityIndicator size="small" color="#ffffff" />
+                          ) : (
+                            <>
+                              <Calendar size={18} color="#ffffff" />
+                              <Text className="text-white font-bold text-base ml-2">
+                                Sync to Calendar
+                              </Text>
+                            </>
+                          )}
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          onPress={handleSkipSync}
+                          disabled={isSyncing}
+                          className="py-2 items-center"
+                        >
+                          <Text className="text-gray-400 font-medium text-sm">
+                            Skip — I'll add it later
+                          </Text>
+                        </TouchableOpacity>
+                      </>
+                    )}
                   </View>
                 </>
               ) : null}

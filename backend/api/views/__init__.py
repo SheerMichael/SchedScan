@@ -73,6 +73,7 @@ from .faculty_task_views import (
     FacultyModeCheckView,
     ClassCodePreviewView,
     StudentEnrollView,
+    StudentEnrollSyncView,
     StudentEnrollmentListView,
     StudentUnenrollView,
     FacultyEnrolledStudentsView,
