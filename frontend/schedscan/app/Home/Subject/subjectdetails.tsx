@@ -367,7 +367,7 @@ export default function SubjectDetails() {
           <>
             {/* Class Code Section */}
             <View className="bg-orange-50 p-4 rounded-xl mb-4 border border-orange-200">
-              <Text className="text-lg font-bold text-orange-800 mb-2">📋 Class Code</Text>
+              <Text className="text-lg font-bold text-orange-800 mb-2">Class Code</Text>
               {classCode ? (
                 <View className="flex-row items-center justify-between">
                   <View className="bg-white px-4 py-3 rounded-lg flex-1 mr-3">
@@ -497,7 +497,7 @@ export default function SubjectDetails() {
             {/* Faculty Tasks Section */}
             <View className="mb-6">
               <View className="flex-row justify-between items-center mb-3">
-                <Text className="text-xl font-bold text-orange-600">📋 Faculty Tasks</Text>
+                <Text className="text-xl font-bold text-orange-600">Faculty Tasks</Text>
                 {isFacultyLoading && <ActivityIndicator size="small" color="#f97316" />}
               </View>
 
