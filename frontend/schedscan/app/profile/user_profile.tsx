@@ -1,8 +1,7 @@
 import React, { useState } from "react";
-import { View, Text, TouchableOpacity, ScrollView, Image, Modal, Alert, TextInput, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Image, Modal, Alert, TextInput, ActivityIndicator } from 'react-native';
 import { router } from "expo-router";
 import Svg, { Path, Circle } from 'react-native-svg';
-import * as Device from 'expo-device';
 import { Gem, ScrollText, BellRing, CalendarDays, FileText, EyeOff, Trash2, Users, X, Copy, GraduationCap } from "lucide-react-native";
 import { useAuth } from '../../context/AuthContext';
 import { scheduleStorageService } from '../../services/scheduleStorageService';
@@ -10,12 +9,6 @@ import * as ExpoClipboard from 'expo-clipboard';
 import api from '@/services/api';
 
 const UserProfile = () => {
-
-    console.log({
-        platform: Platform.OS,
-        model: Device.modelName,
-        isRealDevice: Device.isDevice,
-    });
 
     const [modallogout, setModalLogout] = useState(false);
     const [modaldeleteaccount, setModalDeleteAccount] = useState(false);
