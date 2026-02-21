@@ -2,6 +2,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
+from rest_framework_simplejwt.token_blacklist.models import OutstandingToken, BlacklistedToken
 import logging
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,14 @@ class DeleteAccountView(APIView):
 
         try:
             user_email = user.email
+
+            # Blacklist all outstanding tokens for this user before deletion.
+            # OutstandingToken uses SET_NULL on the user FK, so we must delete
+            # them explicitly first to avoid orphaned / inconsistent token records.
+            outstanding_tokens = OutstandingToken.objects.filter(user=user)
+            BlacklistedToken.objects.filter(token__in=outstanding_tokens).delete()
+            outstanding_tokens.delete()
+
             user.delete()
             logger.info(f"User account deleted: {user_email}")
             return Response(
@@ -98,7 +107,7 @@ class DeleteAccountView(APIView):
                 status=status.HTTP_200_OK
             )
         except Exception as e:
-            logger.error(f"Error deleting account: {str(e)}")
+            logger.exception(f"Error deleting account for user {user.email}: {str(e)}")
             return Response(
                 {"error": "Failed to delete account"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
