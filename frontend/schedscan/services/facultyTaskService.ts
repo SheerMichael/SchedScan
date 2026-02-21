@@ -150,7 +150,7 @@ export const facultyTaskService = {
     getFacultyTasks: async (subjectCode?: string): Promise<FacultyTaskWithStats[]> => {
         const params = subjectCode ? { subject_code: subjectCode } : {};
         const response = await api.get('/faculty/tasks/', { params });
-        return response.data;
+        return response.data.results ?? response.data;
     },
 
     /** Create a new faculty task */
@@ -244,7 +244,7 @@ export const studentEnrollmentService = {
         const response = await api.get('/student/faculty-tasks/', {
             params: { subject_code: subjectCode },
         });
-        return response.data;
+        return response.data.results ?? response.data;
     },
 
     /** Toggle completion of a faculty task */
