@@ -81,6 +81,7 @@ from .faculty_task_views import (
     FacultyTaskListCreateView,
     FacultyTaskDetailView,
     FacultyTaskStatsView,
+    FacultyTaskFileDownloadView,
     StudentFacultyTaskListView,
     StudentFacultyTaskCompleteView,
     StudentFacultyTaskCountsView,

@@ -68,6 +68,7 @@ urlpatterns = [
     path('faculty/tasks/', views.FacultyTaskListCreateView.as_view(), name='faculty_task_list_create'),
     path('faculty/tasks/<int:pk>/', views.FacultyTaskDetailView.as_view(), name='faculty_task_detail'),
     path('faculty/tasks/<int:pk>/stats/', views.FacultyTaskStatsView.as_view(), name='faculty_task_stats'),
+    path('faculty/tasks/<int:pk>/file/', views.FacultyTaskFileDownloadView.as_view(), name='faculty_task_file'),
     path('faculty/enrolled-students/', views.FacultyEnrolledStudentsView.as_view(), name='faculty_enrolled_students'),
     path('faculty/remove-student/', views.FacultyRemoveStudentView.as_view(), name='faculty_remove_student'),
     path('student/enroll/', views.StudentEnrollView.as_view(), name='student_enroll'),

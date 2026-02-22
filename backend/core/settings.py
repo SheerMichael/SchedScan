@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
+    'storages',
     
     # Local apps
     'api',
@@ -161,6 +162,26 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 # Media files (uploaded by users)
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+# DigitalOcean Spaces (S3-compatible) storage for production
+# When DO_SPACES_BUCKET is set, all file uploads go to Spaces.
+# Otherwise, local filesystem is used (for development).
+DO_SPACES_BUCKET = os.getenv('DO_SPACES_BUCKET', '')
+if DO_SPACES_BUCKET:
+    AWS_ACCESS_KEY_ID = os.getenv('DO_SPACES_KEY', '')
+    AWS_SECRET_ACCESS_KEY = os.getenv('DO_SPACES_SECRET', '')
+    AWS_STORAGE_BUCKET_NAME = DO_SPACES_BUCKET
+    AWS_S3_REGION_NAME = os.getenv('DO_SPACES_REGION', 'sgp1')
+    AWS_S3_ENDPOINT_URL = f'https://{AWS_S3_REGION_NAME}.digitaloceanspaces.com'
+    AWS_S3_OBJECT_PARAMETERS = {'CacheControl': 'max-age=86400'}
+    AWS_DEFAULT_ACL = 'private'  # Files require authenticated access
+    AWS_QUERYSTRING_AUTH = True  # Generate signed URLs
+    AWS_QUERYSTRING_EXPIRE = 3600  # Signed URLs expire in 1 hour
+    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+
+# Max file upload size (10 MB)
+FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

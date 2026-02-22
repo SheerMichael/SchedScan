@@ -626,6 +626,18 @@ class FacultyTask(models.Model):
         blank=True,
         help_text="Optional due date for the task"
     )
+    file = models.FileField(
+        upload_to='faculty_files/%Y/%m/',
+        null=True,
+        blank=True,
+        help_text="Optional file attachment (PDF, image, Word, PowerPoint)"
+    )
+    file_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text="Original filename of the uploaded file"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

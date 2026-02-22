@@ -3,13 +3,17 @@ Faculty-Student Connection views.
 Handles class codes, enrollment, faculty tasks, completion tracking,
 faculty mode activation, and enrollment preview.
 """
+import os
+import mimetypes
 from django.utils import timezone
+from django.http import FileResponse
 from django.db.models import Q, Prefetch, Count, Subquery, OuterRef, BooleanField, Value
 from rest_framework import status, generics
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from ..models import (
     ClassCode, ClassEnrollment, FacultyTask, FacultyTaskCompletion, Course, Schedule, User
@@ -419,8 +423,10 @@ class FacultyTaskListCreateView(APIView):
     GET /api/faculty/tasks/?subject_code=CS101
     POST /api/faculty/tasks/
     Body: {"subject_code": "CS101", "text": "Submit lab report", "due_date": null}
+    Supports multipart/form-data for file uploads.
     """
     permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get(self, request):
         user = request.user
@@ -468,6 +474,38 @@ class FacultyTaskListCreateView(APIView):
             if not teaches_subject:
                 return Response(
                     {"error": f"You don't have '{subject_code}' in any of your faculty schedules."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # Validate file attachment if provided
+        uploaded_file = request.FILES.get('file')
+        if uploaded_file:
+            ALLOWED_EXTENSIONS = ('.pdf', '.png', '.jpg', '.jpeg', '.doc', '.docx', '.ppt', '.pptx')
+            ALLOWED_MIMETYPES = (
+                'application/pdf',
+                'image/png', 'image/jpeg',
+                'application/msword',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'application/vnd.ms-powerpoint',
+                'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            )
+            MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+
+            file_ext = os.path.splitext(uploaded_file.name)[1].lower()
+            if file_ext not in ALLOWED_EXTENSIONS:
+                return Response(
+                    {"error": f"Invalid file type '{file_ext}'. Allowed: {', '.join(ALLOWED_EXTENSIONS)}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            # Also validate content type to prevent MIME spoofing
+            if uploaded_file.content_type and uploaded_file.content_type not in ALLOWED_MIMETYPES:
+                return Response(
+                    {"error": f"Invalid content type '{uploaded_file.content_type}'."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if uploaded_file.size > MAX_FILE_SIZE:
+                return Response(
+                    {"error": f"File too large ({uploaded_file.size // (1024*1024)} MB). Max allowed: 10 MB."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
@@ -533,6 +571,13 @@ class FacultyTaskDetailView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+        # Clean up file from storage before deleting the task
+        if task.file:
+            try:
+                task.file.delete(save=False)
+            except Exception:
+                logger.warning(f"Failed to delete file for task {task.id}")
+
         task.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -596,6 +641,59 @@ class FacultyTaskStatsView(APIView):
             "total_enrolled": len(students),
             "students": students,
         }, status=status.HTTP_200_OK)
+
+
+class FacultyTaskFileDownloadView(APIView):
+    """
+    Download the file attached to a faculty task.
+    Accessible to the faculty owner and enrolled students.
+
+    GET /api/faculty/tasks/<id>/file/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+
+        try:
+            task = FacultyTask.objects.get(pk=pk)
+        except FacultyTask.DoesNotExist:
+            return Response(
+                {"error": "Task not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if not task.file:
+            return Response(
+                {"error": "No file attached to this task."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        user = request.user
+        is_faculty_owner = (task.faculty_id == user.id)
+        is_enrolled = ClassEnrollment.objects.filter(
+            student=user,
+            faculty=task.faculty,
+            subject_code=task.subject_code,
+            status='active'
+        ).exists()
+
+        if not is_faculty_owner and not is_enrolled:
+            return Response(
+                {"error": "You don't have access to this file."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Determine content type
+        content_type, _ = mimetypes.guess_type(task.file_name or task.file.name)
+        content_type = content_type or 'application/octet-stream'
+
+        response = FileResponse(
+            task.file.open('rb'),
+            content_type=content_type
+        )
+        filename = task.file_name or os.path.basename(task.file.name)
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
 
 
 # ============================================

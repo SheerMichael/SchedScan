@@ -566,14 +566,20 @@ class ClassEnrollmentSerializer(serializers.ModelSerializer):
 class FacultyTaskSerializer(serializers.ModelSerializer):
     """
     Serializer for FacultyTask - used by faculty to create/manage tasks.
+    Supports optional file upload via multipart/form-data.
     """
+    file = serializers.FileField(required=False, allow_null=True, write_only=True)
+
     class Meta:
         model = FacultyTask
-        fields = ['id', 'subject_code', 'text', 'due_date', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        fields = ['id', 'subject_code', 'text', 'due_date', 'file', 'file_name', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'file_name', 'created_at', 'updated_at']
 
     def create(self, validated_data):
         faculty = self.context['request'].user
+        uploaded_file = validated_data.get('file')
+        if uploaded_file:
+            validated_data['file_name'] = uploaded_file.name
         return FacultyTask.objects.create(faculty=faculty, **validated_data)
 
 
@@ -585,15 +591,20 @@ class FacultyTaskWithStatsSerializer(serializers.ModelSerializer):
     """
     completed_count = serializers.SerializerMethodField()
     total_enrolled = serializers.SerializerMethodField()
+    has_file = serializers.SerializerMethodField()
 
     class Meta:
         model = FacultyTask
         fields = [
             'id', 'subject_code', 'text', 'due_date',
             'completed_count', 'total_enrolled',
+            'file_name', 'has_file',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_has_file(self, obj):
+        return bool(obj.file)
 
     def get_completed_count(self, obj):
         # Use prefetched completions if available
@@ -630,15 +641,20 @@ class FacultyTaskStudentSerializer(serializers.ModelSerializer):
     is_completed = serializers.SerializerMethodField()
     completed_at = serializers.SerializerMethodField()
     faculty_name = serializers.SerializerMethodField()
+    has_file = serializers.SerializerMethodField()
 
     class Meta:
         model = FacultyTask
         fields = [
             'id', 'subject_code', 'text', 'due_date',
             'is_completed', 'completed_at', 'faculty_name',
+            'file_name', 'has_file',
             'created_at', 'updated_at'
         ]
         read_only_fields = fields
+
+    def get_has_file(self, obj):
+        return bool(obj.file)
 
     def _get_completion(self, obj):
         """Get the student's completion record, using prefetch if available."""

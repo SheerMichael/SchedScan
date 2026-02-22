@@ -14,6 +14,9 @@ import { router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import Svg, { Path } from "react-native-svg";
 import * as Clipboard from "expo-clipboard";
+import * as DocumentPicker from "expo-document-picker";
+import * as LegacyFileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
 import {
   ChevronRight,
   Copy,
@@ -26,6 +29,9 @@ import {
   X,
   BarChart3,
   RefreshCw,
+  Paperclip,
+  FileText,
+  Download,
 } from "lucide-react-native";
 import { useAuth } from "../../context/AuthContext";
 import {
@@ -84,6 +90,13 @@ export default function FacultyDashboard() {
   // Task stats modal
   const [taskStatsModal, setTaskStatsModal] = useState<TaskStats | null>(null);
   const [isLoadingStats, setIsLoadingStats] = useState(false);
+
+  // File attachment for new task
+  const [selectedFile, setSelectedFile] = useState<{
+    uri: string;
+    name: string;
+    type: string;
+  } | null>(null);
 
   // Active tab in subject detail
   const [activeTab, setActiveTab] = useState<"tasks" | "students">("tasks");
@@ -209,13 +222,77 @@ export default function FacultyDashboard() {
       const newTask = await facultyTaskService.createFacultyTask({
         subject_code: selectedSubject.subject_code,
         text: newTaskText.trim(),
+        file: selectedFile,
       });
       setFacultyTasks((prev) => [newTask, ...prev]);
       setNewTaskText("");
+      setSelectedFile(null);
     } catch {
       Alert.alert("Error", "Failed to add task.");
     } finally {
       setIsAddingTask(false);
+    }
+  };
+
+  const handlePickFile = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: [
+          "application/pdf",
+          "image/png",
+          "image/jpeg",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-powerpoint",
+          "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ],
+        copyToCacheDirectory: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        // Check file size (10 MB limit)
+        if (asset.size && asset.size > 10 * 1024 * 1024) {
+          Alert.alert("File too large", "Maximum file size is 10 MB.");
+          return;
+        }
+        setSelectedFile({
+          uri: asset.uri,
+          name: asset.name,
+          type: asset.mimeType || "application/octet-stream",
+        });
+      }
+    } catch {
+      Alert.alert("Error", "Failed to pick file.");
+    }
+  };
+
+  const handleDownloadFile = async (task: FacultyTaskWithStats) => {
+    try {
+      const url = facultyTaskService.getTaskFileUrl(task.id);
+      // Use FileSystem to download with auth
+      const token = await (await import("expo-secure-store")).getItemAsync("access_token");
+      const apiBase = (await import("../../services/api")).default.defaults.baseURL || "";
+      const downloadUrl = `${apiBase}${url}`;
+
+      const fileUri = (LegacyFileSystem.cacheDirectory ?? '') + (task.file_name || "download");
+      const downloadResult = await LegacyFileSystem.downloadAsync(downloadUrl, fileUri, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (downloadResult.status === 200) {
+        const canShare = await Sharing.isAvailableAsync();
+        if (canShare) {
+          await Sharing.shareAsync(downloadResult.uri);
+        } else {
+          Alert.alert("Downloaded", `File saved to ${downloadResult.uri}`);
+        }
+      } else {
+        Alert.alert("Error", "Failed to download file.");
+      }
+    } catch (err) {
+      console.error("Download error:", err);
+      Alert.alert("Error", "Failed to download file.");
     }
   };
 
@@ -314,7 +391,7 @@ export default function FacultyDashboard() {
           {/* Summary banner */}
           <View className="bg-orange-500 rounded-2xl p-5 mb-6">
             <Text className="text-white text-lg font-bold mb-1">
-              🎓 Faculty Mode Active
+              Faculty Mode Active
             </Text>
             <Text className="text-white/80 text-sm">
               Manage your subjects, class codes, tasks, and students all in one
@@ -563,6 +640,18 @@ export default function FacultyDashboard() {
                             {new Date(task.due_date).toLocaleDateString()}
                           </Text>
                         )}
+                        {task.has_file && (
+                          <TouchableOpacity
+                            onPress={() => handleDownloadFile(task)}
+                            className="flex-row items-center mt-1.5 bg-blue-50 self-start px-2 py-1 rounded-md"
+                          >
+                            <FileText size={12} color="#3b82f6" />
+                            <Text className="text-blue-600 text-xs ml-1 font-medium" numberOfLines={1}>
+                              {task.file_name || "Attachment"}
+                            </Text>
+                            <Download size={10} color="#3b82f6" style={{ marginLeft: 4 }} />
+                          </TouchableOpacity>
+                        )}
                       </View>
                       <View className="flex-row items-center">
                         <View className="bg-orange-100 px-3 py-1 rounded-full mr-2">
@@ -586,30 +675,54 @@ export default function FacultyDashboard() {
               {/* Add task input */}
               <View className="mt-4 mb-6">
                 <Text className="font-bold text-base mb-2">Add Class Task</Text>
-                <View className="bg-white p-3 rounded-xl border border-gray-200 flex-row items-center">
-                  <TextInput
-                    value={newTaskText}
-                    onChangeText={setNewTaskText}
-                    placeholder="Enter task for students..."
-                    className="flex-1 text-base"
-                    editable={!isAddingTask}
-                    onSubmitEditing={handleAddTask}
-                    returnKeyType="done"
-                  />
-                  <TouchableOpacity
-                    onPress={handleAddTask}
-                    disabled={isAddingTask || !newTaskText.trim()}
-                    className={`px-4 py-2 rounded-xl ml-2 ${isAddingTask || !newTaskText.trim()
+                <View className="bg-white p-3 rounded-xl border border-gray-200">
+                  <View className="flex-row items-center">
+                    <TextInput
+                      value={newTaskText}
+                      onChangeText={setNewTaskText}
+                      placeholder="Enter task for students..."
+                      className="flex-1 text-base"
+                      editable={!isAddingTask}
+                      onSubmitEditing={handleAddTask}
+                      returnKeyType="done"
+                    />
+                    <TouchableOpacity
+                      onPress={handlePickFile}
+                      disabled={isAddingTask}
+                      className="p-2 mr-1"
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Paperclip size={20} color={selectedFile ? "#3b82f6" : "#9ca3af"} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={handleAddTask}
+                      disabled={isAddingTask || !newTaskText.trim()}
+                      className={`px-4 py-2 rounded-xl ${isAddingTask || !newTaskText.trim()
                         ? "bg-gray-300"
                         : "bg-orange-500"
-                      }`}
-                  >
-                    {isAddingTask ? (
-                      <ActivityIndicator size="small" color="#fff" />
-                    ) : (
-                      <Text className="text-white font-bold">Add</Text>
-                    )}
-                  </TouchableOpacity>
+                        }`}
+                    >
+                      {isAddingTask ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text className="text-white font-bold">Add</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                  {selectedFile && (
+                    <View className="flex-row items-center mt-2 bg-blue-50 px-2 py-1.5 rounded-md">
+                      <FileText size={14} color="#3b82f6" />
+                      <Text className="text-blue-600 text-xs ml-1.5 flex-1" numberOfLines={1}>
+                        {selectedFile.name}
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => setSelectedFile(null)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <X size={14} color="#6b7280" />
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
               </View>
             </View>
@@ -710,10 +823,10 @@ export default function FacultyDashboard() {
                     className="bg-orange-500 h-full rounded-full"
                     style={{
                       width: `${taskStatsModal.total_enrolled > 0
-                          ? (taskStatsModal.completed_count /
-                            taskStatsModal.total_enrolled) *
-                          100
-                          : 0
+                        ? (taskStatsModal.completed_count /
+                          taskStatsModal.total_enrolled) *
+                        100
+                        : 0
                         }%`,
                     }}
                   />
@@ -737,14 +850,14 @@ export default function FacultyDashboard() {
                       >
                         <View
                           className={`w-6 h-6 rounded-full items-center justify-center mr-3 ${student.is_completed
-                              ? "bg-green-100"
-                              : "bg-gray-100"
+                            ? "bg-green-100"
+                            : "bg-gray-100"
                             }`}
                         >
                           <Text
                             className={`text-xs font-bold ${student.is_completed
-                                ? "text-green-600"
-                                : "text-gray-400"
+                              ? "text-green-600"
+                              : "text-gray-400"
                               }`}
                           >
                             {student.is_completed ? "✓" : "○"}

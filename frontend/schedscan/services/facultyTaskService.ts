@@ -9,6 +9,8 @@ export interface FacultyTask {
     subject_code: string;
     text: string;
     due_date: string | null;
+    file_name: string;
+    has_file: boolean;
     created_at: string;
     updated_at: string;
 }
@@ -153,13 +155,25 @@ export const facultyTaskService = {
         return response.data.results ?? response.data;
     },
 
-    /** Create a new faculty task */
+    /** Create a new faculty task (with optional file attachment) */
     createFacultyTask: async (data: {
         subject_code: string;
         text: string;
         due_date?: string | null;
+        file?: { uri: string; name: string; type: string } | null;
     }): Promise<FacultyTaskWithStats> => {
-        const response = await api.post('/faculty/tasks/', data);
+        const formData = new FormData();
+        formData.append('subject_code', data.subject_code);
+        formData.append('text', data.text);
+        if (data.due_date) {
+            formData.append('due_date', data.due_date);
+        }
+        if (data.file) {
+            formData.append('file', data.file as any);
+        }
+        const response = await api.post('/faculty/tasks/', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        });
         return response.data;
     },
 
@@ -213,6 +227,24 @@ export const facultyTaskService = {
     activateFacultyMode: async (): Promise<{ message: string; user: any }> => {
         const response = await api.post('/faculty/activate/');
         return response.data;
+    },
+
+    /** Download a file attached to a faculty task */
+    getTaskFileUrl: (taskId: number): string => {
+        // Returns the relative API path — used with api.get() for auth
+        return `/faculty/tasks/${taskId}/file/`;
+    },
+
+    /** Download file as blob (for saving/sharing) */
+    downloadTaskFile: async (taskId: number): Promise<{ blob: Blob; fileName: string }> => {
+        const response = await api.get(`/faculty/tasks/${taskId}/file/`, {
+            responseType: 'blob',
+        });
+        // Extract filename from Content-Disposition header
+        const disposition = response.headers['content-disposition'] || '';
+        const match = disposition.match(/filename="?([^"]+)"?/);
+        const fileName = match ? match[1] : 'download';
+        return { blob: response.data, fileName };
     },
 };
 

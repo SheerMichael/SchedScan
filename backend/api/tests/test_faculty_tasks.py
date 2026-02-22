@@ -700,3 +700,139 @@ class EnrollSyncTests(TestCase):
             'code': self.code.code
         })
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class FacultyTaskFileTests(TestCase):
+    """Tests for faculty task file upload and download."""
+
+    def setUp(self):
+        self.faculty = User.objects.create_user(
+            email='faculty@test.com', password='testpass123',
+            first_name='Dr.', last_name='Smith', user_type='faculty'
+        )
+        self.student = User.objects.create_user(
+            email='student@test.com', password='testpass123',
+            first_name='John', last_name='Doe', user_type='student'
+        )
+        self.other_student = User.objects.create_user(
+            email='other@test.com', password='testpass123',
+            first_name='Jane', last_name='Other', user_type='student'
+        )
+        self.faculty_client = APIClient()
+        self.faculty_client.force_authenticate(user=self.faculty)
+        self.student_client = APIClient()
+        self.student_client.force_authenticate(user=self.student)
+        self.other_client = APIClient()
+        self.other_client.force_authenticate(user=self.other_student)
+
+        # Faculty schedule
+        faculty_schedule = Schedule.objects.create(
+            user=self.faculty, title='Faculty Schedule', upload_type='faculty'
+        )
+        Course.objects.create(
+            user=self.faculty, schedule=faculty_schedule,
+            subject_code='CS101', subject_name='Intro CS',
+            start_time='8:00AM', end_time='9:00AM', day='M'
+        )
+
+        # Enrolled student
+        ClassEnrollment.objects.create(
+            student=self.student, faculty=self.faculty,
+            subject_code='CS101', enrollment_type='code'
+        )
+        # other_student is NOT enrolled
+
+    def _make_test_file(self, name='test.pdf', content=b'%PDF-1.4 test content', content_type='application/pdf'):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return SimpleUploadedFile(name, content, content_type=content_type)
+
+    def test_faculty_create_task_with_file(self):
+        """Faculty can create a task with a file attachment."""
+        test_file = self._make_test_file()
+        response = self.faculty_client.post(
+            '/api/faculty/tasks/',
+            {'subject_code': 'CS101', 'text': 'Read this PDF', 'file': test_file},
+            format='multipart'
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.data['has_file'])
+        self.assertEqual(response.data['file_name'], 'test.pdf')
+
+    def test_faculty_create_task_without_file(self):
+        """Creating a task without file still works (backward compat)."""
+        response = self.faculty_client.post('/api/faculty/tasks/', {
+            'subject_code': 'CS101', 'text': 'No file task'
+        })
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertFalse(response.data['has_file'])
+
+    def test_faculty_download_own_file(self):
+        """Faculty can download files they uploaded."""
+        test_file = self._make_test_file()
+        response = self.faculty_client.post(
+            '/api/faculty/tasks/',
+            {'subject_code': 'CS101', 'text': 'Download me', 'file': test_file},
+            format='multipart'
+        )
+        task_id = response.data['id']
+
+        download_response = self.faculty_client.get(f'/api/faculty/tasks/{task_id}/file/')
+        self.assertEqual(download_response.status_code, 200)
+
+    def test_enrolled_student_download_file(self):
+        """Enrolled students can download task files."""
+        test_file = self._make_test_file()
+        response = self.faculty_client.post(
+            '/api/faculty/tasks/',
+            {'subject_code': 'CS101', 'text': 'For students', 'file': test_file},
+            format='multipart'
+        )
+        task_id = response.data['id']
+
+        download_response = self.student_client.get(f'/api/faculty/tasks/{task_id}/file/')
+        self.assertEqual(download_response.status_code, 200)
+
+    def test_unenrolled_student_cannot_download(self):
+        """Non-enrolled students cannot download task files."""
+        test_file = self._make_test_file()
+        response = self.faculty_client.post(
+            '/api/faculty/tasks/',
+            {'subject_code': 'CS101', 'text': 'Secret file', 'file': test_file},
+            format='multipart'
+        )
+        task_id = response.data['id']
+
+        download_response = self.other_client.get(f'/api/faculty/tasks/{task_id}/file/')
+        self.assertEqual(download_response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_file_type_validation(self):
+        """Uploading disallowed file types is rejected."""
+        bad_file = self._make_test_file(name='malware.exe', content=b'bad', content_type='application/x-msdownload')
+        response = self.faculty_client.post(
+            '/api/faculty/tasks/',
+            {'subject_code': 'CS101', 'text': 'Bad file', 'file': bad_file},
+            format='multipart'
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Invalid file type', response.data['error'])
+
+    def test_file_size_validation(self):
+        """Uploading files larger than 10 MB is rejected."""
+        # Create a file just over 10 MB
+        big_content = b'x' * (10 * 1024 * 1024 + 1)
+        big_file = self._make_test_file(name='huge.pdf', content=big_content)
+        response = self.faculty_client.post(
+            '/api/faculty/tasks/',
+            {'subject_code': 'CS101', 'text': 'Huge file', 'file': big_file},
+            format='multipart'
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('File too large', response.data['error'])
+
+    def test_download_no_file_returns_404(self):
+        """Downloading from task with no file returns 404."""
+        task = FacultyTask.objects.create(
+            faculty=self.faculty, subject_code='CS101', text='No file'
+        )
+        response = self.faculty_client.get(f'/api/faculty/tasks/{task.id}/file/')
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
