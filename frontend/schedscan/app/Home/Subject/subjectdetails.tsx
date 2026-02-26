@@ -268,44 +268,102 @@ export default function SubjectDetails() {
     try {
       const url = facultyTaskService.getTaskFileUrl(task.id);
       const apiBase = api.defaults.baseURL || "";
-      const downloadUrl = `${apiBase}${url}`;
+      const apiEndpoint = `${apiBase}${url}`;
+      console.log("File download endpoint:", apiEndpoint, "Task ID:", task.id, "has_file:", task.has_file);
 
       // Sanitize filename to prevent path traversal and invalid URI characters
       const safeName = (task.file_name || "download").replace(/[^a-zA-Z0-9._-]/g, '_');
       const fileUri = `${LegacyFileSystem.cacheDirectory ?? ''}${safeName}`;
 
-      let token = await SecureStore.getItemAsync("access_token");
-      let downloadResult = await LegacyFileSystem.downloadAsync(downloadUrl, fileUri, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      // Helper to get a valid token (refresh if expired)
+      const getToken = async (): Promise<string | null> => {
+        return SecureStore.getItemAsync("access_token");
+      };
 
-      // If 401 (token expired), refresh once and retry
-      if (downloadResult.status === 401) {
+      const refreshAndGetToken = async (): Promise<string | null> => {
         try {
           const refreshToken = await SecureStore.getItemAsync("refresh_token");
           if (refreshToken) {
             const refreshResp = await api.post('/auth/token/refresh/', { refresh: refreshToken });
             const newToken = refreshResp.data.access;
             await SecureStore.setItemAsync("access_token", newToken);
-            downloadResult = await LegacyFileSystem.downloadAsync(downloadUrl, fileUri, {
-              headers: { Authorization: `Bearer ${newToken}` },
-            });
+            return newToken;
           }
         } catch (refreshErr) {
           console.error("Token refresh failed during download:", refreshErr);
         }
+        return null;
+      };
+
+      // Step 1: Call the API endpoint (authenticated) to get file info
+      // For S3 storage: returns JSON { download_url, file_name }
+      // For local storage: returns the file directly
+      let token = await getToken();
+      let response = await LegacyFileSystem.downloadAsync(apiEndpoint, fileUri, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      // If 401 (token expired), refresh once and retry
+      if (response.status === 401) {
+        token = await refreshAndGetToken();
+        if (token) {
+          response = await LegacyFileSystem.downloadAsync(apiEndpoint, fileUri, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+        }
       }
 
-      if (downloadResult.status === 200) {
-        const canShare = await Sharing.isAvailableAsync();
-        if (canShare) {
-          await Sharing.shareAsync(downloadResult.uri);
-        } else {
-          Alert.alert("Downloaded", `File saved to ${downloadResult.uri}`);
+      if (response.status === 200) {
+        // Check if the response is a JSON with download_url (S3 pre-signed URL)
+        let isS3Response = false;
+        try {
+          const contentType = response.headers?.['content-type'] || response.headers?.['Content-Type'] || '';
+          if (contentType.includes('application/json')) {
+            const body = await LegacyFileSystem.readAsStringAsync(response.uri);
+            const json = JSON.parse(body);
+            if (json.download_url) {
+              isS3Response = true;
+              console.log("S3 pre-signed URL received, downloading from Spaces...");
+              // Step 2: Download from the pre-signed URL (no auth header needed)
+              const s3Result = await LegacyFileSystem.downloadAsync(json.download_url, fileUri);
+              if (s3Result.status === 200) {
+                const canShare = await Sharing.isAvailableAsync();
+                if (canShare) {
+                  await Sharing.shareAsync(s3Result.uri);
+                } else {
+                  Alert.alert("Downloaded", `File saved to ${s3Result.uri}`);
+                }
+              } else {
+                console.error("S3 download failed with status:", s3Result.status);
+                Alert.alert("Error", `Failed to download file from storage (HTTP ${s3Result.status}).`);
+              }
+            }
+          }
+        } catch (_) {
+          // Not JSON — it's the actual file (local storage mode)
+        }
+
+        if (!isS3Response) {
+          // Local storage mode: file was downloaded directly
+          const canShare = await Sharing.isAvailableAsync();
+          if (canShare) {
+            await Sharing.shareAsync(response.uri);
+          } else {
+            Alert.alert("Downloaded", `File saved to ${response.uri}`);
+          }
         }
       } else {
-        console.error("Download failed with status:", downloadResult.status);
-        Alert.alert("Error", `Failed to download file (HTTP ${downloadResult.status}).`);
+        // Read response body for error details
+        let errorDetail = '';
+        try {
+          if (response.uri) {
+            const body = await LegacyFileSystem.readAsStringAsync(response.uri);
+            errorDetail = body.substring(0, 500);
+            console.error("Download failed body:", errorDetail);
+          }
+        } catch (_) { /* ignore read errors */ }
+        console.error("Download failed with status:", response.status, "URL:", apiEndpoint);
+        Alert.alert("Error", `Failed to download file (HTTP ${response.status}).${errorDetail ? '\n' + errorDetail : ''}`);
       }
     } catch (err) {
       console.error("Download error:", err);

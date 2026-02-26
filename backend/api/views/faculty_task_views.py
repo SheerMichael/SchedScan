@@ -5,6 +5,7 @@ faculty mode activation, and enrollment preview.
 """
 import os
 import mimetypes
+from django.conf import settings
 from django.utils import timezone
 from django.http import FileResponse
 from django.db.models import Q, Prefetch, Count, Subquery, OuterRef, BooleanField, Value
@@ -650,20 +651,37 @@ class FacultyTaskFileDownloadView(APIView):
     Accessible to the faculty owner and enrolled students.
 
     GET /api/faculty/tasks/<id>/file/
+
+    For S3/DO Spaces storage: returns a JSON response with a pre-signed
+    download_url so the client can download directly from Spaces without
+    forwarding auth headers.
+    For local storage: streams the file directly.
     """
     permission_classes = [IsAuthenticated]
+
+    def _is_s3_storage(self, task):
+        """Check if the file for this task is stored on S3-based storage (e.g., DigitalOcean Spaces)."""
+        try:
+            storage_cls = task.file.storage.__class__.__name__
+            return 'S3' in storage_cls or 's3' in storage_cls
+        except Exception:
+            return False
 
     def get(self, request, pk):
 
         try:
             task = FacultyTask.objects.get(pk=pk)
         except FacultyTask.DoesNotExist:
+            logger.warning(f"File download 404: Task pk={pk} does not exist.")
             return Response(
                 {"error": "Task not found."},
                 status=status.HTTP_404_NOT_FOUND
             )
 
         if not task.file:
+            logger.warning(
+                f"File download 404: Task pk={pk} has no file attached."
+            )
             return Response(
                 {"error": "No file attached to this task."},
                 status=status.HTTP_404_NOT_FOUND
@@ -684,16 +702,40 @@ class FacultyTaskFileDownloadView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        # Determine content type
+        # For S3/DO Spaces storage: return a pre-signed URL in JSON
+        # The client downloads directly from Spaces (no auth header needed)
+        if self._is_s3_storage(task):
+            try:
+                file_url = task.file.url  # Generates a pre-signed URL for private S3 files
+                logger.info(f"File download: Returning pre-signed URL for task pk={pk}")
+                return Response({
+                    "download_url": file_url,
+                    "file_name": task.file_name or os.path.basename(task.file.name),
+                }, status=status.HTTP_200_OK)
+            except Exception as e:
+                logger.error(f"Failed to generate pre-signed URL for task {pk}: {e}")
+                return Response(
+                    {"error": "Failed to generate download URL."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        # Local storage: stream the file directly
         content_type, _ = mimetypes.guess_type(task.file_name or task.file.name)
         content_type = content_type or 'application/octet-stream'
 
         try:
             file_handle = task.file.open('rb')
         except Exception as e:
-            logger.error(f"Failed to open file for task {pk}: {e}")
+            logger.error(
+                f"Failed to open file for task {pk}: {e}. "
+                f"File field value: '{task.file.name}'. "
+                f"Storage backend: {task.file.storage.__class__.__name__}. "
+                f"If using ephemeral container storage (no DO_SPACES_BUCKET), "
+                f"files are lost on container restart."
+            )
             return Response(
-                {"error": "File not found on server. It may have been deleted."},
+                {"error": "File not found on server. It may have been deleted or the server was restarted. "
+                          "Contact your administrator to configure persistent file storage."},
                 status=status.HTTP_404_NOT_FOUND
             )
 

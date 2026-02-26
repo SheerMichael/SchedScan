@@ -157,7 +157,6 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # Media files (uploaded by users)
 MEDIA_URL = '/media/'
@@ -177,7 +176,27 @@ if DO_SPACES_BUCKET:
     AWS_DEFAULT_ACL = 'private'  # Files require authenticated access
     AWS_QUERYSTRING_AUTH = True  # Generate signed URLs
     AWS_QUERYSTRING_EXPIRE = 3600  # Signed URLs expire in 1 hour
-    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+
+    # Django 5.2 STORAGES dict (replaces deprecated DEFAULT_FILE_STORAGE
+    # and STATICFILES_STORAGE settings)
+    STORAGES = {
+        "default": {
+            "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+        },
+        "staticfiles": {
+            "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        },
+    }
+else:
+    # Local development: use filesystem storage
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        },
+    }
 
 # Max file upload size (10 MB)
 FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB
