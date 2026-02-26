@@ -5,6 +5,7 @@ import { facultyTaskService, ClassCode, FacultyModeStatus } from '../services/fa
 import { usePushNotification } from '../usePushNotification';
 import { offlineService } from '../services/offlineService';
 import { taskService } from '../services/taskService';
+import { cancelAllClassReminders } from '../services/classReminderService';
 
 // Cache TTL for active schedule (30 seconds)
 const SCHEDULE_CACHE_TTL_MS = 30 * 1000;
@@ -156,6 +157,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Clear all offline data (cache + sync queue) and task caches
       await offlineService.clearAll();
       await taskService.clearAllCaches();
+      // Cancel all scheduled class reminders
+      await cancelAllClassReminders();
     } catch (error) {
       console.error('Logout failed:', error);
       // Clear user and cache anyway
@@ -164,6 +167,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       invalidateFacultyDataCache();
       await offlineService.clearAll();
       await taskService.clearAllCaches();
+      await cancelAllClassReminders().catch(() => {});
     } finally {
       setIsLoading(false);
     }

@@ -18,6 +18,7 @@ import Animated, {
 import FacultyModeModal from '../../components/FacultyModeModal';
 import JoinClassModal from '../../components/JoinClassModal';
 import notificationService from '../../services/notificationService';
+import { scheduleClassReminders } from '../../services/classReminderService';
 
 export default function SchedScanApp() {
   const { user, getActiveSchedule, isOffline, hasPendingFacultyUnlock, activateFacultyMode, setPendingFacultyUnlock } = useAuth();
@@ -288,6 +289,12 @@ export default function SchedScanApp() {
         if (selectedDay !== null) {
           updateDaySchedule(selectedDay, active.courses);
         }
+
+        // Schedule local class reminder notifications for the next 7 days
+        // This replaces the server-side cron job — zero cost, works offline
+        scheduleClassReminders(active).catch(err =>
+          console.warn('Failed to schedule class reminders:', err)
+        );
 
         // Load task counts for all subjects (uses batch API endpoint)
         const subjectCodes = active.courses.map((c: Course) => c.subject_code);
