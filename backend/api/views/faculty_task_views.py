@@ -651,11 +651,15 @@ class FacultyTaskFileDownloadView(APIView):
     Accessible to the faculty owner and enrolled students.
 
     GET /api/faculty/tasks/<id>/file/
+    → Always returns a lightweight JSON response with metadata:
+      { download_url, file_name, file_size, storage }
+      - storage="s3"  → download_url is a pre-signed Spaces URL (no auth header needed)
+      - storage="local" → download_url is the same endpoint with ?raw=1; client must
+        include the Authorization header.
 
-    For S3/DO Spaces storage: returns a JSON response with a pre-signed
-    download_url so the client can download directly from Spaces without
-    forwarding auth headers.
-    For local storage: streams the file directly.
+    GET /api/faculty/tasks/<id>/file/?raw=1
+    → Streams the actual file bytes (local storage only).
+      Includes Content-Length for accurate progress tracking.
     """
     permission_classes = [IsAuthenticated]
 
@@ -667,13 +671,13 @@ class FacultyTaskFileDownloadView(APIView):
         except Exception:
             return False
 
-    def get(self, request, pk):
-
+    def _check_access(self, request, pk):
+        """Validate task exists, has a file, and user is authorized. Returns (task, error_response)."""
         try:
             task = FacultyTask.objects.get(pk=pk)
         except FacultyTask.DoesNotExist:
             logger.warning(f"File download 404: Task pk={pk} does not exist.")
-            return Response(
+            return None, Response(
                 {"error": "Task not found."},
                 status=status.HTTP_404_NOT_FOUND
             )
@@ -682,7 +686,7 @@ class FacultyTaskFileDownloadView(APIView):
             logger.warning(
                 f"File download 404: Task pk={pk} has no file attached."
             )
-            return Response(
+            return None, Response(
                 {"error": "No file attached to this task."},
                 status=status.HTTP_404_NOT_FOUND
             )
@@ -697,20 +701,42 @@ class FacultyTaskFileDownloadView(APIView):
         ).exists()
 
         if not is_faculty_owner and not is_enrolled:
-            return Response(
+            return None, Response(
                 {"error": "You don't have access to this file."},
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        # For S3/DO Spaces storage: return a pre-signed URL in JSON
-        # The client downloads directly from Spaces (no auth header needed)
+        return task, None
+
+    def _get_file_size(self, task):
+        """Return the file size in bytes, or None on error."""
+        try:
+            return task.file.size
+        except Exception:
+            return None
+
+    def get(self, request, pk):
+        task, error = self._check_access(request, pk)
+        if error:
+            return error
+
+        # ---- raw=1: stream the actual bytes (local storage) ----
+        if request.query_params.get('raw') == '1':
+            return self._stream_file(task, pk)
+
+        # ---- Default: return lightweight JSON metadata ----
+        filename = task.file_name or os.path.basename(task.file.name)
+        file_size = self._get_file_size(task)
+
         if self._is_s3_storage(task):
             try:
-                file_url = task.file.url  # Generates a pre-signed URL for private S3 files
+                file_url = task.file.url  # pre-signed URL for private S3 files
                 logger.info(f"File download: Returning pre-signed URL for task pk={pk}")
                 return Response({
                     "download_url": file_url,
-                    "file_name": task.file_name or os.path.basename(task.file.name),
+                    "file_name": filename,
+                    "file_size": file_size,
+                    "storage": "s3",
                 }, status=status.HTTP_200_OK)
             except Exception as e:
                 logger.error(f"Failed to generate pre-signed URL for task {pk}: {e}")
@@ -719,7 +745,17 @@ class FacultyTaskFileDownloadView(APIView):
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
 
-        # Local storage: stream the file directly
+        # Local storage: return a URL pointing back to this endpoint with ?raw=1
+        raw_path = request.build_absolute_uri(request.path) + '?raw=1'
+        return Response({
+            "download_url": raw_path,
+            "file_name": filename,
+            "file_size": file_size,
+            "storage": "local",
+        }, status=status.HTTP_200_OK)
+
+    def _stream_file(self, task, pk):
+        """Stream the file bytes with Content-Length for progress tracking."""
         content_type, _ = mimetypes.guess_type(task.file_name or task.file.name)
         content_type = content_type or 'application/octet-stream'
 
@@ -747,6 +783,12 @@ class FacultyTaskFileDownloadView(APIView):
         # Sanitize filename: strip path separators, escape quotes
         filename = os.path.basename(filename).replace('"', '\\"')
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
+
+        # Provide Content-Length so clients can show accurate progress
+        file_size = self._get_file_size(task)
+        if file_size is not None:
+            response['Content-Length'] = str(file_size)
+
         return response
 
 

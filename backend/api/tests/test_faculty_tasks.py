@@ -865,8 +865,17 @@ class FacultyTaskFileTests(TestCase):
         )
         task_id = response.data['id']
 
+        # Default GET returns JSON metadata
         download_response = self.faculty_client.get(f'/api/faculty/tasks/{task_id}/file/')
         self.assertEqual(download_response.status_code, 200)
+        self.assertIn('download_url', download_response.data)
+        self.assertIn('file_name', download_response.data)
+        self.assertEqual(download_response.data['storage'], 'local')
+
+        # ?raw=1 streams the actual file bytes
+        raw_response = self.faculty_client.get(f'/api/faculty/tasks/{task_id}/file/?raw=1')
+        self.assertEqual(raw_response.status_code, 200)
+        self.assertIn('Content-Length', raw_response)
 
     def test_enrolled_student_download_file(self):
         """Enrolled students can download task files."""
@@ -880,6 +889,7 @@ class FacultyTaskFileTests(TestCase):
 
         download_response = self.student_client.get(f'/api/faculty/tasks/{task_id}/file/')
         self.assertEqual(download_response.status_code, 200)
+        self.assertIn('download_url', download_response.data)
 
     def test_unenrolled_student_cannot_download(self):
         """Non-enrolled students cannot download task files."""

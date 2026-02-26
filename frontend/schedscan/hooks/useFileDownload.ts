@@ -75,8 +75,6 @@ export function useFileDownload(): FileDownloadState {
 
     try {
       const url = facultyTaskService.getTaskFileUrl(task.id);
-      const apiBase = api.defaults.baseURL || '';
-      const apiEndpoint = `${apiBase}${url}`;
 
       const safeName = (task.file_name || 'download').replace(/[^a-zA-Z0-9._-]/g, '_');
       const fileUri = `${LegacyFileSystem.cacheDirectory ?? ''}${safeName}`;
@@ -86,52 +84,31 @@ export function useFileDownload(): FileDownloadState {
         if (dp.totalBytesExpectedToWrite > 0) {
           setDownloadProgress(dp.totalBytesWritten / dp.totalBytesExpectedToWrite);
         } else {
-          // Server didn't send Content-Length; use -1 to signal indeterminate
           setDownloadProgress(-1);
         }
       };
 
-      // ---- Step 1: Call the API endpoint in-memory to get the pre-signed URL ----
-      // Using api.get() avoids writing a small JSON blob to disk just to read it back.
-      // This is significantly faster than downloadAsync for the auth+redirect step.
+      // ---- Step 1: Fetch lightweight JSON metadata (no file body transferred) ----
+      // The backend now always returns { download_url, file_name, file_size, storage }
+      // for both S3 and local storage. This avoids the old problem of downloading
+      // the entire file into memory just to check the storage type.
       setDownloadStatus('Connecting to server...');
-      let apiData: { download_url?: string; file_name?: string } | null = null;
-      let directDownloadUrl: string | null = null;
-      let isLocalStorage = false;
+      let apiData: { download_url: string; file_name?: string; file_size?: number; storage: string };
 
       try {
         const resp = await api.get(url);
-        // If the response has a download_url, it's the S3/Spaces path
-        if (resp.data && typeof resp.data === 'object' && resp.data.download_url) {
-          apiData = resp.data;
-        } else {
-          // Response wasn't the expected JSON shape — backend served the file
-          // directly (local storage). Fall through to download via authenticated URL.
-          isLocalStorage = true;
-        }
+        apiData = resp.data;
       } catch (err: any) {
         if (err?.response?.status === 401) {
-          // Token expired — refresh once and retry
           setDownloadStatus('Refreshing session...');
           const newToken = await refreshToken();
           if (newToken) {
-            try {
-              const retryResp = await api.get(url);
-              if (retryResp.data && typeof retryResp.data === 'object' && retryResp.data.download_url) {
-                apiData = retryResp.data;
-              } else {
-                isLocalStorage = true;
-              }
-            } catch {
-              isLocalStorage = true;
-            }
+            const retryResp = await api.get(url);
+            apiData = retryResp.data;
           } else {
             Alert.alert('Error', 'Session expired. Please log in again.');
             return;
           }
-        } else if (err?.response?.status && err.response.status >= 200 && err.response.status < 300) {
-          // Got a success status but couldn't parse as JSON — local storage mode
-          isLocalStorage = true;
         } else {
           const statusCode = err?.response?.status ?? 'unknown';
           Alert.alert('Error', `Failed to reach server (HTTP ${statusCode}).`);
@@ -139,27 +116,16 @@ export function useFileDownload(): FileDownloadState {
         }
       }
 
-      // ---- Step 2: Determine the actual download URL ----
-      // S3 / DigitalOcean Spaces: API returned { download_url, file_name }
-      // Local storage: API streamed the file directly — re-download via authenticated URL
-      let finalUri = fileUri;
-
-      if (apiData?.download_url) {
-        // S3 path: download directly from Spaces with progress tracking
-        setDownloadStatus('Downloading file...');
-        directDownloadUrl = apiData.download_url;
-      } else {
-        // Local storage path: download through the authenticated API endpoint
-        setDownloadStatus('Downloading file...');
-        directDownloadUrl = apiEndpoint;
-      }
+      // ---- Step 2: Single download from the returned URL ----
+      setDownloadStatus('Downloading file...');
+      const isLocal = apiData.storage === 'local';
 
       const downloadResumable = LegacyFileSystem.createDownloadResumable(
-        directDownloadUrl,
+        apiData.download_url,
         fileUri,
-        apiData?.download_url
-          ? {} // S3 pre-signed URL — no auth header needed
-          : { headers: { Authorization: `Bearer ${await SecureStore.getItemAsync('access_token') ?? ''}` } },
+        isLocal
+          ? { headers: { Authorization: `Bearer ${await SecureStore.getItemAsync('access_token') ?? ''}` } }
+          : {}, // S3 pre-signed URL — no auth header needed
         onProgress,
       );
 
@@ -169,7 +135,6 @@ export function useFileDownload(): FileDownloadState {
         Alert.alert('Error', 'Failed to download file. Please try again.');
         return;
       }
-      finalUri = result.uri;
 
       // ---- Step 3: Share / save the file ----
       setDownloadProgress(1);
@@ -180,7 +145,7 @@ export function useFileDownload(): FileDownloadState {
 
       const canShare = await Sharing.isAvailableAsync();
       if (canShare) {
-        await Sharing.shareAsync(finalUri, {
+        await Sharing.shareAsync(result.uri, {
           mimeType: getMimeType(safeName),
           dialogTitle: `Save ${task.file_name || 'file'}`,
         });
