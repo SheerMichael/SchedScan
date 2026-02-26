@@ -15,10 +15,6 @@ import { useFocusEffect } from "@react-navigation/native";
 import Svg, { Path } from "react-native-svg";
 import * as Clipboard from "expo-clipboard";
 import * as DocumentPicker from "expo-document-picker";
-import * as LegacyFileSystem from "expo-file-system/legacy";
-import * as Sharing from "expo-sharing";
-import * as SecureStore from "expo-secure-store";
-import api from "../../services/api";
 import {
   ChevronRight,
   Copy,
@@ -43,6 +39,7 @@ import {
   TaskStats,
   ClassEnrollment,
 } from "../../services/facultyTaskService";
+import { useFileDownload } from "../../hooks/useFileDownload";
 
 // ============================================
 // Types
@@ -102,6 +99,9 @@ export default function FacultyDashboard() {
 
   // Active tab in subject detail
   const [activeTab, setActiveTab] = useState<"tasks" | "students">("tasks");
+
+  // File download
+  const { downloadingTaskId, downloadProgress, downloadStatus, downloadFile: handleDownloadFile } = useFileDownload();
 
   // ---- Load top-level data ----
   const loadDashboardData = useCallback(
@@ -266,103 +266,6 @@ export default function FacultyDashboard() {
       }
     } catch {
       Alert.alert("Error", "Failed to pick file.");
-    }
-  };
-
-  const handleDownloadFile = async (task: FacultyTaskWithStats) => {
-    try {
-      const url = facultyTaskService.getTaskFileUrl(task.id);
-      const apiBase = api.defaults.baseURL || "";
-      const apiEndpoint = `${apiBase}${url}`;
-      console.log("File download endpoint:", apiEndpoint, "Task ID:", task.id);
-
-      // Sanitize filename to prevent path traversal and invalid URI characters
-      const safeName = (task.file_name || "download").replace(/[^a-zA-Z0-9._-]/g, '_');
-      const fileUri = `${LegacyFileSystem.cacheDirectory ?? ''}${safeName}`;
-
-      // Helper to refresh token
-      const refreshAndGetToken = async (): Promise<string | null> => {
-        try {
-          const refreshToken = await SecureStore.getItemAsync("refresh_token");
-          if (refreshToken) {
-            const refreshResp = await api.post('/auth/token/refresh/', { refresh: refreshToken });
-            const newToken = refreshResp.data.access;
-            await SecureStore.setItemAsync("access_token", newToken);
-            return newToken;
-          }
-        } catch (refreshErr) {
-          console.error("Token refresh failed during download:", refreshErr);
-        }
-        return null;
-      };
-
-      let token = await SecureStore.getItemAsync("access_token");
-      let response = await LegacyFileSystem.downloadAsync(apiEndpoint, fileUri, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      // If 401 (token expired), refresh once and retry
-      if (response.status === 401) {
-        token = await refreshAndGetToken();
-        if (token) {
-          response = await LegacyFileSystem.downloadAsync(apiEndpoint, fileUri, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-        }
-      }
-
-      if (response.status === 200) {
-        // Check if the response is a JSON with download_url (S3 pre-signed URL)
-        let isS3Response = false;
-        try {
-          const contentType = response.headers?.['content-type'] || response.headers?.['Content-Type'] || '';
-          if (contentType.includes('application/json')) {
-            const body = await LegacyFileSystem.readAsStringAsync(response.uri);
-            const json = JSON.parse(body);
-            if (json.download_url) {
-              isS3Response = true;
-              console.log("S3 pre-signed URL received, downloading from Spaces...");
-              const s3Result = await LegacyFileSystem.downloadAsync(json.download_url, fileUri);
-              if (s3Result.status === 200) {
-                const canShare = await Sharing.isAvailableAsync();
-                if (canShare) {
-                  await Sharing.shareAsync(s3Result.uri);
-                } else {
-                  Alert.alert("Downloaded", `File saved to ${s3Result.uri}`);
-                }
-              } else {
-                console.error("S3 download failed with status:", s3Result.status);
-                Alert.alert("Error", `Failed to download file from storage (HTTP ${s3Result.status}).`);
-              }
-            }
-          }
-        } catch (_) {
-          // Not JSON — it's the actual file (local storage mode)
-        }
-
-        if (!isS3Response) {
-          const canShare = await Sharing.isAvailableAsync();
-          if (canShare) {
-            await Sharing.shareAsync(response.uri);
-          } else {
-            Alert.alert("Downloaded", `File saved to ${response.uri}`);
-          }
-        }
-      } else {
-        let errorDetail = '';
-        try {
-          if (response.uri) {
-            const body = await LegacyFileSystem.readAsStringAsync(response.uri);
-            errorDetail = body.substring(0, 500);
-            console.error("Download failed body:", errorDetail);
-          }
-        } catch (_) { /* ignore */ }
-        console.error("Download failed with status:", response.status, "URL:", apiEndpoint);
-        Alert.alert("Error", `Failed to download file (HTTP ${response.status}).${errorDetail ? '\n' + errorDetail : ''}`);
-      }
-    } catch (err) {
-      console.error("Download error:", err);
-      Alert.alert("Error", "Failed to download file. Please check your connection and try again.");
     }
   };
 
@@ -713,13 +616,23 @@ export default function FacultyDashboard() {
                         {task.has_file && (
                           <TouchableOpacity
                             onPress={() => handleDownloadFile(task)}
-                            className="flex-row items-center mt-1.5 bg-blue-50 self-start px-2 py-1 rounded-md"
+                            disabled={downloadingTaskId !== null}
+                            className={`flex-row items-center mt-1.5 self-start px-2.5 py-1.5 rounded-md ${
+                              downloadingTaskId === task.id ? 'bg-blue-100' : 'bg-blue-50'
+                            }`}
+                            activeOpacity={0.6}
                           >
-                            <FileText size={12} color="#3b82f6" />
-                            <Text className="text-blue-600 text-xs ml-1 font-medium" numberOfLines={1}>
-                              {task.file_name || "Attachment"}
+                            {downloadingTaskId === task.id ? (
+                              <ActivityIndicator size={12} color="#3b82f6" />
+                            ) : (
+                              <FileText size={12} color="#3b82f6" />
+                            )}
+                            <Text className="text-blue-600 text-xs ml-1.5 font-medium" numberOfLines={1}>
+                              {downloadingTaskId === task.id ? 'Downloading...' : (task.file_name || "Attachment")}
                             </Text>
-                            <Download size={10} color="#3b82f6" style={{ marginLeft: 4 }} />
+                            {downloadingTaskId !== task.id && (
+                              <Download size={10} color="#3b82f6" style={{ marginLeft: 4 }} />
+                            )}
                           </TouchableOpacity>
                         )}
                       </View>
@@ -962,6 +875,39 @@ export default function FacultyDashboard() {
           <ActivityIndicator size="large" color="#f97316" />
         </View>
       )}
+
+      {/* Download Progress Modal */}
+      <Modal
+        visible={downloadingTaskId !== null}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+      >
+        <View className="flex-1 bg-black/50 justify-center items-center">
+          <View className="bg-white rounded-2xl p-6 mx-8 items-center" style={{ minWidth: 280 }}>
+            <View className="w-14 h-14 rounded-full bg-blue-50 items-center justify-center mb-4">
+              <Download size={28} color="#3b82f6" />
+            </View>
+            <Text className="font-bold text-base text-gray-800 mb-1">Downloading File</Text>
+            <Text className="text-gray-500 text-sm mb-4">{downloadStatus}</Text>
+            {downloadProgress < 0 ? (
+              <ActivityIndicator size="small" color="#3b82f6" style={{ marginBottom: 8 }} />
+            ) : (
+              <>
+                <View className="w-full bg-gray-200 rounded-full h-2.5 mb-2">
+                  <View
+                    className="bg-blue-500 h-2.5 rounded-full"
+                    style={{ width: `${Math.max(Math.round(downloadProgress * 100), 2)}%` }}
+                  />
+                </View>
+                <Text className="text-gray-400 text-xs">
+                  {Math.round(downloadProgress * 100)}%
+                </Text>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </>
   );
 }

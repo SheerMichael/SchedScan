@@ -1,12 +1,9 @@
-import { View, Text, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Alert } from "react-native";
+import { View, Text, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Alert, Modal } from "react-native";
 import * as Clipboard from 'expo-clipboard';
 import Checkbox from "expo-checkbox";
 import { useState, useEffect, useCallback } from "react";
 import Svg, { Path } from 'react-native-svg';
 import { useLocalSearchParams, router } from "expo-router";
-import * as LegacyFileSystem from "expo-file-system/legacy";
-import * as Sharing from "expo-sharing";
-import * as SecureStore from "expo-secure-store";
 import { taskService, Task } from "../../../services/taskService";
 import { useAuth } from "../../../context/AuthContext";
 import {
@@ -16,8 +13,8 @@ import {
   StudentFacultyTask,
   ClassCode,
 } from "../../../services/facultyTaskService";
-import api from "../../../services/api";
 import JoinClassModal from "../../../components/JoinClassModal";
+import { useFileDownload } from "../../../hooks/useFileDownload";
 
 export default function SubjectDetails() {
   const { user } = useAuth();
@@ -69,6 +66,11 @@ export default function SubjectDetails() {
   // ============================================
   const [isEnrolled, setIsEnrolled] = useState(false);
   const [showJoinClassModal, setShowJoinClassModal] = useState(false);
+
+  // ============================================
+  // File Download
+  // ============================================
+  const { downloadingTaskId, downloadProgress, downloadStatus, downloadFile: handleDownloadFile } = useFileDownload();
 
   // ============================================
   // Load Data
@@ -258,116 +260,6 @@ export default function SubjectDetails() {
       setStudentFacultyTasks(fTasks);
     } catch (e) {
       console.error('Error reloading faculty tasks after enrollment:', e);
-    }
-  };
-
-  // ============================================
-  // Student File Download Handler
-  // ============================================
-  const handleDownloadFile = async (task: StudentFacultyTask) => {
-    try {
-      const url = facultyTaskService.getTaskFileUrl(task.id);
-      const apiBase = api.defaults.baseURL || "";
-      const apiEndpoint = `${apiBase}${url}`;
-      console.log("File download endpoint:", apiEndpoint, "Task ID:", task.id, "has_file:", task.has_file);
-
-      // Sanitize filename to prevent path traversal and invalid URI characters
-      const safeName = (task.file_name || "download").replace(/[^a-zA-Z0-9._-]/g, '_');
-      const fileUri = `${LegacyFileSystem.cacheDirectory ?? ''}${safeName}`;
-
-      // Helper to get a valid token (refresh if expired)
-      const getToken = async (): Promise<string | null> => {
-        return SecureStore.getItemAsync("access_token");
-      };
-
-      const refreshAndGetToken = async (): Promise<string | null> => {
-        try {
-          const refreshToken = await SecureStore.getItemAsync("refresh_token");
-          if (refreshToken) {
-            const refreshResp = await api.post('/auth/token/refresh/', { refresh: refreshToken });
-            const newToken = refreshResp.data.access;
-            await SecureStore.setItemAsync("access_token", newToken);
-            return newToken;
-          }
-        } catch (refreshErr) {
-          console.error("Token refresh failed during download:", refreshErr);
-        }
-        return null;
-      };
-
-      // Step 1: Call the API endpoint (authenticated) to get file info
-      // For S3 storage: returns JSON { download_url, file_name }
-      // For local storage: returns the file directly
-      let token = await getToken();
-      let response = await LegacyFileSystem.downloadAsync(apiEndpoint, fileUri, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      // If 401 (token expired), refresh once and retry
-      if (response.status === 401) {
-        token = await refreshAndGetToken();
-        if (token) {
-          response = await LegacyFileSystem.downloadAsync(apiEndpoint, fileUri, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-        }
-      }
-
-      if (response.status === 200) {
-        // Check if the response is a JSON with download_url (S3 pre-signed URL)
-        let isS3Response = false;
-        try {
-          const contentType = response.headers?.['content-type'] || response.headers?.['Content-Type'] || '';
-          if (contentType.includes('application/json')) {
-            const body = await LegacyFileSystem.readAsStringAsync(response.uri);
-            const json = JSON.parse(body);
-            if (json.download_url) {
-              isS3Response = true;
-              console.log("S3 pre-signed URL received, downloading from Spaces...");
-              // Step 2: Download from the pre-signed URL (no auth header needed)
-              const s3Result = await LegacyFileSystem.downloadAsync(json.download_url, fileUri);
-              if (s3Result.status === 200) {
-                const canShare = await Sharing.isAvailableAsync();
-                if (canShare) {
-                  await Sharing.shareAsync(s3Result.uri);
-                } else {
-                  Alert.alert("Downloaded", `File saved to ${s3Result.uri}`);
-                }
-              } else {
-                console.error("S3 download failed with status:", s3Result.status);
-                Alert.alert("Error", `Failed to download file from storage (HTTP ${s3Result.status}).`);
-              }
-            }
-          }
-        } catch (_) {
-          // Not JSON — it's the actual file (local storage mode)
-        }
-
-        if (!isS3Response) {
-          // Local storage mode: file was downloaded directly
-          const canShare = await Sharing.isAvailableAsync();
-          if (canShare) {
-            await Sharing.shareAsync(response.uri);
-          } else {
-            Alert.alert("Downloaded", `File saved to ${response.uri}`);
-          }
-        }
-      } else {
-        // Read response body for error details
-        let errorDetail = '';
-        try {
-          if (response.uri) {
-            const body = await LegacyFileSystem.readAsStringAsync(response.uri);
-            errorDetail = body.substring(0, 500);
-            console.error("Download failed body:", errorDetail);
-          }
-        } catch (_) { /* ignore read errors */ }
-        console.error("Download failed with status:", response.status, "URL:", apiEndpoint);
-        Alert.alert("Error", `Failed to download file (HTTP ${response.status}).${errorDetail ? '\n' + errorDetail : ''}`);
-      }
-    } catch (err) {
-      console.error("Download error:", err);
-      Alert.alert("Error", "Failed to download file. Please check your connection and try again.");
     }
   };
 
@@ -645,23 +537,33 @@ export default function SubjectDetails() {
                       {task.has_file && (
                         <TouchableOpacity
                           onPress={() => handleDownloadFile(task)}
-                          className="flex-row items-center mt-1.5 bg-blue-50 self-start px-2 py-1 rounded-md"
+                          disabled={downloadingTaskId !== null}
+                          className={`flex-row items-center mt-1.5 self-start px-2.5 py-1.5 rounded-md ${
+                            downloadingTaskId === task.id ? 'bg-blue-100' : 'bg-blue-50'
+                          }`}
+                          activeOpacity={0.6}
                         >
-                          <Svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2">
-                            <Path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-                            <Path d="M14 2v6h6" />
-                            <Path d="M16 13H8" />
-                            <Path d="M16 17H8" />
-                            <Path d="M10 9H8" />
-                          </Svg>
-                          <Text className="text-blue-600 text-xs ml-1 font-medium" numberOfLines={1}>
-                            {task.file_name || "Attachment"}
+                          {downloadingTaskId === task.id ? (
+                            <ActivityIndicator size={12} color="#3b82f6" />
+                          ) : (
+                            <Svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2">
+                              <Path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                              <Path d="M14 2v6h6" />
+                              <Path d="M16 13H8" />
+                              <Path d="M16 17H8" />
+                              <Path d="M10 9H8" />
+                            </Svg>
+                          )}
+                          <Text className="text-blue-600 text-xs ml-1.5 font-medium" numberOfLines={1}>
+                            {downloadingTaskId === task.id ? 'Downloading...' : (task.file_name || "Attachment")}
                           </Text>
-                          <Svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" style={{ marginLeft: 4 }}>
-                            <Path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                            <Path d="M7 10l5 5 5-5" />
-                            <Path d="M12 15V3" />
-                          </Svg>
+                          {downloadingTaskId !== task.id && (
+                            <Svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" style={{ marginLeft: 4 }}>
+                              <Path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                              <Path d="M7 10l5 5 5-5" />
+                              <Path d="M12 15V3" />
+                            </Svg>
+                          )}
                         </TouchableOpacity>
                       )}
                     </View>
@@ -772,6 +674,43 @@ export default function SubjectDetails() {
         )}
 
       </ScrollView>
+
+      {/* Download Progress Modal */}
+      <Modal
+        visible={downloadingTaskId !== null}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+      >
+        <View className="flex-1 bg-black/50 justify-center items-center">
+          <View className="bg-white rounded-2xl p-6 mx-8 items-center" style={{ minWidth: 280 }}>
+            <View className="w-14 h-14 rounded-full bg-blue-50 items-center justify-center mb-4">
+              <Svg width={28} height={28} viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2">
+                <Path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                <Path d="M7 10l5 5 5-5" />
+                <Path d="M12 15V3" />
+              </Svg>
+            </View>
+            <Text className="font-bold text-base text-gray-800 mb-1">Downloading File</Text>
+            <Text className="text-gray-500 text-sm mb-4">{downloadStatus}</Text>
+            {downloadProgress < 0 ? (
+              <ActivityIndicator size="small" color="#3b82f6" style={{ marginBottom: 8 }} />
+            ) : (
+              <>
+                <View className="w-full bg-gray-200 rounded-full h-2.5 mb-2">
+                  <View
+                    className="bg-blue-500 h-2.5 rounded-full"
+                    style={{ width: `${Math.max(Math.round(downloadProgress * 100), 2)}%` }}
+                  />
+                </View>
+                <Text className="text-gray-400 text-xs">
+                  {Math.round(downloadProgress * 100)}%
+                </Text>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       {/* Join Class Modal (Student) */}
       {isStudent && (
