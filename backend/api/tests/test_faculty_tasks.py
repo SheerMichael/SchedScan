@@ -701,6 +701,95 @@ class EnrollSyncTests(TestCase):
         })
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_enroll_sync_regenerates_timetable(self):
+        """Timetable image is regenerated after courses are synced."""
+        student_schedule = Schedule.objects.create(
+            user=self.student, title='Student Schedule',
+            upload_type='student', is_active=True
+        )
+        # Start with no timetable image
+        self.assertFalse(bool(student_schedule.timetable_image))
+
+        response = self.student_client.post('/api/student/enroll/sync/', {
+            'code': self.code.code
+        })
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['courses_added'], 2)
+
+        # Timetable image should now exist
+        student_schedule.refresh_from_db()
+        self.assertTrue(bool(student_schedule.timetable_image))
+        self.assertIn('timetables/', str(student_schedule.timetable_image))
+
+    def test_enroll_sync_no_regen_when_no_courses_added(self):
+        """Timetable is not regenerated if no new courses are added (duplicate sync)."""
+        student_schedule = Schedule.objects.create(
+            user=self.student, title='Student Schedule',
+            upload_type='student', is_active=True
+        )
+        # Pre-add the same courses that would be synced
+        Course.objects.create(
+            user=self.student, schedule=student_schedule,
+            subject_code='CS101', subject_name='Intro CS',
+            start_time='8:00AM', end_time='9:00AM', day='M'
+        )
+        Course.objects.create(
+            user=self.student, schedule=student_schedule,
+            subject_code='CS101', subject_name='Intro CS',
+            start_time='8:00AM', end_time='9:00AM', day='W'
+        )
+
+        # Identical courses overlap with themselves, so force=True is needed
+        # to reach the "add courses" step (which will skip all duplicates)
+        response = self.student_client.post(
+            '/api/student/enroll/sync/',
+            {'code': self.code.code, 'force': True},
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['courses_added'], 0)
+
+        # Timetable should NOT have been generated (no courses added)
+        student_schedule.refresh_from_db()
+        self.assertFalse(bool(student_schedule.timetable_image))
+
+    def test_enroll_sync_force_regenerates_timetable(self):
+        """Timetable is regenerated when force-adding courses with conflicts."""
+        student_schedule = Schedule.objects.create(
+            user=self.student, title='Student Schedule',
+            upload_type='student', is_active=True
+        )
+        Course.objects.create(
+            user=self.student, schedule=student_schedule,
+            subject_code='MATH201', subject_name='Math',
+            start_time='8:30AM', end_time='10:00AM', day='M'
+        )
+
+        response = self.student_client.post(
+            '/api/student/enroll/sync/',
+            {'code': self.code.code, 'force': True},
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['courses_added'], 2)
+
+        # Timetable should be regenerated with all 3 courses
+        student_schedule.refresh_from_db()
+        self.assertTrue(bool(student_schedule.timetable_image))
+
+    def test_enroll_sync_new_schedule_gets_timetable(self):
+        """Auto-created schedule gets a timetable image after sync."""
+        # No active schedule — one will be auto-created
+        response = self.student_client.post('/api/student/enroll/sync/', {
+            'code': self.code.code
+        })
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.data['synced'])
+
+        # The auto-created schedule should have a timetable
+        new_schedule = Schedule.objects.get(user=self.student, is_active=True)
+        self.assertTrue(bool(new_schedule.timetable_image))
+
 
 class FacultyTaskFileTests(TestCase):
     """Tests for faculty task file upload and download."""

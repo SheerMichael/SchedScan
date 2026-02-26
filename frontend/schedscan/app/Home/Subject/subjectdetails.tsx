@@ -4,6 +4,9 @@ import Checkbox from "expo-checkbox";
 import { useState, useEffect, useCallback } from "react";
 import Svg, { Path } from 'react-native-svg';
 import { useLocalSearchParams, router } from "expo-router";
+import * as LegacyFileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
+import * as SecureStore from "expo-secure-store";
 import { taskService, Task } from "../../../services/taskService";
 import { useAuth } from "../../../context/AuthContext";
 import {
@@ -13,6 +16,7 @@ import {
   StudentFacultyTask,
   ClassCode,
 } from "../../../services/facultyTaskService";
+import api from "../../../services/api";
 import JoinClassModal from "../../../components/JoinClassModal";
 
 export default function SubjectDetails() {
@@ -254,6 +258,37 @@ export default function SubjectDetails() {
       setStudentFacultyTasks(fTasks);
     } catch (e) {
       console.error('Error reloading faculty tasks after enrollment:', e);
+    }
+  };
+
+  // ============================================
+  // Student File Download Handler
+  // ============================================
+  const handleDownloadFile = async (task: StudentFacultyTask) => {
+    try {
+      const url = facultyTaskService.getTaskFileUrl(task.id);
+      const token = await SecureStore.getItemAsync("access_token");
+      const apiBase = api.defaults.baseURL || "";
+      const downloadUrl = `${apiBase}${url}`;
+
+      const fileUri = (LegacyFileSystem.cacheDirectory ?? '') + (task.file_name || "download");
+      const downloadResult = await LegacyFileSystem.downloadAsync(downloadUrl, fileUri, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (downloadResult.status === 200) {
+        const canShare = await Sharing.isAvailableAsync();
+        if (canShare) {
+          await Sharing.shareAsync(downloadResult.uri);
+        } else {
+          Alert.alert("Downloaded", `File saved to ${downloadResult.uri}`);
+        }
+      } else {
+        Alert.alert("Error", "Failed to download file.");
+      }
+    } catch (err) {
+      console.error("Download error:", err);
+      Alert.alert("Error", "Failed to download file.");
     }
   };
 
@@ -528,6 +563,28 @@ export default function SubjectDetails() {
                         By {task.faculty_name}
                         {task.due_date && ` • Due ${new Date(task.due_date).toLocaleDateString()}`}
                       </Text>
+                      {task.has_file && (
+                        <TouchableOpacity
+                          onPress={() => handleDownloadFile(task)}
+                          className="flex-row items-center mt-1.5 bg-blue-50 self-start px-2 py-1 rounded-md"
+                        >
+                          <Svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2">
+                            <Path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                            <Path d="M14 2v6h6" />
+                            <Path d="M16 13H8" />
+                            <Path d="M16 17H8" />
+                            <Path d="M10 9H8" />
+                          </Svg>
+                          <Text className="text-blue-600 text-xs ml-1 font-medium" numberOfLines={1}>
+                            {task.file_name || "Attachment"}
+                          </Text>
+                          <Svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" style={{ marginLeft: 4 }}>
+                            <Path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                            <Path d="M7 10l5 5 5-5" />
+                            <Path d="M12 15V3" />
+                          </Svg>
+                        </TouchableOpacity>
+                      )}
                     </View>
                   </View>
                 ))

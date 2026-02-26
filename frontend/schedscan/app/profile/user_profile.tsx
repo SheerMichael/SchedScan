@@ -164,7 +164,7 @@ const UserProfile = () => {
                                 <Text className="text-base">Upgrade to Premium</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
-                                className="p-4 border-b border-gray-500/50 flex-row items-center gap-2"
+                                className={`p-4 flex-row items-center gap-2 ${user?.user_type === 'faculty' ? 'border-b border-gray-500/50' : ''}`}
                                 onPress={handleParentalCodeAccess}>
                                 <Users />
                                 <Text className="text-base">Share with Parent</Text>
@@ -202,13 +202,13 @@ const UserProfile = () => {
                                 <BellRing />
                                 <Text className="text-base">Reminders</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity className="p-4 border-b border-gray-500/50 flex-row items-center gap-2" onPress={is_premiumuser}>
+                            {/* <TouchableOpacity className="p-4 border-b border-gray-500/50 flex-row items-center gap-2" onPress={is_premiumuser}>
                                 <CalendarDays />
                                 <Text className="text-base">Calendar Sync</Text>
                                 <View className="bg-red-400 rounded-full p-1 px-2 ml-auto">
                                     <Text className="text-white font-semibold">PRO</Text>
                                 </View>
-                            </TouchableOpacity>
+                            </TouchableOpacity> */}
                             <TouchableOpacity className="p-4 border-b border-gray-500/50 flex-row items-center gap-2">
                                 <FileText />
                                 <Text className="text-base">Privacy Policy</Text>

@@ -23,6 +23,7 @@ from ..serializers import (
     FacultyTaskSerializer, FacultyTaskWithStatsSerializer,
     FacultyTaskStudentSerializer, UserSerializer,
 )
+from ..utils.timetable_generator import generate_and_save_timetable
 
 import logging
 
@@ -1234,6 +1235,33 @@ class StudentEnrollSyncView(APIView):
                     source_type='student',
                 )
                 added += 1
+
+        # --- Step 7: Regenerate timetable image ---
+        if added > 0:
+            try:
+                all_courses = list(active_schedule.courses.values(
+                    'subject_code', 'subject_name', 'start_time',
+                    'end_time', 'day', 'location'
+                ))
+                image_path = generate_and_save_timetable(
+                    schedule_id=active_schedule.id,
+                    courses=all_courses,
+                    title=active_schedule.title,
+                    upload_type=active_schedule.upload_type,
+                    user_id=user.id,
+                    user_name=user.get_full_name()
+                )
+                active_schedule.timetable_image = image_path
+                active_schedule.save(update_fields=['timetable_image'])
+                logger.info(
+                    f"Regenerated timetable for schedule {active_schedule.id} "
+                    f"after enroll+sync of {class_code.subject_code}"
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to regenerate timetable for schedule "
+                    f"{active_schedule.id}: {str(e)}"
+                )
 
         logger.info(
             f"User {user.email} enrolled in {class_code.subject_code} "
