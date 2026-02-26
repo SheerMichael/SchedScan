@@ -128,7 +128,7 @@ export default function JoinClassModal({
         ? ` ${result.courses_added} course(s) added to your calendar.`
         : '';
       Alert.alert(
-        'Synced! 🎉',
+        'Synced! ',
         `You've joined ${preview.subject_code} with ${preview.faculty_name}.${coursesMsg}`,
         [{ text: 'OK' }],
       );
@@ -146,7 +146,7 @@ export default function JoinClassModal({
   // ── Skip sync (enroll only) ──────────────────────────
   const handleSkipSync = () => {
     Alert.alert(
-      'Enrolled! 🎉',
+      'Enrolled! ',
       `You've joined ${preview?.subject_code} with ${preview?.faculty_name}.`,
       [{ text: 'OK' }],
     );
@@ -327,7 +327,7 @@ export default function JoinClassModal({
                 <>
                   <View className="bg-green-50 rounded-xl p-4 mb-4 border border-green-200">
                     <Text className="text-green-800 font-bold text-base">
-                      ✅ Enrolled in {preview.subject_code}
+                       Enrolled in {preview.subject_code}
                     </Text>
                     <Text className="text-green-600 text-sm mt-1">
                       Would you like to add this subject's schedule to your calendar?

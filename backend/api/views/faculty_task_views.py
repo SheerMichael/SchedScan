@@ -516,7 +516,7 @@ class FacultyTaskListCreateView(APIView):
         if serializer.is_valid():
             task = serializer.save()
             # Return with stats
-            stats_serializer = FacultyTaskWithStatsSerializer(task)
+            stats_serializer = FacultyTaskWithStatsSerializer(task, context={'request': request})
             return Response(stats_serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
