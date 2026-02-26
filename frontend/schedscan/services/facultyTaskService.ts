@@ -247,7 +247,8 @@ export const facultyTaskService = {
         return fileId ? `${base}?file_id=${fileId}` : base;
     },
 
-    /** Download file metadata (for programmatic use) */\n    downloadTaskFile: async (taskId: number, fileId?: number | null): Promise<{ download_url: string; fileName: string; file_size: number | null; storage: string }> => {
+    /** Download file metadata (for programmatic use) */
+    downloadTaskFile: async (taskId: number, fileId?: number | null): Promise<{ download_url: string; fileName: string; file_size: number | null; storage: string }> => {
         const url = fileId ? `/faculty/tasks/${taskId}/file/?file_id=${fileId}` : `/faculty/tasks/${taskId}/file/`;
         const response = await api.get(url);
         return {
