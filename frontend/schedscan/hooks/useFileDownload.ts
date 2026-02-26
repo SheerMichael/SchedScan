@@ -91,72 +91,85 @@ export function useFileDownload(): FileDownloadState {
         }
       };
 
-      // ---- Auth token ----
-      let token = await SecureStore.getItemAsync('access_token');
-      if (!token) {
-        Alert.alert('Error', 'You are not logged in. Please log in and try again.');
-        return;
-      }
-
-      // ---- Step 1: Hit authenticated API endpoint ----
+      // ---- Step 1: Call the API endpoint in-memory to get the pre-signed URL ----
+      // Using api.get() avoids writing a small JSON blob to disk just to read it back.
+      // This is significantly faster than downloadAsync for the auth+redirect step.
       setDownloadStatus('Connecting to server...');
-      let response = await LegacyFileSystem.downloadAsync(apiEndpoint, fileUri, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      let apiData: { download_url?: string; file_name?: string } | null = null;
+      let directDownloadUrl: string | null = null;
+      let isLocalStorage = false;
 
-      // If 401 (token expired), refresh once and retry
-      if (response.status === 401) {
-        setDownloadStatus('Refreshing session...');
-        const newToken = await refreshToken();
-        if (newToken) {
-          token = newToken;
-          response = await LegacyFileSystem.downloadAsync(apiEndpoint, fileUri, {
-            headers: { Authorization: `Bearer ${newToken}` },
-          });
+      try {
+        const resp = await api.get(url);
+        // If the response has a download_url, it's the S3/Spaces path
+        if (resp.data && typeof resp.data === 'object' && resp.data.download_url) {
+          apiData = resp.data;
+        } else {
+          // Response wasn't the expected JSON shape — backend served the file
+          // directly (local storage). Fall through to download via authenticated URL.
+          isLocalStorage = true;
+        }
+      } catch (err: any) {
+        if (err?.response?.status === 401) {
+          // Token expired — refresh once and retry
+          setDownloadStatus('Refreshing session...');
+          const newToken = await refreshToken();
+          if (newToken) {
+            try {
+              const retryResp = await api.get(url);
+              if (retryResp.data && typeof retryResp.data === 'object' && retryResp.data.download_url) {
+                apiData = retryResp.data;
+              } else {
+                isLocalStorage = true;
+              }
+            } catch {
+              isLocalStorage = true;
+            }
+          } else {
+            Alert.alert('Error', 'Session expired. Please log in again.');
+            return;
+          }
+        } else if (err?.response?.status && err.response.status >= 200 && err.response.status < 300) {
+          // Got a success status but couldn't parse as JSON — local storage mode
+          isLocalStorage = true;
+        } else {
+          const statusCode = err?.response?.status ?? 'unknown';
+          Alert.alert('Error', `Failed to reach server (HTTP ${statusCode}).`);
+          return;
         }
       }
 
-      if (response.status !== 200) {
-        const errorDetail = await readErrorBody(response.uri);
-        Alert.alert(
-          'Error',
-          `Failed to download file (HTTP ${response.status}).${errorDetail ? '\n' + errorDetail : ''}`,
-        );
+      // ---- Step 2: Determine the actual download URL ----
+      // S3 / DigitalOcean Spaces: API returned { download_url, file_name }
+      // Local storage: API streamed the file directly — re-download via authenticated URL
+      let finalUri = fileUri;
+
+      if (apiData?.download_url) {
+        // S3 path: download directly from Spaces with progress tracking
+        setDownloadStatus('Downloading file...');
+        directDownloadUrl = apiData.download_url;
+      } else {
+        // Local storage path: download through the authenticated API endpoint
+        setDownloadStatus('Downloading file...');
+        directDownloadUrl = apiEndpoint;
+      }
+
+      const downloadResumable = LegacyFileSystem.createDownloadResumable(
+        directDownloadUrl,
+        fileUri,
+        apiData?.download_url
+          ? {} // S3 pre-signed URL — no auth header needed
+          : { headers: { Authorization: `Bearer ${await SecureStore.getItemAsync('access_token') ?? ''}` } },
+        onProgress,
+      );
+
+      const result = await downloadResumable.downloadAsync();
+
+      if (!result || result.status !== 200) {
+        Alert.alert('Error', 'Failed to download file. Please try again.');
         return;
       }
-
-      // ---- Step 2: Check if response is an S3 pre-signed URL ----
-      let finalUri = response.uri;
-
-      const contentType =
-        response.headers?.['content-type'] || response.headers?.['Content-Type'] || '';
-
-      if (contentType.includes('application/json')) {
-        try {
-          const body = await LegacyFileSystem.readAsStringAsync(response.uri);
-          const json = JSON.parse(body);
-
-          if (json.download_url) {
-            setDownloadStatus('Downloading file...');
-
-            const downloadResumable = LegacyFileSystem.createDownloadResumable(
-              json.download_url,
-              fileUri,
-              {},
-              onProgress,
-            );
-            const result = await downloadResumable.downloadAsync();
-
-            if (!result || result.status !== 200) {
-              Alert.alert('Error', 'Failed to download file from storage.');
-              return;
-            }
-            finalUri = result.uri;
-          }
-        } catch {
-          // Not valid JSON — treat as direct file download
-        }
-      }
+      finalUri = result.uri;
 
       // ---- Step 3: Share / save the file ----
       setDownloadProgress(1);
@@ -204,16 +217,6 @@ async function refreshToken(): Promise<string | null> {
     console.error('Token refresh failed during download:', err);
   }
   return null;
-}
-
-async function readErrorBody(uri?: string): Promise<string> {
-  if (!uri) return '';
-  try {
-    const body = await LegacyFileSystem.readAsStringAsync(uri);
-    return body.substring(0, 500);
-  } catch {
-    return '';
-  }
 }
 
 function delay(ms: number): Promise<void> {
