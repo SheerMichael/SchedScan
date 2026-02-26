@@ -6,6 +6,7 @@ faculty mode activation, and enrollment preview.
 import os
 import mimetypes
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 from django.http import FileResponse
 from django.db.models import Q, Prefetch, Count, Subquery, OuterRef, BooleanField, Value
@@ -527,15 +528,16 @@ class FacultyTaskListCreateView(APIView):
             context={'request': request}
         )
         if serializer.is_valid():
-            task = serializer.save()
-            # Create FacultyTaskFile records for each uploaded file
-            for uploaded_file in uploaded_files:
-                FacultyTaskFile.objects.create(
-                    task=task,
-                    file=uploaded_file,
-                    file_name=uploaded_file.name,
-                    file_size=uploaded_file.size or 0,
-                )
+            with transaction.atomic():
+                task = serializer.save()
+                # Create FacultyTaskFile records for each uploaded file
+                for uploaded_file in uploaded_files:
+                    FacultyTaskFile.objects.create(
+                        task=task,
+                        file=uploaded_file,
+                        file_name=uploaded_file.name,
+                        file_size=uploaded_file.size or 0,
+                    )
             # Return with stats (prefetch the newly created files)
             task = FacultyTask.objects.prefetch_related('files', 'completions').get(pk=task.pk)
             stats_serializer = FacultyTaskWithStatsSerializer(task, context={'request': request})
@@ -737,7 +739,7 @@ class FacultyTaskFileDownloadView(APIView):
             try:
                 task_file = FacultyTaskFile.objects.get(pk=file_id, task=task)
                 return task_file.file, task_file.file_name, task_file.file_size
-            except FacultyTaskFile.DoesNotExist:
+            except (FacultyTaskFile.DoesNotExist, ValueError, TypeError):
                 return None, None, None
 
         # No file_id: try first FacultyTaskFile, then legacy field

@@ -267,8 +267,14 @@ export default function FacultyDashboard() {
         }
         const combined = [...selectedFiles, ...newFiles];
         if (combined.length > 5) {
-          Alert.alert("Too many files", "Maximum 5 files per task.");
-          setSelectedFiles(combined.slice(0, 5));
+          const available = 5 - selectedFiles.length;
+          Alert.alert(
+            "Too many files",
+            available > 0
+              ? `You can only attach ${available} more file${available === 1 ? '' : 's'} (max 5 per task). Please select fewer files.`
+              : "You've already attached the maximum of 5 files per task."
+          );
+          // Don't add any of the new files — keeps previously selected files intact
         } else {
           setSelectedFiles(combined);
         }

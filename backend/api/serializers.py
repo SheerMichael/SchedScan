@@ -616,16 +616,12 @@ class FacultyTaskWithStatsSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
 
     def get_has_file(self, obj):
-        # Check new multi-file relation first, then legacy field
-        if hasattr(obj, '_prefetched_objects_cache') and 'files' in obj._prefetched_objects_cache:
-            return len(obj.files.all()) > 0
-        if obj.files.exists():
-            return True
-        return bool(obj.file)
+        # Check new multi-file relation first (prefetch cache is used automatically), then legacy field
+        return obj.files.exists() or bool(obj.file)
 
     def get_files(self, obj):
         """Return list of file metadata. Includes legacy single-file for backward compat."""
-        task_files = list(obj.files.all()) if hasattr(obj, '_prefetched_objects_cache') and 'files' in obj._prefetched_objects_cache else list(obj.files.all())
+        task_files = list(obj.files.all())
         if task_files:
             return FacultyTaskFileSerializer(task_files, many=True).data
         # Backward compat: if the task has a legacy single file, expose it
@@ -682,14 +678,10 @@ class FacultyTaskStudentSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_has_file(self, obj):
-        if hasattr(obj, '_prefetched_objects_cache') and 'files' in obj._prefetched_objects_cache:
-            return len(obj.files.all()) > 0
-        if obj.files.exists():
-            return True
-        return bool(obj.file)
+        return obj.files.exists() or bool(obj.file)
 
     def get_files(self, obj):
-        task_files = list(obj.files.all()) if hasattr(obj, '_prefetched_objects_cache') and 'files' in obj._prefetched_objects_cache else list(obj.files.all())
+        task_files = list(obj.files.all())
         if task_files:
             return FacultyTaskFileSerializer(task_files, many=True).data
         if obj.file:

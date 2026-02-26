@@ -198,8 +198,12 @@ else:
         },
     }
 
-# Max file upload size (10 MB)
-FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB
+# File upload settings
+# FILE_UPLOAD_MAX_MEMORY_SIZE: files smaller than this are held in RAM;
+# larger ones stream to a temp file on disk.  Keep this low in production
+# (5 files × 10 MB = 50 MB worst-case per request if held in memory).
+FILE_UPLOAD_MAX_MEMORY_SIZE = 2_621_440  # 2.5 MB (Django default)
+# DATA_UPLOAD_MAX_MEMORY_SIZE: max size of non-file form fields only.
 DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB
 
 # Default primary key field type

@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.translation import gettext_lazy as _
-from .models import User, ClassCode, ClassEnrollment, FacultyTask, FacultyTaskCompletion
+from .models import User, ClassCode, ClassEnrollment, FacultyTask, FacultyTaskFile, FacultyTaskCompletion
 
 
 @admin.register(User)
@@ -50,6 +50,14 @@ class FacultyTaskAdmin(admin.ModelAdmin):
     list_display = ['text', 'faculty', 'subject_code', 'due_date', 'created_at']
     list_filter = ['created_at', 'due_date']
     search_fields = ['text', 'faculty__email', 'subject_code']
+
+
+@admin.register(FacultyTaskFile)
+class FacultyTaskFileAdmin(admin.ModelAdmin):
+    list_display = ['file_name', 'task', 'file_size', 'uploaded_at']
+    list_filter = ['uploaded_at']
+    search_fields = ['file_name', 'task__text', 'task__faculty__email']
+    readonly_fields = ['uploaded_at']
 
 
 @admin.register(FacultyTaskCompletion)
