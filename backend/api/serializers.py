@@ -3,7 +3,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from rest_framework.validators import UniqueValidator
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import Course, Schedule, Task, ParentChildLink, InviteCode, ClassCode, ClassEnrollment, FacultyTask, FacultyTaskFile, FacultyTaskCompletion
+from .models import Course, Schedule, Task, ParentChildLink, InviteCode, ClassCode, ClassEnrollment, FacultyTask, FacultyTaskFile, FacultyTaskCompletion, Notification
 from .utils.timetable_generator import generate_and_save_timetable
 
 User = get_user_model()
@@ -709,3 +709,44 @@ class FacultyTaskStudentSerializer(serializers.ModelSerializer):
     def get_faculty_name(self, obj):
         return obj.faculty.get_full_name()
 
+
+class NotificationSerializer(serializers.ModelSerializer):
+    """
+    Serializer for Notification model — used to list/display notifications.
+    """
+    time_ago = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Notification
+        fields = [
+            'id',
+            'notification_type',
+            'title',
+            'message',
+            'data',
+            'is_read',
+            'created_at',
+            'time_ago',
+        ]
+        read_only_fields = ['id', 'notification_type', 'title', 'message', 'data', 'created_at']
+
+    def get_time_ago(self, obj):
+        """Return a human-readable 'time ago' string."""
+        from django.utils import timezone
+        now = timezone.now()
+        diff = now - obj.created_at
+
+        seconds = diff.total_seconds()
+        if seconds < 60:
+            return 'Just now'
+        elif seconds < 3600:
+            minutes = int(seconds // 60)
+            return f'{minutes}m ago'
+        elif seconds < 86400:
+            hours = int(seconds // 3600)
+            return f'{hours}h ago'
+        elif seconds < 604800:
+            days = int(seconds // 86400)
+            return f'{days}d ago'
+        else:
+            return obj.created_at.strftime('%b %d')

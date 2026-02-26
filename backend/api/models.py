@@ -734,3 +734,63 @@ class FacultyTaskCompletion(models.Model):
     def __str__(self):
         status = "✓" if self.is_completed else "○"
         return f"[{status}] {self.student.email} - {self.task.text[:30]}"
+
+
+# ============================================
+# Notification Model
+# ============================================
+
+class Notification(models.Model):
+    """
+    Persistent notification records so users can view notification history.
+    Push notifications are sent separately via Expo — this stores the record.
+    """
+    NOTIFICATION_TYPE_CHOICES = [
+        ('class_reminder', 'Class Reminder'),
+        ('faculty_task', 'Faculty Task'),
+        ('general', 'General'),
+    ]
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='notifications',
+        help_text="The user who receives this notification"
+    )
+    notification_type = models.CharField(
+        max_length=20,
+        choices=NOTIFICATION_TYPE_CHOICES,
+        default='general',
+        help_text="Type of notification"
+    )
+    title = models.CharField(
+        max_length=255,
+        help_text="Notification title"
+    )
+    message = models.TextField(
+        help_text="Notification body text"
+    )
+    data = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Extra data payload (e.g. subject_code, task_id)"
+    )
+    is_read = models.BooleanField(
+        default=False,
+        help_text="Whether the user has read this notification"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Notification'
+        verbose_name_plural = 'Notifications'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'is_read']),
+            models.Index(fields=['user', 'notification_type']),
+            models.Index(fields=['user', '-created_at']),
+        ]
+
+    def __str__(self):
+        read = "✓" if self.is_read else "○"
+        return f"[{read}] {self.user.email}: {self.title}"

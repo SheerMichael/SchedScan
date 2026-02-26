@@ -48,6 +48,12 @@ urlpatterns = [
     # Push notification endpoints
     path('push-token/', views.RegisterPushTokenView.as_view(), name='register_push_token'),
     
+    # Notification history endpoints
+    path('notifications/', views.NotificationListView.as_view(), name='notification_list'),
+    path('notifications/read-all/', views.NotificationMarkAllReadView.as_view(), name='notification_read_all'),
+    path('notifications/unread-count/', views.NotificationUnreadCountView.as_view(), name='notification_unread_count'),
+    path('notifications/<int:pk>/read/', views.NotificationMarkReadView.as_view(), name='notification_mark_read'),
+    
     # Parental view endpoints - Invite codes
     path('auth/invite-code/generate/', views.GenerateInviteCodeView.as_view(), name='generate_invite_code'),
     path('auth/invite-code/validate/', views.ValidateInviteCodeView.as_view(), name='validate_invite_code'),

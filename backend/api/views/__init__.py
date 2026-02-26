@@ -66,6 +66,14 @@ from .parent_views import (
     ChildLinkView,
 )
 
+# Notification views
+from .notification_views import (
+    NotificationListView,
+    NotificationMarkReadView,
+    NotificationMarkAllReadView,
+    NotificationUnreadCountView,
+)
+
 # Faculty-Student Connection views
 from .faculty_task_views import (
     ClassCodeView,

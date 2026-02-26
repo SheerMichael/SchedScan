@@ -17,6 +17,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import FacultyModeModal from '../../components/FacultyModeModal';
 import JoinClassModal from '../../components/JoinClassModal';
+import notificationService from '../../services/notificationService';
 
 export default function SchedScanApp() {
   const { user, getActiveSchedule, isOffline, hasPendingFacultyUnlock, activateFacultyMode, setPendingFacultyUnlock } = useAuth();
@@ -158,24 +159,24 @@ export default function SchedScanApp() {
   interface Star {
     value: number;
   }
-  const StarBadge = ({ value }: Star) => {
-    return (
-      <View className="items-center justify-center">
-        <Svg width={40} height={40} viewBox="0 0 100 100">
-          <Path
-            d="M50 5 L61 35 L94 35 L67 55 L78 85 L50 65 L22 85 L33 55 L6 35 L39 35 Z"
-            fill="#F7FF63"
-            stroke="black"
-            strokeWidth="1"
-          />
-        </Svg>
+  // const StarBadge = ({ value }: Star) => {
+  //   return (
+  //     <View className="items-center justify-center">
+  //       <Svg width={40} height={40} viewBox="0 0 100 100">
+  //         <Path
+  //           d="M50 5 L61 35 L94 35 L67 55 L78 85 L50 65 L22 85 L33 55 L6 35 L39 35 Z"
+  //           fill="#F7FF63"
+  //           stroke="black"
+  //           strokeWidth="1"
+  //         />
+  //       </Svg>
 
-        <View className="absolute">
-          <Text className="font-bold text-black text-lg">{value}</Text>
-        </View>
-      </View>
-    );
-  };
+  //       <View className="absolute">
+  //         <Text className="font-bold text-black text-lg">{value}</Text>
+  //       </View>
+  //     </View>
+  //   );
+  // };
 
   const Bell = ({ size = 24, color = '#4D4D4D' }) => (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill={color} stroke={color} strokeWidth="2">
@@ -237,6 +238,7 @@ export default function SchedScanApp() {
   const [daySchedule, setDaySchedule] = useState<ScheduleItem[]>([]);
   const [taskCounts, setTaskCounts] = useState<Record<string, { total: number; incomplete: number }>>({});
   const [facultyTaskCounts, setFacultyTaskCounts] = useState<Record<string, { total: number; incomplete: number }>>({});
+  const [unreadNotifCount, setUnreadNotifCount] = useState(0);
 
   // Modals
   const [showFacultyModeModal, setShowFacultyModeModal] = useState(false);
@@ -258,6 +260,10 @@ export default function SchedScanApp() {
   useFocusEffect(
     React.useCallback(() => {
       loadActiveSchedule();
+      // Fetch unread notification count for badge
+      notificationService.getUnreadCount()
+        .then(count => setUnreadNotifCount(count))
+        .catch(() => {});
     }, [user?.id])
   );
 
@@ -563,11 +569,29 @@ export default function SchedScanApp() {
         </View>
         <View className='flex-row justify-center items-center mr-4'>
           <TouchableOpacity onPress={() => router.push("../Parent/home")}>
-            <StarBadge value={5} />
+            {/* <StarBadge value={5} /> */}
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => router.push('/Home/notification')}>
             <Bell size={24} color="#4D4D4D" />
+            {unreadNotifCount > 0 && (
+              <View style={{
+                position: 'absolute',
+                top: -5,
+                right: -8,
+                backgroundColor: '#DC2626',
+                borderRadius: 10,
+                minWidth: 18,
+                height: 18,
+                alignItems: 'center',
+                justifyContent: 'center',
+                paddingHorizontal: 4,
+              }}>
+                <Text style={{ color: 'white', fontSize: 10, fontWeight: 'bold' }}>
+                  {unreadNotifCount > 99 ? '99+' : unreadNotifCount}
+                </Text>
+              </View>
+            )}
           </TouchableOpacity>
         </View>
       </View>

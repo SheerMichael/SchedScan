@@ -538,6 +538,22 @@ class FacultyTaskListCreateView(APIView):
                         file_name=uploaded_file.name,
                         file_size=uploaded_file.size or 0,
                     )
+
+            # Notify students who have this subject in their active schedule
+            try:
+                from api.utils.notification_service import notify_students_of_faculty_task
+                due_str = str(task.due_date) if task.due_date else None
+                notify_students_of_faculty_task(
+                    faculty_user=user,
+                    subject_code=task.subject_code,
+                    task_text=task.text,
+                    task_id=task.pk,
+                    due_date=due_str,
+                )
+            except Exception as e:
+                # Don't fail the task creation if notification fails
+                logger.error(f"Failed to send task notifications: {e}")
+
             # Return with stats (prefetch the newly created files)
             task = FacultyTask.objects.prefetch_related('files', 'completions').get(pk=task.pk)
             stats_serializer = FacultyTaskWithStatsSerializer(task, context={'request': request})

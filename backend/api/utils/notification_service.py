@@ -220,6 +220,7 @@ def send_upcoming_class_reminders(
 ) -> Dict[str, Any]:
     """
     Check all active schedules and send reminders for classes starting soon.
+    Also creates persistent Notification records in the database.
     
     Args:
         minutes_before: How many minutes before class to send reminder
@@ -229,7 +230,7 @@ def send_upcoming_class_reminders(
         Dict with stats about notifications sent
     """
     from django.contrib.auth import get_user_model
-    from api.models import Schedule, Course
+    from api.models import Schedule, Course, Notification
     
     User = get_user_model()
     
@@ -242,6 +243,7 @@ def send_upcoming_class_reminders(
     stats = {
         "checked_users": 0,
         "notifications_sent": 0,
+        "notifications_stored": 0,
         "errors": 0,
         "dry_run": dry_run,
     }
@@ -279,24 +281,49 @@ def send_upcoming_class_reminders(
             
             # Send notification if class is between (minutes_before-1) and (minutes_before+1) minutes away
             if minutes_before - 1 <= time_until_class <= minutes_before + 1:
+                # Dedup: skip if a class_reminder for this course was already sent today
+                from django.utils import timezone as tz
+                today_start = tz.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                already_sent = Notification.objects.filter(
+                    user=user,
+                    notification_type='class_reminder',
+                    data__course_id=course.id,
+                    created_at__gte=today_start,
+                ).exists()
+                if already_sent:
+                    continue
+
                 title = f"{course.subject_name or course.subject_code}"
                 body = f"Starts in {int(time_until_class)} minutes"
                 if course.location:
                     body += f" at {course.location}"
                 
+                data_payload = {
+                    "type": "class_reminder",
+                    "course_id": course.id,
+                    "subject_code": course.subject_code,
+                }
+                
                 if dry_run:
                     logger.info(f"[DRY RUN] Would send to {user.email}: {title} - {body}")
                     stats["notifications_sent"] += 1
                 else:
+                    # Store notification in DB
+                    Notification.objects.create(
+                        user=user,
+                        notification_type='class_reminder',
+                        title=title,
+                        message=body,
+                        data=data_payload,
+                    )
+                    stats["notifications_stored"] += 1
+
+                    # Send push notification
                     result = service.send_push_notification(
                         token=user.expo_push_token,
                         title=title,
                         body=body,
-                        data={
-                            "type": "class_reminder",
-                            "course_id": course.id,
-                            "subject_code": course.subject_code,
-                        }
+                        data=data_payload,
                     )
                     
                     if result.get("status") != "error":
@@ -305,4 +332,110 @@ def send_upcoming_class_reminders(
                         stats["errors"] += 1
     
     logger.info(f"Reminder check complete: {stats}")
+    return stats
+
+
+def notify_students_of_faculty_task(
+    faculty_user,
+    subject_code: str,
+    task_text: str,
+    task_id: int,
+    due_date: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Send push notifications + create DB records for all students who have the
+    given subject_code in their active schedule when a faculty uploads a new task.
+    
+    Args:
+        faculty_user: The faculty User object
+        subject_code: The subject code the task was created for
+        task_text: The task description text
+        task_id: The PK of the newly created FacultyTask
+        due_date: Optional due date string
+        
+    Returns:
+        Dict with stats about notifications sent
+    """
+    from django.contrib.auth import get_user_model
+    from api.models import Schedule, Course, Notification
+
+    User = get_user_model()
+
+    stats = {
+        "students_found": 0,
+        "notifications_sent": 0,
+        "notifications_stored": 0,
+        "errors": 0,
+    }
+
+    # Find all students who have this subject_code in their active schedule
+    # (schedule-matched approach per user's preference)
+    student_courses = Course.objects.filter(
+        subject_code=subject_code,
+        schedule__is_active=True,
+        schedule__user__user_type='student',
+    ).select_related('schedule__user').exclude(
+        schedule__user=faculty_user  # Exclude the faculty themselves
+    )
+
+    # Deduplicate by user (a student might have the same subject on multiple days)
+    seen_user_ids = set()
+    students_to_notify = []
+    for course in student_courses:
+        user = course.schedule.user
+        if user.id not in seen_user_ids:
+            seen_user_ids.add(user.id)
+            students_to_notify.append(user)
+
+    stats["students_found"] = len(students_to_notify)
+
+    if not students_to_notify:
+        logger.info(f"No students found with {subject_code} in active schedule")
+        return stats
+
+    title = f"New Task: {subject_code}"
+    body = task_text[:200]  # Truncate long task text
+    if due_date:
+        body += f"\nDue: {due_date}"
+
+    data_payload = {
+        "type": "faculty_task",
+        "task_id": task_id,
+        "subject_code": subject_code,
+        "faculty_name": faculty_user.get_full_name() or faculty_user.email,
+    }
+
+    service = NotificationService()
+    batch_messages = []
+
+    for student in students_to_notify:
+        # Always store in DB
+        Notification.objects.create(
+            user=student,
+            notification_type='faculty_task',
+            title=title,
+            message=body,
+            data=data_payload,
+        )
+        stats["notifications_stored"] += 1
+
+        # Queue push notification if they have a token
+        if student.expo_push_token:
+            batch_messages.append({
+                "token": student.expo_push_token,
+                "title": title,
+                "body": body,
+                "data": data_payload,
+            })
+
+    # Send push notifications in batch
+    if batch_messages:
+        results = service.send_batch_notifications(batch_messages)
+        stats["notifications_sent"] = len(batch_messages)
+        logger.info(
+            f"Sent {len(batch_messages)} push notifications for task "
+            f"'{task_text[:30]}' in {subject_code}"
+        )
+
+    logger.info(f"Faculty task notification complete: {stats}")
     return stats
