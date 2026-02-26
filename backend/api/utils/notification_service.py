@@ -357,7 +357,7 @@ def notify_students_of_faculty_task(
         Dict with stats about notifications sent
     """
     from django.contrib.auth import get_user_model
-    from api.models import Schedule, Course, Notification
+    from api.models import Schedule, Course, ClassEnrollment, Notification
 
     User = get_user_model()
 
@@ -368,8 +368,11 @@ def notify_students_of_faculty_task(
         "errors": 0,
     }
 
-    # Find all students who have this subject_code in their active schedule
-    # (schedule-matched approach per user's preference)
+    # Deduplicate by user (a student might appear via both schedule and enrollment)
+    seen_user_ids = set()
+    students_to_notify = []
+
+    # 1) Find students who have this subject_code in their active schedule
     student_courses = Course.objects.filter(
         subject_code=subject_code,
         schedule__is_active=True,
@@ -378,19 +381,30 @@ def notify_students_of_faculty_task(
         schedule__user=faculty_user  # Exclude the faculty themselves
     )
 
-    # Deduplicate by user (a student might have the same subject on multiple days)
-    seen_user_ids = set()
-    students_to_notify = []
     for course in student_courses:
         user = course.schedule.user
         if user.id not in seen_user_ids:
             seen_user_ids.add(user.id)
             students_to_notify.append(user)
 
+    # 2) Find students enrolled via class code for this faculty + subject
+    enrolled_students = ClassEnrollment.objects.filter(
+        faculty=faculty_user,
+        subject_code=subject_code,
+        status='active',
+    ).select_related('student').exclude(
+        student=faculty_user
+    )
+
+    for enrollment in enrolled_students:
+        if enrollment.student.id not in seen_user_ids:
+            seen_user_ids.add(enrollment.student.id)
+            students_to_notify.append(enrollment.student)
+
     stats["students_found"] = len(students_to_notify)
 
     if not students_to_notify:
-        logger.info(f"No students found with {subject_code} in active schedule")
+        logger.info(f"No students found with {subject_code} in active schedule or enrollments")
         return stats
 
     title = f"New Task: {subject_code}"

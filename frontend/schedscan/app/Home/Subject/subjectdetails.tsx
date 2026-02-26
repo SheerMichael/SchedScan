@@ -371,8 +371,8 @@ export default function SubjectDetails() {
         {/* ============================================ */}
         {isFaculty && (
           <>
-            {/* Class Code Section */}
-            <View className="bg-orange-50 p-4 rounded-xl mb-4 border border-orange-200">
+            {/* Class Code Section — only for faculty-extracted subjects */}
+            {isFacultyCourse && <View className="bg-orange-50 p-4 rounded-xl mb-4 border border-orange-200">
               <Text className="text-lg font-bold text-orange-800 mb-2">Class Code</Text>
               {classCode ? (
                 <View className="flex-row items-center justify-between">
@@ -415,7 +415,7 @@ export default function SubjectDetails() {
               <Text className="text-orange-600 text-xs mt-2">
                 Share this code with students so they can join your class.
               </Text>
-            </View>
+            </View>}
 
             {/* Faculty Tasks List */}
             <View className="flex-row justify-between items-center mb-3">
@@ -541,7 +541,7 @@ export default function SubjectDetails() {
                               key={f.id ?? idx}
                               onPress={() => handleDownloadFile({ id: task.id, file_name: f.file_name, file_id: f.id })}
                               disabled={downloadingTaskId !== null}
-                              className={`flex-row items-center self-start px-2.5 py-1.5 rounded-md mb-1 ${
+                              className={`flex-row items-center max-w-full overflow-hidden px-2.5 py-1.5 rounded-md mb-1 ${
                                 downloadingTaskId === task.id ? 'bg-blue-100' : 'bg-blue-50'
                               }`}
                               activeOpacity={0.6}
@@ -549,7 +549,7 @@ export default function SubjectDetails() {
                               {downloadingTaskId === task.id ? (
                                 <ActivityIndicator size={12} color="#3b82f6" />
                               ) : (
-                                <Svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2">
+                                <Svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" style={{ flexShrink: 0 }}>
                                   <Path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
                                   <Path d="M14 2v6h6" />
                                   <Path d="M16 13H8" />
@@ -557,11 +557,11 @@ export default function SubjectDetails() {
                                   <Path d="M10 9H8" />
                                 </Svg>
                               )}
-                              <Text className="text-blue-600 text-xs ml-1.5 font-medium" numberOfLines={1}>
+                              <Text className="text-blue-600 text-xs ml-1.5 font-medium flex-1 shrink" numberOfLines={1}>
                                 {downloadingTaskId === task.id ? 'Downloading...' : (f.file_name || "Attachment")}
                               </Text>
                               {downloadingTaskId !== task.id && (
-                                <Svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" style={{ marginLeft: 4 }}>
+                                <Svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" style={{ marginLeft: 4, flexShrink: 0 }}>
                                   <Path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
                                   <Path d="M7 10l5 5 5-5" />
                                   <Path d="M12 15V3" />

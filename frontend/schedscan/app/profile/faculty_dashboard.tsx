@@ -635,7 +635,7 @@ export default function FacultyDashboard() {
                                 key={f.id ?? idx}
                                 onPress={() => handleDownloadFile({ id: task.id, file_name: f.file_name, file_id: f.id })}
                                 disabled={downloadingTaskId !== null}
-                                className={`flex-row items-center self-start px-2.5 py-1.5 rounded-md mb-1 ${
+                                className={`flex-row items-center max-w-full overflow-hidden px-2.5 py-1.5 rounded-md mb-1 ${
                                   downloadingTaskId === task.id ? 'bg-blue-100' : 'bg-blue-50'
                                 }`}
                                 activeOpacity={0.6}
@@ -643,13 +643,13 @@ export default function FacultyDashboard() {
                                 {downloadingTaskId === task.id ? (
                                   <ActivityIndicator size={12} color="#3b82f6" />
                                 ) : (
-                                  <FileText size={12} color="#3b82f6" />
+                                  <FileText size={12} color="#3b82f6" style={{ flexShrink: 0 }} />
                                 )}
-                                <Text className="text-blue-600 text-xs ml-1.5 font-medium" numberOfLines={1}>
+                                <Text className="text-blue-600 text-xs ml-1.5 font-medium flex-1 shrink" numberOfLines={1}>
                                   {downloadingTaskId === task.id ? 'Downloading...' : (f.file_name || "Attachment")}
                                 </Text>
                                 {downloadingTaskId !== task.id && (
-                                  <Download size={10} color="#3b82f6" style={{ marginLeft: 4 }} />
+                                  <Download size={10} color="#3b82f6" style={{ marginLeft: 4, flexShrink: 0 }} />
                                 )}
                               </TouchableOpacity>
                             ))}

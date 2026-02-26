@@ -150,20 +150,20 @@ const LoginScreen = () => {
         </TouchableOpacity>
 
         {/* Divider */}
-        <View className="flex-row items-center mb-6">
+        {/* <View className="flex-row items-center mb-6">
           <View className="flex-1 h-[1px] bg-gray-300" />
           <Text className="mx-3 text-gray-500">Or</Text>
           <View className="flex-1 h-[1px] bg-gray-300" />
-        </View>
+        </View> */}
 
         {/* Google Button */}
-        <TouchableOpacity className="border border-gray-300 py-3 rounded-lg flex-row items-center justify-center mb-6" disabled={isLoading}>
+        {/* <TouchableOpacity className="border border-gray-300 py-3 rounded-lg flex-row items-center justify-center mb-6" disabled={isLoading}>
           <Image
             source={{ uri: "https://upload.wikimedia.org/wikipedia/commons/0/09/IOS_Google_icon.png" }}
             style={{ width: 20, height: 20, marginRight: 8 }}
           />
           <Text className="text-gray-700 font-medium">Sign up with Google</Text>
-        </TouchableOpacity>
+        </TouchableOpacity> */}
 
         {/* Bottom Sign Up */}
         <View className="flex-row justify-center mt-2 mb-4">

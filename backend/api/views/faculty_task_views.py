@@ -74,6 +74,18 @@ class ClassCodeView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # Verify the subject belongs to a faculty schedule, not a student one
+        has_faculty_subject = Course.objects.filter(
+            subject_code=subject_code,
+            schedule__user=user,
+            schedule__upload_type='faculty',
+        ).exists()
+        if not has_faculty_subject:
+            return Response(
+                {"error": "You can only generate class codes for subjects in your faculty schedule."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         # Deactivate any existing active codes for this faculty + subject
         ClassCode.objects.filter(
             faculty=user,
