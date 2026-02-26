@@ -845,7 +845,36 @@ class FacultyTaskFileTests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertTrue(response.data['has_file'])
-        self.assertEqual(response.data['file_name'], 'test.pdf')
+        # Files are now stored in the 'files' array
+        self.assertEqual(len(response.data['files']), 1)
+        self.assertEqual(response.data['files'][0]['file_name'], 'test.pdf')
+
+    def test_faculty_create_task_with_multiple_files(self):
+        """Faculty can create a task with multiple file attachments."""
+        file1 = self._make_test_file(name='doc1.pdf', content=b'%PDF-1.4 file 1')
+        file2 = self._make_test_file(name='image.png', content=b'\x89PNG fake', content_type='image/png')
+        response = self.faculty_client.post(
+            '/api/faculty/tasks/',
+            {'subject_code': 'CS101', 'text': 'Multiple files', 'files': [file1, file2]},
+            format='multipart'
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.data['has_file'])
+        self.assertEqual(len(response.data['files']), 2)
+        file_names = {f['file_name'] for f in response.data['files']}
+        self.assertIn('doc1.pdf', file_names)
+        self.assertIn('image.png', file_names)
+
+    def test_max_files_limit(self):
+        """Uploading more than 5 files is rejected."""
+        files = [self._make_test_file(name=f'file{i}.pdf') for i in range(6)]
+        response = self.faculty_client.post(
+            '/api/faculty/tasks/',
+            {'subject_code': 'CS101', 'text': 'Too many', 'files': files},
+            format='multipart'
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Too many files', response.data['error'])
 
     def test_faculty_create_task_without_file(self):
         """Creating a task without file still works (backward compat)."""
@@ -864,6 +893,7 @@ class FacultyTaskFileTests(TestCase):
             format='multipart'
         )
         task_id = response.data['id']
+        file_id = response.data['files'][0]['id']
 
         # Default GET returns JSON metadata
         download_response = self.faculty_client.get(f'/api/faculty/tasks/{task_id}/file/')
@@ -871,6 +901,11 @@ class FacultyTaskFileTests(TestCase):
         self.assertIn('download_url', download_response.data)
         self.assertIn('file_name', download_response.data)
         self.assertEqual(download_response.data['storage'], 'local')
+
+        # Per-file download with file_id
+        download_response2 = self.faculty_client.get(f'/api/faculty/tasks/{task_id}/file/?file_id={file_id}')
+        self.assertEqual(download_response2.status_code, 200)
+        self.assertEqual(download_response2.data['file_name'], 'test.pdf')
 
         # ?raw=1 streams the actual file bytes
         raw_response = self.faculty_client.get(f'/api/faculty/tasks/{task_id}/file/?raw=1')

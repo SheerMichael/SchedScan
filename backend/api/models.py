@@ -606,6 +606,9 @@ class FacultyTask(models.Model):
     Tasks created by faculty for their class.
     Separate from personal Task model — these are visible to all enrolled students.
     Completion is tracked per-student via FacultyTaskCompletion.
+    Files are stored in the related FacultyTaskFile model (supports multiple files).
+    Legacy single-file fields (file, file_name) are kept for backward compatibility
+    but new uploads should use FacultyTaskFile.
     """
     faculty = models.ForeignKey(
         User,
@@ -626,17 +629,18 @@ class FacultyTask(models.Model):
         blank=True,
         help_text="Optional due date for the task"
     )
+    # Legacy single-file fields — kept for backward compat with existing data
     file = models.FileField(
         upload_to='faculty_files/%Y/%m/',
         null=True,
         blank=True,
-        help_text="Optional file attachment (PDF, image, Word, PowerPoint)"
+        help_text="(Legacy) Single file attachment — use FacultyTaskFile for new uploads"
     )
     file_name = models.CharField(
         max_length=255,
         blank=True,
         default='',
-        help_text="Original filename of the uploaded file"
+        help_text="(Legacy) Original filename of the uploaded file"
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -651,6 +655,39 @@ class FacultyTask(models.Model):
 
     def __str__(self):
         return f"[Faculty] {self.subject_code}: {self.text[:50]}"
+
+
+class FacultyTaskFile(models.Model):
+    """
+    File attachment for a faculty task. Supports multiple files per task.
+    """
+    task = models.ForeignKey(
+        FacultyTask,
+        on_delete=models.CASCADE,
+        related_name='files',
+        help_text="The task this file belongs to"
+    )
+    file = models.FileField(
+        upload_to='faculty_files/%Y/%m/',
+        help_text="The uploaded file"
+    )
+    file_name = models.CharField(
+        max_length=255,
+        help_text="Original filename"
+    )
+    file_size = models.PositiveIntegerField(
+        default=0,
+        help_text="File size in bytes"
+    )
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Faculty Task File'
+        verbose_name_plural = 'Faculty Task Files'
+        ordering = ['uploaded_at']
+
+    def __str__(self):
+        return f"{self.file_name} ({self.task_id})"
 
 
 class FacultyTaskCompletion(models.Model):

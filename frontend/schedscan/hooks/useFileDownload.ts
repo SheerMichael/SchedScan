@@ -38,6 +38,8 @@ function getMimeType(fileName: string): string {
 interface DownloadableTask {
   id: number;
   file_name: string;
+  /** ID of the specific FacultyTaskFile to download (for multi-file tasks) */
+  file_id?: number | null;
 }
 
 // ============================================
@@ -74,7 +76,7 @@ export function useFileDownload(): FileDownloadState {
     setDownloadStatus('Preparing download...');
 
     try {
-      const url = facultyTaskService.getTaskFileUrl(task.id);
+      const url = facultyTaskService.getTaskFileUrl(task.id, task.file_id);
 
       const safeName = (task.file_name || 'download').replace(/[^a-zA-Z0-9._-]/g, '_');
       const fileUri = `${LegacyFileSystem.cacheDirectory ?? ''}${safeName}`;

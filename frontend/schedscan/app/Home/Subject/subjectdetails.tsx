@@ -534,37 +534,42 @@ export default function SubjectDetails() {
                         By {task.faculty_name}
                         {task.due_date && ` • Due ${new Date(task.due_date).toLocaleDateString()}`}
                       </Text>
-                      {task.has_file && (
-                        <TouchableOpacity
-                          onPress={() => handleDownloadFile(task)}
-                          disabled={downloadingTaskId !== null}
-                          className={`flex-row items-center mt-1.5 self-start px-2.5 py-1.5 rounded-md ${
-                            downloadingTaskId === task.id ? 'bg-blue-100' : 'bg-blue-50'
-                          }`}
-                          activeOpacity={0.6}
-                        >
-                          {downloadingTaskId === task.id ? (
-                            <ActivityIndicator size={12} color="#3b82f6" />
-                          ) : (
-                            <Svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2">
-                              <Path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-                              <Path d="M14 2v6h6" />
-                              <Path d="M16 13H8" />
-                              <Path d="M16 17H8" />
-                              <Path d="M10 9H8" />
-                            </Svg>
-                          )}
-                          <Text className="text-blue-600 text-xs ml-1.5 font-medium" numberOfLines={1}>
-                            {downloadingTaskId === task.id ? 'Downloading...' : (task.file_name || "Attachment")}
-                          </Text>
-                          {downloadingTaskId !== task.id && (
-                            <Svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" style={{ marginLeft: 4 }}>
-                              <Path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                              <Path d="M7 10l5 5 5-5" />
-                              <Path d="M12 15V3" />
-                            </Svg>
-                          )}
-                        </TouchableOpacity>
+                      {task.has_file && task.files && task.files.length > 0 && (
+                        <View className="mt-1.5">
+                          {task.files.map((f, idx) => (
+                            <TouchableOpacity
+                              key={f.id ?? idx}
+                              onPress={() => handleDownloadFile({ id: task.id, file_name: f.file_name, file_id: f.id })}
+                              disabled={downloadingTaskId !== null}
+                              className={`flex-row items-center self-start px-2.5 py-1.5 rounded-md mb-1 ${
+                                downloadingTaskId === task.id ? 'bg-blue-100' : 'bg-blue-50'
+                              }`}
+                              activeOpacity={0.6}
+                            >
+                              {downloadingTaskId === task.id ? (
+                                <ActivityIndicator size={12} color="#3b82f6" />
+                              ) : (
+                                <Svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2">
+                                  <Path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                                  <Path d="M14 2v6h6" />
+                                  <Path d="M16 13H8" />
+                                  <Path d="M16 17H8" />
+                                  <Path d="M10 9H8" />
+                                </Svg>
+                              )}
+                              <Text className="text-blue-600 text-xs ml-1.5 font-medium" numberOfLines={1}>
+                                {downloadingTaskId === task.id ? 'Downloading...' : (f.file_name || "Attachment")}
+                              </Text>
+                              {downloadingTaskId !== task.id && (
+                                <Svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" style={{ marginLeft: 4 }}>
+                                  <Path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                                  <Path d="M7 10l5 5 5-5" />
+                                  <Path d="M12 15V3" />
+                                </Svg>
+                              )}
+                            </TouchableOpacity>
+                          ))}
+                        </View>
                       )}
                     </View>
                   </View>

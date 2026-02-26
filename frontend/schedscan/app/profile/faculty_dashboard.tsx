@@ -90,12 +90,12 @@ export default function FacultyDashboard() {
   const [taskStatsModal, setTaskStatsModal] = useState<TaskStats | null>(null);
   const [isLoadingStats, setIsLoadingStats] = useState(false);
 
-  // File attachment for new task
-  const [selectedFile, setSelectedFile] = useState<{
+  // File attachments for new task (multiple)
+  const [selectedFiles, setSelectedFiles] = useState<{
     uri: string;
     name: string;
     type: string;
-  } | null>(null);
+  }[]>([]);
 
   // Active tab in subject detail
   const [activeTab, setActiveTab] = useState<"tasks" | "students">("tasks");
@@ -224,11 +224,11 @@ export default function FacultyDashboard() {
       const newTask = await facultyTaskService.createFacultyTask({
         subject_code: selectedSubject.subject_code,
         text: newTaskText.trim(),
-        file: selectedFile,
+        files: selectedFiles.length > 0 ? selectedFiles : undefined,
       });
       setFacultyTasks((prev) => [newTask, ...prev]);
       setNewTaskText("");
-      setSelectedFile(null);
+      setSelectedFiles([]);
     } catch {
       Alert.alert("Error", "Failed to add task.");
     } finally {
@@ -249,20 +249,29 @@ export default function FacultyDashboard() {
           "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         ],
         copyToCacheDirectory: true,
+        multiple: true,
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        const asset = result.assets[0];
-        // Check file size (10 MB limit)
-        if (asset.size && asset.size > 10 * 1024 * 1024) {
-          Alert.alert("File too large", "Maximum file size is 10 MB.");
-          return;
+        const newFiles: { uri: string; name: string; type: string }[] = [];
+        for (const asset of result.assets) {
+          if (asset.size && asset.size > 10 * 1024 * 1024) {
+            Alert.alert("File too large", `"${asset.name}" exceeds the 10 MB limit.`);
+            continue;
+          }
+          newFiles.push({
+            uri: asset.uri,
+            name: asset.name,
+            type: asset.mimeType || "application/octet-stream",
+          });
         }
-        setSelectedFile({
-          uri: asset.uri,
-          name: asset.name,
-          type: asset.mimeType || "application/octet-stream",
-        });
+        const combined = [...selectedFiles, ...newFiles];
+        if (combined.length > 5) {
+          Alert.alert("Too many files", "Maximum 5 files per task.");
+          setSelectedFiles(combined.slice(0, 5));
+        } else {
+          setSelectedFiles(combined);
+        }
       }
     } catch {
       Alert.alert("Error", "Failed to pick file.");
@@ -613,27 +622,32 @@ export default function FacultyDashboard() {
                             {new Date(task.due_date).toLocaleDateString()}
                           </Text>
                         )}
-                        {task.has_file && (
-                          <TouchableOpacity
-                            onPress={() => handleDownloadFile(task)}
-                            disabled={downloadingTaskId !== null}
-                            className={`flex-row items-center mt-1.5 self-start px-2.5 py-1.5 rounded-md ${
-                              downloadingTaskId === task.id ? 'bg-blue-100' : 'bg-blue-50'
-                            }`}
-                            activeOpacity={0.6}
-                          >
-                            {downloadingTaskId === task.id ? (
-                              <ActivityIndicator size={12} color="#3b82f6" />
-                            ) : (
-                              <FileText size={12} color="#3b82f6" />
-                            )}
-                            <Text className="text-blue-600 text-xs ml-1.5 font-medium" numberOfLines={1}>
-                              {downloadingTaskId === task.id ? 'Downloading...' : (task.file_name || "Attachment")}
-                            </Text>
-                            {downloadingTaskId !== task.id && (
-                              <Download size={10} color="#3b82f6" style={{ marginLeft: 4 }} />
-                            )}
-                          </TouchableOpacity>
+                        {task.has_file && task.files && task.files.length > 0 && (
+                          <View className="mt-1.5">
+                            {task.files.map((f, idx) => (
+                              <TouchableOpacity
+                                key={f.id ?? idx}
+                                onPress={() => handleDownloadFile({ id: task.id, file_name: f.file_name, file_id: f.id })}
+                                disabled={downloadingTaskId !== null}
+                                className={`flex-row items-center self-start px-2.5 py-1.5 rounded-md mb-1 ${
+                                  downloadingTaskId === task.id ? 'bg-blue-100' : 'bg-blue-50'
+                                }`}
+                                activeOpacity={0.6}
+                              >
+                                {downloadingTaskId === task.id ? (
+                                  <ActivityIndicator size={12} color="#3b82f6" />
+                                ) : (
+                                  <FileText size={12} color="#3b82f6" />
+                                )}
+                                <Text className="text-blue-600 text-xs ml-1.5 font-medium" numberOfLines={1}>
+                                  {downloadingTaskId === task.id ? 'Downloading...' : (f.file_name || "Attachment")}
+                                </Text>
+                                {downloadingTaskId !== task.id && (
+                                  <Download size={10} color="#3b82f6" style={{ marginLeft: 4 }} />
+                                )}
+                              </TouchableOpacity>
+                            ))}
+                          </View>
                         )}
                       </View>
                       <View className="flex-row items-center">
@@ -675,7 +689,7 @@ export default function FacultyDashboard() {
                       className="p-2 mr-1"
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
-                      <Paperclip size={20} color={selectedFile ? "#3b82f6" : "#9ca3af"} />
+                      <Paperclip size={20} color={selectedFiles.length > 0 ? "#3b82f6" : "#9ca3af"} />
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={handleAddTask}
@@ -692,18 +706,22 @@ export default function FacultyDashboard() {
                       )}
                     </TouchableOpacity>
                   </View>
-                  {selectedFile && (
-                    <View className="flex-row items-center mt-2 bg-blue-50 px-2 py-1.5 rounded-md">
-                      <FileText size={14} color="#3b82f6" />
-                      <Text className="text-blue-600 text-xs ml-1.5 flex-1" numberOfLines={1}>
-                        {selectedFile.name}
-                      </Text>
-                      <TouchableOpacity
-                        onPress={() => setSelectedFile(null)}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      >
-                        <X size={14} color="#6b7280" />
-                      </TouchableOpacity>
+                  {selectedFiles.length > 0 && (
+                    <View className="mt-2">
+                      {selectedFiles.map((f, idx) => (
+                        <View key={idx} className="flex-row items-center bg-blue-50 px-2 py-1.5 rounded-md mb-1">
+                          <FileText size={14} color="#3b82f6" />
+                          <Text className="text-blue-600 text-xs ml-1.5 flex-1" numberOfLines={1}>
+                            {f.name}
+                          </Text>
+                          <TouchableOpacity
+                            onPress={() => setSelectedFiles((prev) => prev.filter((_, i) => i !== idx))}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          >
+                            <X size={14} color="#6b7280" />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
                     </View>
                   )}
                 </View>

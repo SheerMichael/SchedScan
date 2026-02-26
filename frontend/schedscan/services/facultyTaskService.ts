@@ -4,6 +4,13 @@ import api from './api';
 // Interfaces
 // ============================================
 
+export interface FacultyTaskFileInfo {
+    id: number | null;
+    file_name: string;
+    file_size: number | null;
+    uploaded_at: string;
+}
+
 export interface FacultyTask {
     id: number;
     subject_code: string;
@@ -11,6 +18,7 @@ export interface FacultyTask {
     due_date: string | null;
     file_name: string;
     has_file: boolean;
+    files: FacultyTaskFileInfo[];
     created_at: string;
     updated_at: string;
 }
@@ -155,11 +163,13 @@ export const facultyTaskService = {
         return response.data.results ?? response.data;
     },
 
-    /** Create a new faculty task (with optional file attachment) */
+    /** Create a new faculty task (with optional file attachments — supports multiple) */
     createFacultyTask: async (data: {
         subject_code: string;
         text: string;
         due_date?: string | null;
+        files?: { uri: string; name: string; type: string }[];
+        /** @deprecated use files[] instead */
         file?: { uri: string; name: string; type: string } | null;
     }): Promise<FacultyTaskWithStats> => {
         const formData = new FormData();
@@ -168,8 +178,10 @@ export const facultyTaskService = {
         if (data.due_date) {
             formData.append('due_date', data.due_date);
         }
-        if (data.file) {
-            formData.append('file', data.file as any);
+        // Multi-file: append each under the 'files' key
+        const filesToUpload = data.files ?? (data.file ? [data.file] : []);
+        for (const f of filesToUpload) {
+            formData.append('files', f as any);
         }
         const response = await api.post('/faculty/tasks/', formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
@@ -229,22 +241,21 @@ export const facultyTaskService = {
         return response.data;
     },
 
-    /** Download a file attached to a faculty task */
-    getTaskFileUrl: (taskId: number): string => {
-        // Returns the relative API path — used with api.get() for auth
-        return `/faculty/tasks/${taskId}/file/`;
+    /** Get the download API path for a specific file on a faculty task */
+    getTaskFileUrl: (taskId: number, fileId?: number | null): string => {
+        const base = `/faculty/tasks/${taskId}/file/`;
+        return fileId ? `${base}?file_id=${fileId}` : base;
     },
 
-    /** Download file as blob (for saving/sharing) */
-    downloadTaskFile: async (taskId: number): Promise<{ blob: Blob; fileName: string }> => {
-        const response = await api.get(`/faculty/tasks/${taskId}/file/`, {
-            responseType: 'blob',
-        });
-        // Extract filename from Content-Disposition header
-        const disposition = response.headers['content-disposition'] || '';
-        const match = disposition.match(/filename="?([^"]+)"?/);
-        const fileName = match ? match[1] : 'download';
-        return { blob: response.data, fileName };
+    /** Download file metadata (for programmatic use) */\n    downloadTaskFile: async (taskId: number, fileId?: number | null): Promise<{ download_url: string; fileName: string; file_size: number | null; storage: string }> => {
+        const url = fileId ? `/faculty/tasks/${taskId}/file/?file_id=${fileId}` : `/faculty/tasks/${taskId}/file/`;
+        const response = await api.get(url);
+        return {
+            download_url: response.data.download_url,
+            fileName: response.data.file_name || 'download',
+            file_size: response.data.file_size,
+            storage: response.data.storage,
+        };
     },
 };
 

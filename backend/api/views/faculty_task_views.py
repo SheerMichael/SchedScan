@@ -17,7 +17,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from ..models import (
-    ClassCode, ClassEnrollment, FacultyTask, FacultyTaskCompletion, Course, Schedule, User
+    ClassCode, ClassEnrollment, FacultyTask, FacultyTaskFile, FacultyTaskCompletion, Course, Schedule, User
 )
 from ..serializers import (
     ClassCodeSerializer, ClassEnrollmentSerializer,
@@ -438,7 +438,7 @@ class FacultyTaskListCreateView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        tasks = FacultyTask.objects.filter(faculty=user).prefetch_related('completions')
+        tasks = FacultyTask.objects.filter(faculty=user).prefetch_related('completions', 'files')
         subject_code = request.query_params.get('subject_code')
         if subject_code:
             tasks = tasks.filter(subject_code=subject_code)
@@ -479,35 +479,46 @@ class FacultyTaskListCreateView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-        # Validate file attachment if provided
-        uploaded_file = request.FILES.get('file')
-        if uploaded_file:
-            ALLOWED_EXTENSIONS = ('.pdf', '.png', '.jpg', '.jpeg', '.doc', '.docx', '.ppt', '.pptx')
-            ALLOWED_MIMETYPES = (
-                'application/pdf',
-                'image/png', 'image/jpeg',
-                'application/msword',
-                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                'application/vnd.ms-powerpoint',
-                'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            )
-            MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+        # Validate file attachments if provided
+        # Accept multiple files via 'files' key, or legacy single 'file' key
+        uploaded_files = request.FILES.getlist('files') or []
+        legacy_file = request.FILES.get('file')
+        if legacy_file and not uploaded_files:
+            uploaded_files = [legacy_file]
 
+        ALLOWED_EXTENSIONS = ('.pdf', '.png', '.jpg', '.jpeg', '.doc', '.docx', '.ppt', '.pptx')
+        ALLOWED_MIMETYPES = (
+            'application/pdf',
+            'image/png', 'image/jpeg',
+            'application/msword',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.ms-powerpoint',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        )
+        MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB per file
+        MAX_FILES = 5  # Maximum files per task
+
+        if len(uploaded_files) > MAX_FILES:
+            return Response(
+                {"error": f"Too many files. Maximum {MAX_FILES} files per task."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        for uploaded_file in uploaded_files:
             file_ext = os.path.splitext(uploaded_file.name)[1].lower()
             if file_ext not in ALLOWED_EXTENSIONS:
                 return Response(
-                    {"error": f"Invalid file type '{file_ext}'. Allowed: {', '.join(ALLOWED_EXTENSIONS)}"},
+                    {"error": f"Invalid file type '{file_ext}' for '{uploaded_file.name}'. Allowed: {', '.join(ALLOWED_EXTENSIONS)}"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            # Also validate content type to prevent MIME spoofing
             if uploaded_file.content_type and uploaded_file.content_type not in ALLOWED_MIMETYPES:
                 return Response(
-                    {"error": f"Invalid content type '{uploaded_file.content_type}'."},
+                    {"error": f"Invalid content type '{uploaded_file.content_type}' for '{uploaded_file.name}'."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             if uploaded_file.size > MAX_FILE_SIZE:
                 return Response(
-                    {"error": f"File too large ({uploaded_file.size // (1024*1024)} MB). Max allowed: 10 MB."},
+                    {"error": f"File too large: '{uploaded_file.name}' ({uploaded_file.size // (1024*1024)} MB). Max allowed: 10 MB per file."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
@@ -517,7 +528,16 @@ class FacultyTaskListCreateView(APIView):
         )
         if serializer.is_valid():
             task = serializer.save()
-            # Return with stats
+            # Create FacultyTaskFile records for each uploaded file
+            for uploaded_file in uploaded_files:
+                FacultyTaskFile.objects.create(
+                    task=task,
+                    file=uploaded_file,
+                    file_name=uploaded_file.name,
+                    file_size=uploaded_file.size or 0,
+                )
+            # Return with stats (prefetch the newly created files)
+            task = FacultyTask.objects.prefetch_related('files', 'completions').get(pk=task.pk)
             stats_serializer = FacultyTaskWithStatsSerializer(task, context={'request': request})
             return Response(stats_serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -573,12 +593,19 @@ class FacultyTaskDetailView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        # Clean up file from storage before deleting the task
+        # Clean up files from storage before deleting the task
+        # New multi-file model
+        for task_file in task.files.all():
+            try:
+                task_file.file.delete(save=False)
+            except Exception:
+                logger.warning(f"Failed to delete file {task_file.id} for task {task.id}")
+        # Legacy single-file field
         if task.file:
             try:
                 task.file.delete(save=False)
             except Exception:
-                logger.warning(f"Failed to delete file for task {task.id}")
+                logger.warning(f"Failed to delete legacy file for task {task.id}")
 
         task.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -647,47 +674,40 @@ class FacultyTaskStatsView(APIView):
 
 class FacultyTaskFileDownloadView(APIView):
     """
-    Download the file attached to a faculty task.
+    Download a file attached to a faculty task.
     Accessible to the faculty owner and enrolled students.
 
+    Supports both the new multi-file model (FacultyTaskFile) and legacy
+    single-file field on FacultyTask. The 'file_id' query param selects
+    which FacultyTaskFile to download. When omitted, falls back to the
+    legacy single-file field (backward compat).
+
     GET /api/faculty/tasks/<id>/file/
-    → Always returns a lightweight JSON response with metadata:
-      { download_url, file_name, file_size, storage }
-      - storage="s3"  → download_url is a pre-signed Spaces URL (no auth header needed)
-      - storage="local" → download_url is the same endpoint with ?raw=1; client must
-        include the Authorization header.
+    GET /api/faculty/tasks/<id>/file/?file_id=3
+    → Returns JSON metadata: { download_url, file_name, file_size, storage }
 
     GET /api/faculty/tasks/<id>/file/?raw=1
+    GET /api/faculty/tasks/<id>/file/?raw=1&file_id=3
     → Streams the actual file bytes (local storage only).
-      Includes Content-Length for accurate progress tracking.
     """
     permission_classes = [IsAuthenticated]
 
-    def _is_s3_storage(self, task):
-        """Check if the file for this task is stored on S3-based storage (e.g., DigitalOcean Spaces)."""
+    def _is_s3_file(self, file_field):
+        """Check if a file field uses S3-based storage."""
         try:
-            storage_cls = task.file.storage.__class__.__name__
+            storage_cls = file_field.storage.__class__.__name__
             return 'S3' in storage_cls or 's3' in storage_cls
         except Exception:
             return False
 
-    def _check_access(self, request, pk):
-        """Validate task exists, has a file, and user is authorized. Returns (task, error_response)."""
+    def _check_task_access(self, request, pk):
+        """Validate task exists and user is authorized. Returns (task, error_response)."""
         try:
             task = FacultyTask.objects.get(pk=pk)
         except FacultyTask.DoesNotExist:
             logger.warning(f"File download 404: Task pk={pk} does not exist.")
             return None, Response(
                 {"error": "Task not found."},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-        if not task.file:
-            logger.warning(
-                f"File download 404: Task pk={pk} has no file attached."
-            )
-            return None, Response(
-                {"error": "No file attached to this task."},
                 status=status.HTTP_404_NOT_FOUND
             )
 
@@ -708,33 +728,60 @@ class FacultyTaskFileDownloadView(APIView):
 
         return task, None
 
-    def _get_file_size(self, task):
-        """Return the file size in bytes, or None on error."""
-        try:
-            return task.file.size
-        except Exception:
-            return None
+    def _resolve_file(self, task, file_id):
+        """
+        Resolve which file to serve.
+        Returns (file_field, file_name, file_size) or (None, None, None).
+        """
+        if file_id:
+            try:
+                task_file = FacultyTaskFile.objects.get(pk=file_id, task=task)
+                return task_file.file, task_file.file_name, task_file.file_size
+            except FacultyTaskFile.DoesNotExist:
+                return None, None, None
+
+        # No file_id: try first FacultyTaskFile, then legacy field
+        first_file = task.files.first()
+        if first_file:
+            return first_file.file, first_file.file_name, first_file.file_size
+
+        # Legacy single-file
+        if task.file:
+            size = None
+            try:
+                size = task.file.size
+            except Exception:
+                pass
+            return task.file, task.file_name or os.path.basename(task.file.name), size
+
+        return None, None, None
 
     def get(self, request, pk):
-        task, error = self._check_access(request, pk)
+        task, error = self._check_task_access(request, pk)
         if error:
             return error
 
-        # ---- raw=1: stream the actual bytes (local storage) ----
+        file_id = request.query_params.get('file_id')
+        file_field, file_name, file_size = self._resolve_file(task, file_id)
+
+        if not file_field:
+            return Response(
+                {"error": "No file attached to this task."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # ---- raw=1: stream the actual bytes ----
         if request.query_params.get('raw') == '1':
-            return self._stream_file(task, pk)
+            return self._stream_file(file_field, file_name, file_size, pk)
 
         # ---- Default: return lightweight JSON metadata ----
-        filename = task.file_name or os.path.basename(task.file.name)
-        file_size = self._get_file_size(task)
-
-        if self._is_s3_storage(task):
+        if self._is_s3_file(file_field):
             try:
-                file_url = task.file.url  # pre-signed URL for private S3 files
+                file_url = file_field.url
                 logger.info(f"File download: Returning pre-signed URL for task pk={pk}")
                 return Response({
                     "download_url": file_url,
-                    "file_name": filename,
+                    "file_name": file_name,
                     "file_size": file_size,
                     "storage": "s3",
                 }, status=status.HTTP_200_OK)
@@ -745,27 +792,31 @@ class FacultyTaskFileDownloadView(APIView):
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
 
-        # Local storage: return a URL pointing back to this endpoint with ?raw=1
-        raw_path = request.build_absolute_uri(request.path) + '?raw=1'
+        # Local storage
+        raw_path = request.build_absolute_uri(request.get_full_path())
+        if '?' in raw_path:
+            raw_path += '&raw=1'
+        else:
+            raw_path += '?raw=1'
         return Response({
             "download_url": raw_path,
-            "file_name": filename,
+            "file_name": file_name,
             "file_size": file_size,
             "storage": "local",
         }, status=status.HTTP_200_OK)
 
-    def _stream_file(self, task, pk):
+    def _stream_file(self, file_field, file_name, file_size, pk):
         """Stream the file bytes with Content-Length for progress tracking."""
-        content_type, _ = mimetypes.guess_type(task.file_name or task.file.name)
+        content_type, _ = mimetypes.guess_type(file_name or file_field.name)
         content_type = content_type or 'application/octet-stream'
 
         try:
-            file_handle = task.file.open('rb')
+            file_handle = file_field.open('rb')
         except Exception as e:
             logger.error(
                 f"Failed to open file for task {pk}: {e}. "
-                f"File field value: '{task.file.name}'. "
-                f"Storage backend: {task.file.storage.__class__.__name__}. "
+                f"File field value: '{file_field.name}'. "
+                f"Storage backend: {file_field.storage.__class__.__name__}. "
                 f"If using ephemeral container storage (no DO_SPACES_BUCKET), "
                 f"files are lost on container restart."
             )
@@ -779,15 +830,16 @@ class FacultyTaskFileDownloadView(APIView):
             file_handle,
             content_type=content_type
         )
-        filename = task.file_name or os.path.basename(task.file.name)
-        # Sanitize filename: strip path separators, escape quotes
-        filename = os.path.basename(filename).replace('"', '\\"')
-        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        safe_name = os.path.basename(file_name or file_field.name).replace('"', '\\"')
+        response['Content-Disposition'] = f'attachment; filename="{safe_name}"'
 
-        # Provide Content-Length so clients can show accurate progress
-        file_size = self._get_file_size(task)
-        if file_size is not None:
+        if file_size is not None and file_size > 0:
             response['Content-Length'] = str(file_size)
+        else:
+            try:
+                response['Content-Length'] = str(file_field.size)
+            except Exception:
+                pass
 
         return response
 
@@ -834,6 +886,7 @@ class StudentFacultyTaskListView(APIView):
 
         # Prefetch only this student's completions to avoid N+1
         tasks = FacultyTask.objects.filter(task_filter).prefetch_related(
+            'files',
             Prefetch(
                 'completions',
                 queryset=FacultyTaskCompletion.objects.filter(student=user),
