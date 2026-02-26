@@ -688,11 +688,22 @@ class FacultyTaskFileDownloadView(APIView):
         content_type, _ = mimetypes.guess_type(task.file_name or task.file.name)
         content_type = content_type or 'application/octet-stream'
 
+        try:
+            file_handle = task.file.open('rb')
+        except Exception as e:
+            logger.error(f"Failed to open file for task {pk}: {e}")
+            return Response(
+                {"error": "File not found on server. It may have been deleted."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
         response = FileResponse(
-            task.file.open('rb'),
+            file_handle,
             content_type=content_type
         )
         filename = task.file_name or os.path.basename(task.file.name)
+        # Sanitize filename: strip path separators, escape quotes
+        filename = os.path.basename(filename).replace('"', '\\"')
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
         return response
 

@@ -267,14 +267,34 @@ export default function SubjectDetails() {
   const handleDownloadFile = async (task: StudentFacultyTask) => {
     try {
       const url = facultyTaskService.getTaskFileUrl(task.id);
-      const token = await SecureStore.getItemAsync("access_token");
       const apiBase = api.defaults.baseURL || "";
       const downloadUrl = `${apiBase}${url}`;
 
-      const fileUri = (LegacyFileSystem.cacheDirectory ?? '') + (task.file_name || "download");
-      const downloadResult = await LegacyFileSystem.downloadAsync(downloadUrl, fileUri, {
+      // Sanitize filename to prevent path traversal and invalid URI characters
+      const safeName = (task.file_name || "download").replace(/[^a-zA-Z0-9._-]/g, '_');
+      const fileUri = `${LegacyFileSystem.cacheDirectory ?? ''}${safeName}`;
+
+      let token = await SecureStore.getItemAsync("access_token");
+      let downloadResult = await LegacyFileSystem.downloadAsync(downloadUrl, fileUri, {
         headers: { Authorization: `Bearer ${token}` },
       });
+
+      // If 401 (token expired), refresh once and retry
+      if (downloadResult.status === 401) {
+        try {
+          const refreshToken = await SecureStore.getItemAsync("refresh_token");
+          if (refreshToken) {
+            const refreshResp = await api.post('/auth/token/refresh/', { refresh: refreshToken });
+            const newToken = refreshResp.data.access;
+            await SecureStore.setItemAsync("access_token", newToken);
+            downloadResult = await LegacyFileSystem.downloadAsync(downloadUrl, fileUri, {
+              headers: { Authorization: `Bearer ${newToken}` },
+            });
+          }
+        } catch (refreshErr) {
+          console.error("Token refresh failed during download:", refreshErr);
+        }
+      }
 
       if (downloadResult.status === 200) {
         const canShare = await Sharing.isAvailableAsync();
@@ -284,11 +304,12 @@ export default function SubjectDetails() {
           Alert.alert("Downloaded", `File saved to ${downloadResult.uri}`);
         }
       } else {
-        Alert.alert("Error", "Failed to download file.");
+        console.error("Download failed with status:", downloadResult.status);
+        Alert.alert("Error", `Failed to download file (HTTP ${downloadResult.status}).`);
       }
     } catch (err) {
       console.error("Download error:", err);
-      Alert.alert("Error", "Failed to download file.");
+      Alert.alert("Error", "Failed to download file. Please check your connection and try again.");
     }
   };
 
