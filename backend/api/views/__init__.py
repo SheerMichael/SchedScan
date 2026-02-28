@@ -94,3 +94,11 @@ from .faculty_task_views import (
     StudentFacultyTaskCompleteView,
     StudentFacultyTaskCountsView,
 )
+
+# Faculty Remark views
+from .remark_views import (
+    FacultyRemarkListCreateView,
+    FacultyRemarkDetailView,
+    StudentRemarkListView,
+    ParentRemarkListView,
+)

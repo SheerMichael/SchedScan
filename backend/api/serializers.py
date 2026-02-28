@@ -3,7 +3,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from rest_framework.validators import UniqueValidator
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import Course, Schedule, Task, ParentChildLink, InviteCode, ClassCode, ClassEnrollment, FacultyTask, FacultyTaskFile, FacultyTaskCompletion, Notification
+from .models import Course, Schedule, Task, ParentChildLink, InviteCode, ClassCode, ClassEnrollment, FacultyTask, FacultyTaskFile, FacultyTaskCompletion, Notification, FacultyRemark
 from .utils.timetable_generator import generate_and_save_timetable
 
 User = get_user_model()
@@ -541,12 +541,13 @@ class ClassEnrollmentSerializer(serializers.ModelSerializer):
     faculty_email = serializers.SerializerMethodField()
     student_name = serializers.SerializerMethodField()
     student_email = serializers.SerializerMethodField()
+    student_id = serializers.SerializerMethodField()
 
     class Meta:
         model = ClassEnrollment
         fields = [
             'id', 'subject_code', 'enrollment_type', 'status', 'enrolled_at',
-            'faculty_name', 'faculty_email', 'student_name', 'student_email'
+            'faculty_name', 'faculty_email', 'student_name', 'student_email', 'student_id'
         ]
         read_only_fields = ['id', 'enrolled_at']
 
@@ -561,6 +562,9 @@ class ClassEnrollmentSerializer(serializers.ModelSerializer):
 
     def get_student_email(self, obj):
         return obj.student.email
+
+    def get_student_id(self, obj):
+        return obj.student.id
 
 
 class FacultyTaskFileSerializer(serializers.ModelSerializer):
@@ -748,5 +752,62 @@ class NotificationSerializer(serializers.ModelSerializer):
         elif seconds < 604800:
             days = int(seconds // 86400)
             return f'{days}d ago'
+        else:
+            return obj.created_at.strftime('%b %d')
+
+
+# ============================================
+# Faculty Remark Serializers
+# ============================================
+
+class FacultyRemarkSerializer(serializers.ModelSerializer):
+    """
+    Serializer for FacultyRemark — used for creating and displaying remarks.
+    Includes faculty_name and student_name for display convenience.
+    """
+    faculty_name = serializers.SerializerMethodField()
+    student_name = serializers.SerializerMethodField()
+    student_email = serializers.SerializerMethodField()
+    time_ago = serializers.SerializerMethodField()
+
+    class Meta:
+        model = FacultyRemark
+        fields = [
+            'id',
+            'faculty',
+            'student',
+            'subject_code',
+            'text',
+            'faculty_name',
+            'student_name',
+            'student_email',
+            'time_ago',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'faculty', 'faculty_name', 'student_name', 'student_email', 'time_ago', 'created_at', 'updated_at']
+
+    def get_faculty_name(self, obj):
+        return obj.faculty.get_full_name()
+
+    def get_student_name(self, obj):
+        return obj.student.get_full_name()
+
+    def get_student_email(self, obj):
+        return obj.student.email
+
+    def get_time_ago(self, obj):
+        from django.utils import timezone
+        now = timezone.now()
+        diff = now - obj.created_at
+        seconds = diff.total_seconds()
+        if seconds < 60:
+            return 'Just now'
+        elif seconds < 3600:
+            return f'{int(seconds // 60)}m ago'
+        elif seconds < 86400:
+            return f'{int(seconds // 3600)}h ago'
+        elif seconds < 604800:
+            return f'{int(seconds // 86400)}d ago'
         else:
             return obj.created_at.strftime('%b %d')

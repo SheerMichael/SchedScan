@@ -85,4 +85,10 @@ urlpatterns = [
     path('student/faculty-tasks/', views.StudentFacultyTaskListView.as_view(), name='student_faculty_tasks'),
     path('student/faculty-tasks/counts/', views.StudentFacultyTaskCountsView.as_view(), name='student_faculty_task_counts'),
     path('student/faculty-tasks/<int:pk>/complete/', views.StudentFacultyTaskCompleteView.as_view(), name='student_faculty_task_complete'),
+
+    # Faculty Remark endpoints
+    path('faculty/remarks/', views.FacultyRemarkListCreateView.as_view(), name='faculty_remark_list_create'),
+    path('faculty/remarks/<int:pk>/', views.FacultyRemarkDetailView.as_view(), name='faculty_remark_detail'),
+    path('student/remarks/', views.StudentRemarkListView.as_view(), name='student_remark_list'),
+    path('parent/child/remarks/', views.ParentRemarkListView.as_view(), name='parent_remark_list'),
 ]

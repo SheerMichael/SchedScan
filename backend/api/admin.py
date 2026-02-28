@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.translation import gettext_lazy as _
-from .models import User, ClassCode, ClassEnrollment, FacultyTask, FacultyTaskFile, FacultyTaskCompletion
+from .models import User, ClassCode, ClassEnrollment, FacultyTask, FacultyTaskFile, FacultyTaskCompletion, FacultyRemark
 
 
 @admin.register(User)
@@ -58,6 +58,19 @@ class FacultyTaskFileAdmin(admin.ModelAdmin):
     list_filter = ['uploaded_at']
     search_fields = ['file_name', 'task__text', 'task__faculty__email']
     readonly_fields = ['uploaded_at']
+
+
+@admin.register(FacultyRemark)
+class FacultyRemarkAdmin(admin.ModelAdmin):
+    list_display = ['faculty', 'student', 'subject_code', 'short_text', 'created_at']
+    list_filter = ['subject_code', 'created_at']
+    search_fields = ['faculty__email', 'student__email', 'subject_code', 'text']
+    readonly_fields = ['created_at', 'updated_at']
+    raw_id_fields = ['faculty', 'student']
+
+    def short_text(self, obj):
+        return obj.text[:80] + ('...' if len(obj.text) > 80 else '')
+    short_text.short_description = 'Text'
 
 
 @admin.register(FacultyTaskCompletion)

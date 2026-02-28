@@ -748,6 +748,7 @@ class Notification(models.Model):
     NOTIFICATION_TYPE_CHOICES = [
         ('class_reminder', 'Class Reminder'),
         ('faculty_task', 'Faculty Task'),
+        ('faculty_remark', 'Faculty Remark'),
         ('general', 'General'),
     ]
 
@@ -794,3 +795,48 @@ class Notification(models.Model):
     def __str__(self):
         read = "✓" if self.is_read else "○"
         return f"[{read}] {self.user.email}: {self.title}"
+
+
+# ============================================
+# Faculty Remark Model
+# ============================================
+
+class FacultyRemark(models.Model):
+    """
+    Remarks / comments left by faculty about a student's performance
+    in a specific subject. Visible to the student AND their linked parent(s).
+    """
+    faculty = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='faculty_remarks',
+        help_text="The faculty who wrote this remark"
+    )
+    student = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='student_remarks',
+        help_text="The student this remark is about"
+    )
+    subject_code = models.CharField(
+        max_length=50,
+        help_text="Subject code for this remark"
+    )
+    text = models.TextField(
+        help_text="The remark / comment text"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Faculty Remark'
+        verbose_name_plural = 'Faculty Remarks'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['faculty', 'subject_code']),
+            models.Index(fields=['student', 'subject_code']),
+            models.Index(fields=['student', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.faculty.email} → {self.student.email} [{self.subject_code}]: {self.text[:50]}"

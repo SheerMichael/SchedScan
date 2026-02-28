@@ -453,3 +453,103 @@ def notify_students_of_faculty_task(
 
     logger.info(f"Faculty task notification complete: {stats}")
     return stats
+
+
+def notify_remark(
+    faculty_user,
+    student_id: int,
+    subject_code: str,
+    remark_text: str,
+    remark_id: int,
+) -> Dict[str, Any]:
+    """
+    Send push notifications + create DB records when a faculty leaves a
+    performance remark on a student.  Notifies:
+      1. The student
+      2. All parents actively linked to that student
+
+    Args:
+        faculty_user: The faculty User object
+        student_id:   PK of the student
+        subject_code: Subject the remark is for
+        remark_text:  The remark text
+        remark_id:    PK of the newly created FacultyRemark
+
+    Returns:
+        Dict with stats about notifications sent
+    """
+    from django.contrib.auth import get_user_model
+    from api.models import ParentChildLink, Notification
+
+    User = get_user_model()
+
+    stats = {
+        "users_notified": 0,
+        "notifications_sent": 0,
+        "notifications_stored": 0,
+        "errors": 0,
+    }
+
+    try:
+        student = User.objects.get(pk=student_id)
+    except User.DoesNotExist:
+        logger.warning(f"notify_remark: student {student_id} not found")
+        return stats
+
+    faculty_name = faculty_user.get_full_name() or faculty_user.email
+    title = f"New Remark: {subject_code}"
+    truncated = remark_text[:200] + ('...' if len(remark_text) > 200 else '')
+    body = f"{faculty_name}: {truncated}"
+
+    data_payload = {
+        "type": "faculty_remark",
+        "remark_id": remark_id,
+        "subject_code": subject_code,
+        "faculty_name": faculty_name,
+        "student_id": student_id,
+    }
+
+    # Collect all users to notify (student + linked parents)
+    users_to_notify = [student]
+
+    parent_links = ParentChildLink.objects.filter(
+        child=student,
+        status='active',
+    ).select_related('parent')
+
+    for link in parent_links:
+        users_to_notify.append(link.parent)
+
+    service = NotificationService()
+    batch_messages = []
+
+    for user in users_to_notify:
+        Notification.objects.create(
+            user=user,
+            notification_type='faculty_remark',
+            title=title,
+            message=body,
+            data=data_payload,
+        )
+        stats["notifications_stored"] += 1
+
+        if user.expo_push_token:
+            batch_messages.append({
+                "token": user.expo_push_token,
+                "title": title,
+                "body": body,
+                "data": data_payload,
+            })
+
+    stats["users_notified"] = len(users_to_notify)
+
+    if batch_messages:
+        service.send_batch_notifications(batch_messages)
+        stats["notifications_sent"] = len(batch_messages)
+        logger.info(
+            f"Sent {len(batch_messages)} push notifications for remark "
+            f"on student {student_id} in {subject_code}"
+        )
+
+    logger.info(f"Faculty remark notification complete: {stats}")
+    return stats

@@ -4,7 +4,8 @@ import { router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "../../context/AuthContext";
 import { parentService, LinkedChild, ChildInfo } from "../../services/parentService";
-import { Plus, X, Users, Calendar } from "lucide-react-native";
+import { parentRemarkService, FacultyRemark } from "../../services/remarkService";
+import { Plus, X, Users, Calendar, MessageSquare } from "lucide-react-native";
 
 // --- Types ---
 type Course = {
@@ -33,6 +34,10 @@ const ParentHomePage = () => {
   const [isLinking, setIsLinking] = useState(false);
   const [linkError, setLinkError] = useState("");
 
+  // Remarks state
+  const [remarks, setRemarks] = useState<FacultyRemark[]>([]);
+  const [isLoadingRemarks, setIsLoadingRemarks] = useState(false);
+
   // Load data on focus
   useFocusEffect(
     useCallback(() => {
@@ -51,12 +56,14 @@ const ParentHomePage = () => {
       if (response.children.length > 0 && !selectedChild) {
         await selectChild(response.children[0].child);
       } else if (selectedChild) {
-        // Refresh current child's schedule
+        // Refresh current child's schedule and remarks
         await loadChildSchedule(selectedChild.id);
+        await loadChildRemarks(selectedChild.id);
       } else {
         setSelectedChild(null);
         setSchedule(null);
         setTodaysCourses([]);
+        setRemarks([]);
       }
     } catch (error: any) {
       console.error("Error loading children:", error);
@@ -69,6 +76,7 @@ const ParentHomePage = () => {
   const selectChild = async (child: ChildInfo) => {
     setSelectedChild(child);
     await loadChildSchedule(child.id);
+    await loadChildRemarks(child.id);
   };
 
   const loadChildSchedule = async (childId: number) => {
@@ -89,6 +97,19 @@ const ParentHomePage = () => {
       console.log('No schedule available for child');
       setSchedule(null);
       setTodaysCourses([]);
+    }
+  };
+
+  const loadChildRemarks = async (childId: number) => {
+    try {
+      setIsLoadingRemarks(true);
+      const remarksData = await parentRemarkService.getRemarks(childId);
+      setRemarks(remarksData);
+    } catch (error: any) {
+      console.log('Remarks not available:', error?.response?.status);
+      setRemarks([]);
+    } finally {
+      setIsLoadingRemarks(false);
     }
   };
 
@@ -350,6 +371,43 @@ const ParentHomePage = () => {
                 })}
               </View>
             )}
+
+            {/* Faculty Remarks Section */}
+            <View className="mt-6">
+              <View className="flex-row items-center mb-3">
+                <MessageSquare size={18} color="#7C3AED" />
+                <Text className="text-lg font-bold text-gray-800 ml-2">
+                  Faculty Remarks
+                </Text>
+              </View>
+
+              {isLoadingRemarks ? (
+                <View className="py-4 items-center">
+                  <ActivityIndicator size="small" color="#7C3AED" />
+                </View>
+              ) : remarks.length === 0 ? (
+                <View className="bg-white p-6 rounded-xl border border-dashed border-gray-200 items-center">
+                  <Text className="text-gray-400 font-medium text-center">
+                    No remarks from faculty yet.
+                  </Text>
+                </View>
+              ) : (
+                remarks.map((remark) => (
+                  <View
+                    key={remark.id}
+                    className="bg-purple-50 p-4 mb-3 rounded-xl border-l-4 border-purple-400"
+                  >
+                    <Text className="text-gray-800">{remark.text}</Text>
+                    <View className="flex-row justify-between mt-2">
+                      <Text className="text-purple-600 text-xs font-medium">
+                        {remark.faculty_name} • {remark.subject_code}
+                      </Text>
+                      <Text className="text-gray-400 text-xs">{remark.time_ago}</Text>
+                    </View>
+                  </View>
+                ))
+              )}
+            </View>
           </View>
         )}
       </ScrollView>

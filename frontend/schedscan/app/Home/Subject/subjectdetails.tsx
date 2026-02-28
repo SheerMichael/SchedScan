@@ -13,6 +13,10 @@ import {
   StudentFacultyTask,
   ClassCode,
 } from "../../../services/facultyTaskService";
+import {
+  studentRemarkService,
+  FacultyRemark,
+} from "../../../services/remarkService";
 import JoinClassModal from "../../../components/JoinClassModal";
 import { useFileDownload } from "../../../hooks/useFileDownload";
 
@@ -68,6 +72,11 @@ export default function SubjectDetails() {
   const [showJoinClassModal, setShowJoinClassModal] = useState(false);
 
   // ============================================
+  // Student Remarks State (Student only)
+  // ============================================
+  const [studentRemarks, setStudentRemarks] = useState<FacultyRemark[]>([]);
+
+  // ============================================
   // File Download
   // ============================================
   const { downloadingTaskId, downloadProgress, downloadStatus, downloadFile: handleDownloadFile } = useFileDownload();
@@ -94,14 +103,16 @@ export default function SubjectDetails() {
         setFacultyTasks(tasksData);
         if (codes.length > 0) setClassCode(codes[0]);
       } else if (isStudent) {
-        // Student: load personal tasks + faculty tasks + enrollment status
-        const [personalTasks, fTasks, enrollments] = await Promise.all([
+        // Student: load personal tasks + faculty tasks + enrollment status + remarks
+        const [personalTasks, fTasks, enrollments, remarksData] = await Promise.all([
           taskService.getTasks(subjectCode),
           studentEnrollmentService.getFacultyTasks(subjectCode).catch(() => []),
           studentEnrollmentService.getEnrollments().catch(() => []),
+          studentRemarkService.getRemarks(subjectCode).catch(() => []),
         ]);
         setTasks(personalTasks);
         setStudentFacultyTasks(fTasks);
+        setStudentRemarks(remarksData);
         // Check enrollment using actual enrollments, not task count
         const enrolled = enrollments.some(
           (e) => e.subject_code === subjectCode && e.status === 'active'
@@ -466,7 +477,7 @@ export default function SubjectDetails() {
             )}
 
             {/* Add Faculty Task */}
-            <View className="mt-4 mb-8">
+            <View className="mt-4 mb-4">
               <Text className="font-bold text-lg mb-2">Add Class Task</Text>
               <View className="bg-white p-3 rounded-xl shadow flex-row items-center">
                 <TextInput
@@ -492,6 +503,29 @@ export default function SubjectDetails() {
                 </TouchableOpacity>
               </View>
             </View>
+
+            {/* Student Remarks Button */}
+            <TouchableOpacity
+              onPress={() => router.push({
+                pathname: '/Home/Subject/remarks' as any,
+                params: { subjectCode },
+              })}
+              className="bg-orange-50 border border-orange-200 p-4 rounded-xl mb-8 flex-row items-center justify-between"
+              activeOpacity={0.7}
+            >
+              <View className="flex-row items-center">
+                <View className="w-10 h-10 rounded-full bg-orange-100 justify-center items-center mr-3">
+                  <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="#f97316" strokeWidth="2">
+                    <Path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+                  </Svg>
+                </View>
+                <View>
+                  <Text className="font-bold text-orange-800">Student Remarks</Text>
+                  <Text className="text-orange-600 text-xs">Leave performance comments</Text>
+                </View>
+              </View>
+              <Text className="text-orange-400 text-xl">›</Text>
+            </TouchableOpacity>
           </>
         )}
 
@@ -597,6 +631,24 @@ export default function SubjectDetails() {
               <Text className="text-xl font-bold">My Tasks</Text>
               {isLoading && <ActivityIndicator size="small" color="#DC2626" />}
             </View>
+
+            {/* Faculty Remarks Section (Student view) */}
+            {studentRemarks.length > 0 && (
+              <View className="mb-6">
+                <Text className="text-lg font-bold text-purple-600 mb-2">Faculty Remarks</Text>
+                {studentRemarks.map((remark) => (
+                  <View
+                    key={remark.id}
+                    className="bg-purple-50 p-3 rounded-xl mb-2 border-l-4 border-purple-400"
+                  >
+                    <Text className="text-gray-800">{remark.text}</Text>
+                    <Text className="text-purple-500 text-xs mt-1">
+                      By {remark.faculty_name} • {remark.time_ago}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
           </>
         )}
 
