@@ -128,25 +128,34 @@ class BasePDFExtractor(ABC):
         """Initialize the PDF extractor."""
         logger.info(f"Initialized {self.__class__.__name__}")
     
-    def extract_from_pdf(self, file_path: str) -> List[Dict]:
+    def extract_from_pdf(self, file_path: str) -> Dict:
         """
-        Extract course information from a PDF document.
+        Extract course information and metadata from a PDF document.
         
         Args:
             file_path: Path to the PDF file
             
         Returns:
-            List of dictionaries containing course information
+            Dictionary with:
+            - courses: List of course dictionaries
+            - semester: Semester string (e.g., '1ST', '2ND', 'SUMMER')
+            - school_year: School year string (e.g., '2025-2026')
         """
         try:
             logger.info(f"Opening PDF file: {file_path}")
             with pdfplumber.open(file_path) as pdf:
                 all_courses = []
+                metadata = {'semester': '', 'school_year': ''}
                 
                 for page_num, page in enumerate(pdf.pages, start=1):
                     logger.info(f"Processing page {page_num}/{len(pdf.pages)}")
                     courses = self._extract_from_page(page)
                     all_courses.extend(courses)
+                    
+                    # Extract metadata from the first page only
+                    if page_num == 1:
+                        metadata = self._extract_metadata(page)
+                        logger.info(f"Extracted metadata: {metadata}")
                 
                 logger.info(f"Extracted {len(all_courses)} courses from PDF (before day splitting)")
                 
@@ -156,7 +165,10 @@ class BasePDFExtractor(ABC):
                     split_courses.extend(split_course_by_days(course))
                 
                 logger.info(f"Total courses after day splitting: {len(split_courses)}")
-                return split_courses
+                return {
+                    'courses': split_courses,
+                    **metadata
+                }
                 
         except Exception as e:
             logger.error(f"Error extracting from PDF: {str(e)}")
@@ -175,6 +187,19 @@ class BasePDFExtractor(ABC):
             List of course dictionaries
         """
         pass
+    
+    def _extract_metadata(self, page) -> Dict:
+        """
+        Extract metadata (semester, school year) from a PDF page.
+        Subclasses can override to provide format-specific parsing.
+        
+        Args:
+            page: pdfplumber page object
+            
+        Returns:
+            Dictionary with 'semester' and 'school_year' keys
+        """
+        return {'semester': '', 'school_year': ''}
 
 
 class StudentPDFExtractor(BasePDFExtractor):
@@ -189,6 +214,52 @@ class StudentPDFExtractor(BasePDFExtractor):
     DAY_PATTERN = re.compile(r'\b(M|T|W|TH|F|S|TF|MW|MWF|MTH|TTH|MTWTH|MTWTHF)\b', re.IGNORECASE)
     LOCATION_PATTERN = re.compile(r'\b(LR\d*|LAB\d*|CLA\d*|COM\s*LAB\d*|ROOM\s*\d+|GYM|FIELD)\b', re.IGNORECASE)
     TIME_RANGE_PATTERN = re.compile(r'(\d{1,2}:\d{2}\s*[AP]M)\s*-\s*(\d{1,2}:\d{2}\s*[AP]M)', re.IGNORECASE)
+    
+    # Pattern for extracting semester and school year from COR header
+    # Matches: "1ST 2025-2026", "2ND 2022-2023", "SUMMER 2024-2025"
+    SCHOOL_YEAR_PATTERN = re.compile(
+        r'(1ST|2ND|SUMMER)\s+(\d{4}\s*-\s*\d{4})',
+        re.IGNORECASE
+    )
+    
+    def _extract_metadata(self, page) -> Dict:
+        """
+        Extract semester and school year from the COR header.
+        
+        WMSU COR format has a header area:
+            College                  Sem/SY            Level
+            COLLEGE OF ...           1ST 2025-2026     3
+        
+        Args:
+            page: pdfplumber page object
+            
+        Returns:
+            Dictionary with 'semester' and 'school_year' keys
+        """
+        metadata = {'semester': '', 'school_year': ''}
+        
+        try:
+            text = page.extract_text()
+            if not text:
+                return metadata
+            
+            # Search within the first ~15 lines (header area)
+            header_lines = text.split('\n')[:15]
+            header_text = ' '.join(header_lines)
+            
+            match = self.SCHOOL_YEAR_PATTERN.search(header_text)
+            if match:
+                metadata['semester'] = match.group(1).upper()
+                metadata['school_year'] = match.group(2).replace(' ', '')
+                logger.info(f"Found semester: {metadata['semester']}, "
+                           f"school_year: {metadata['school_year']}")
+            else:
+                logger.warning("Could not find semester/school year in COR header")
+        
+        except Exception as e:
+            logger.warning(f"Error extracting metadata: {str(e)}")
+        
+        return metadata
     
     def _extract_from_page(self, page) -> List[Dict]:
         """

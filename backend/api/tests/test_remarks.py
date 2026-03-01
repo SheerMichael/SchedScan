@@ -17,6 +17,8 @@ from api.models import (
     ClassEnrollment,
     ParentChildLink,
     Notification,
+    Schedule,
+    Course,
 )
 from api.views.remark_views import MAX_REMARK_LENGTH
 
@@ -56,6 +58,25 @@ class RemarkTestMixin:
             enrollment_type='code',
             status='active',
         )
+
+    def _create_faculty_schedule(self, faculty=None, subject='CS101'):
+        """Create a faculty-type Schedule + Course so the schedule validation passes."""
+        fac = faculty or self.faculty
+        schedule = Schedule.objects.create(
+            user=fac,
+            title='Faculty Schedule',
+            upload_type='faculty',
+            is_active=True,
+        )
+        Course.objects.create(
+            user=fac,
+            schedule=schedule,
+            subject_code=subject,
+            start_time='07:00AM',
+            end_time='09:00AM',
+            day='M',
+        )
+        return schedule
 
     def _create_parent_link(self, parent=None, child=None):
         return ParentChildLink.objects.create(
@@ -121,6 +142,7 @@ class FacultyRemarkCreateTests(RemarkTestMixin, TestCase):
     def setUp(self):
         self._create_users()
         self._create_enrollment()
+        self._create_faculty_schedule()
         self.client = APIClient()
         self.client.force_authenticate(user=self.faculty)
 
@@ -189,6 +211,19 @@ class FacultyRemarkCreateTests(RemarkTestMixin, TestCase):
             'text': 'test',
         })
         self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_create_remark_no_faculty_schedule(self):
+        """Faculty without a faculty-type schedule for the subject should be rejected."""
+        # other_faculty has no Schedule/Course for CS101
+        self._create_enrollment(faculty=self.other_faculty)
+        self.client.force_authenticate(user=self.other_faculty)
+        res = self.client.post('/api/faculty/remarks/', {
+            'student_id': self.student.id,
+            'subject_code': 'CS101',
+            'text': 'Should fail',
+        })
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn('subjects you teach', res.json()['error'])
 
 
 class FacultyRemarkListTests(RemarkTestMixin, TestCase):

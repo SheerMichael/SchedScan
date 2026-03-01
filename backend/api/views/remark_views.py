@@ -18,6 +18,7 @@ from api.models import (
     FacultyRemark,
     ClassEnrollment,
     ParentChildLink,
+    Course,
 )
 from api.serializers import FacultyRemarkSerializer
 from api.utils.notification_service import notify_remark
@@ -76,7 +77,10 @@ class FacultyRemarkListCreateView(APIView):
         if subject_code:
             qs = qs.filter(subject_code=subject_code)
         if student_id:
-            qs = qs.filter(student_id=student_id)
+            try:
+                qs = qs.filter(student_id=int(student_id))
+            except (ValueError, TypeError):
+                return Response({'error': 'student_id must be a valid integer.'}, status=status.HTTP_400_BAD_REQUEST)
 
         serializer = FacultyRemarkSerializer(_paginate_qs(qs, request), many=True)
         return Response(serializer.data)
@@ -108,6 +112,19 @@ class FacultyRemarkListCreateView(APIView):
             return Response(
                 {'error': f'Remark text must be {MAX_REMARK_LENGTH} characters or fewer.'},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Verify the faculty teaches this subject via a faculty schedule
+        teaches_subject = Course.objects.filter(
+            user=user,
+            subject_code=subject_code,
+            schedule__upload_type='faculty',
+        ).exists()
+
+        if not teaches_subject:
+            return Response(
+                {'error': 'You can only leave remarks for subjects you teach.'},
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         # Verify enrollment: the student must be enrolled in this faculty's class

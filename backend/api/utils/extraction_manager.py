@@ -120,10 +120,14 @@ class ExtractionManager:
         try:
             # Try PDF text extraction
             pdf_extractor = get_pdf_extractor(upload_type)
-            courses = pdf_extractor.extract_from_pdf(file_path)
+            pdf_result = pdf_extractor.extract_from_pdf(file_path)
+            courses = pdf_result['courses']
+            semester = pdf_result.get('semester', '')
+            school_year = pdf_result.get('school_year', '')
             quality = calculate_quality_score(courses)
             
-            logger.info(f"PDF extraction results: {len(courses)} courses, quality={quality}")
+            logger.info(f"PDF extraction results: {len(courses)} courses, quality={quality}, "
+                       f"semester={semester}, school_year={school_year}")
             
             # Check if quality meets threshold
             if quality >= self.quality_threshold:
@@ -132,6 +136,8 @@ class ExtractionManager:
                     'courses': courses,
                     'extraction_method': 'pdf_text',
                     'confidence': quality,
+                    'semester': semester,
+                    'school_year': school_year,
                 }
             else:
                 logger.warning(f"PDF extraction quality ({quality}) below threshold ({self.quality_threshold}), "
@@ -176,6 +182,8 @@ class ExtractionManager:
                 'courses': courses,
                 'extraction_method': 'ocr',
                 'confidence': quality,
+                'semester': ocr_extractor.metadata.get('semester', ''),
+                'school_year': ocr_extractor.metadata.get('school_year', ''),
             }
         
         except Exception as e:
@@ -201,6 +209,8 @@ class ExtractionManager:
                 'courses': [],
                 'extraction_method': 'pdf_text_only',
                 'confidence': 0.0,
+                'semester': '',
+                'school_year': '',
             }
         
         logger.info("Using OCR fallback extraction...")
@@ -217,6 +227,8 @@ class ExtractionManager:
                 'courses': courses,
                 'extraction_method': 'ocr_fallback',
                 'confidence': quality,
+                'semester': ocr_extractor.metadata.get('semester', ''),
+                'school_year': ocr_extractor.metadata.get('school_year', ''),
             }
         
         except Exception as e:

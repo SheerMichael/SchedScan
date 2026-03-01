@@ -43,8 +43,10 @@ export default function FacultyRemarksScreen() {
   const [editText, setEditText] = useState('');
 
   useEffect(() => {
-    loadData();
-  }, [subjectCode]);
+    if (user?.user_type === 'faculty') {
+      loadData();
+    }
+  }, [subjectCode, user?.user_type]);
 
   const loadData = useCallback(async () => {
     if (!subjectCode) return;
@@ -132,6 +134,19 @@ export default function FacultyRemarksScreen() {
     </Svg>
   );
 
+  // Guard: only faculty should access this screen
+  if (user?.user_type !== 'faculty') {
+    return (
+      <View className="flex-1 justify-center items-center bg-white px-6">
+        <Text className="text-lg font-bold text-gray-800 mb-2">Access Denied</Text>
+        <Text className="text-gray-500 text-center mb-4">Only faculty can access student remarks.</Text>
+        <TouchableOpacity onPress={() => router.back()} className="bg-orange-500 px-6 py-3 rounded-xl">
+          <Text className="text-white font-bold">Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   if (isLoading) {
     return (
       <View className="flex-1 justify-center items-center bg-white">
@@ -173,9 +188,8 @@ export default function FacultyRemarksScreen() {
                       setSelectedStudent({ student_id: s.student_id, student_name: s.student_name });
                       setFilterStudentId(s.student_id);
                     }}
-                    className={`mr-2 px-4 py-3 rounded-xl border min-w-[120px] items-center ${
-                      isSelected ? 'bg-orange-50 border-orange-400' : 'bg-white border-gray-200'
-                    }`}
+                    className={`mr-2 px-4 py-3 rounded-xl border min-w-[120px] items-center ${isSelected ? 'bg-orange-50 border-orange-400' : 'bg-white border-gray-200'
+                      }`}
                   >
                     <View className="w-10 h-10 rounded-full bg-orange-100 justify-center items-center mb-1">
                       <Text className="text-lg font-bold text-orange-600">
@@ -183,9 +197,8 @@ export default function FacultyRemarksScreen() {
                       </Text>
                     </View>
                     <Text
-                      className={`text-sm font-medium text-center ${
-                        isSelected ? 'text-orange-700' : 'text-gray-700'
-                      }`}
+                      className={`text-sm font-medium text-center ${isSelected ? 'text-orange-700' : 'text-gray-700'
+                        }`}
                       numberOfLines={1}
                     >
                       {s.student_name}
@@ -227,9 +240,8 @@ export default function FacultyRemarksScreen() {
               <TouchableOpacity
                 onPress={handleSubmitRemark}
                 disabled={isSubmitting || !remarkText.trim()}
-                className={`mt-2 py-3 rounded-xl items-center ${
-                  isSubmitting || !remarkText.trim() ? 'bg-gray-300' : 'bg-orange-500'
-                }`}
+                className={`mt-2 py-3 rounded-xl items-center ${isSubmitting || !remarkText.trim() ? 'bg-gray-300' : 'bg-orange-500'
+                  }`}
               >
                 {isSubmitting ? (
                   <ActivityIndicator size="small" color="#fff" />

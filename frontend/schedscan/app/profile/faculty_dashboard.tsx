@@ -635,9 +635,8 @@ export default function FacultyDashboard() {
                                 key={f.id ?? idx}
                                 onPress={() => handleDownloadFile({ id: task.id, file_name: f.file_name, file_id: f.id })}
                                 disabled={downloadingTaskId !== null}
-                                className={`flex-row items-center max-w-full overflow-hidden px-2.5 py-1.5 rounded-md mb-1 ${
-                                  downloadingTaskId === task.id ? 'bg-blue-100' : 'bg-blue-50'
-                                }`}
+                                className={`flex-row items-center max-w-full overflow-hidden px-2.5 py-1.5 rounded-md mb-1 ${downloadingTaskId === task.id ? 'bg-blue-100' : 'bg-blue-50'
+                                  }`}
                                 activeOpacity={0.6}
                               >
                                 {downloadingTaskId === task.id ? (
@@ -792,6 +791,42 @@ export default function FacultyDashboard() {
               )}
             </View>
           )}
+
+          {/* ---- Student Remarks Button ---- */}
+          <TouchableOpacity
+            onPress={() =>
+              router.push({
+                pathname: "/Home/Subject/remarks" as any,
+                params: { subjectCode },
+              })
+            }
+            className="bg-orange-50 border border-orange-200 p-4 rounded-xl mt-4 mb-4 flex-row items-center justify-between"
+            activeOpacity={0.7}
+          >
+            <View className="flex-row items-center">
+              <View className="w-10 h-10 rounded-full bg-orange-100 items-center justify-center mr-3">
+                <Svg
+                  width={20}
+                  height={20}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="#f97316"
+                  strokeWidth="2"
+                >
+                  <Path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+                </Svg>
+              </View>
+              <View>
+                <Text className="font-bold text-orange-800">
+                  Student Remarks
+                </Text>
+                <Text className="text-orange-600 text-xs">
+                  Leave performance comments
+                </Text>
+              </View>
+            </View>
+            <ChevronRight size={20} color="#f97316" />
+          </TouchableOpacity>
         </View>
 
         {/* Bottom spacing */}

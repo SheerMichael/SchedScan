@@ -126,6 +126,18 @@ class Schedule(models.Model):
         choices=UPLOAD_TYPE_CHOICES,
         help_text="Type of schedule: student or faculty"
     )
+    semester = models.CharField(
+        max_length=20,
+        blank=True,
+        default='',
+        help_text="Semester (e.g., '1ST', '2ND', 'SUMMER')"
+    )
+    school_year = models.CharField(
+        max_length=20,
+        blank=True,
+        default='',
+        help_text="School year (e.g., '2025-2026')"
+    )
     is_active = models.BooleanField(
         default=False,
         help_text="Whether this is the currently active schedule for the user"

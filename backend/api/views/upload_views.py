@@ -68,7 +68,9 @@ class BaseCORUploadView(APIView):
                 'method': result['extraction_method'],
                 'confidence': result['confidence'],
                 'processing_time_seconds': result['processing_time'],
-                'attempts': result.get('attempts', [])
+                'attempts': result.get('attempts', []),
+                'semester': result.get('semester', ''),
+                'school_year': result.get('school_year', ''),
             }
             
             logger.info(f"Extraction completed using {result['extraction_method']} method "
@@ -111,6 +113,8 @@ class BaseCORUploadView(APIView):
                     "courses": serializer.data,
                     "total_courses": len(created_courses),
                     "upload_type": self.upload_type,
+                    "semester": extraction_metadata.get('semester', ''),
+                    "school_year": extraction_metadata.get('school_year', ''),
                     "extraction_metadata": extraction_metadata
                 },
                 status=status.HTTP_201_CREATED

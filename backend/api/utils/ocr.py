@@ -158,7 +158,40 @@ class BaseCORExtractor(ABC):
             dpi: DPI for PDF to image conversion (used for scanned PDFs)
         """
         self.dpi = dpi
+        # Metadata extracted during processing
+        self.metadata = {'semester': '', 'school_year': ''}
         logger.info(f"Initialized {self.__class__.__name__}")
+    
+    # Pattern for extracting semester and school year
+    # Matches: "1ST 2025-2026", "2ND 2022-2023", "SUMMER 2024-2025"
+    SCHOOL_YEAR_PATTERN = re.compile(
+        r'(1ST|2ND|SUMMER)\s+(\d{4}\s*-\s*\d{4})',
+        re.IGNORECASE
+    )
+    
+    def _extract_school_year_from_text(self, text: str) -> Dict:
+        """
+        Extract semester and school year from COR text.
+        
+        Args:
+            text: Full text extracted from document
+            
+        Returns:
+            Dictionary with 'semester' and 'school_year' keys
+        """
+        metadata = {'semester': '', 'school_year': ''}
+        
+        # Search within the first portion of the text (header area)
+        header_text = text[:1000] if len(text) > 1000 else text
+        
+        match = self.SCHOOL_YEAR_PATTERN.search(header_text)
+        if match:
+            metadata['semester'] = match.group(1).upper()
+            metadata['school_year'] = match.group(2).replace(' ', '')
+            logger.info(f"OCR found semester: {metadata['semester']}, "
+                       f"school_year: {metadata['school_year']}")
+        
+        return metadata
 
     def extract_from_document(self, file_path: str) -> List[Dict]:
         """
@@ -186,6 +219,7 @@ class BaseCORExtractor(ABC):
     def _extract_from_pdf(self, file_path: str) -> List[Dict]:
         """
         Extract courses from PDF using pdfplumber.
+        Also extracts school year metadata and stores it in self.metadata.
         
         Args:
             file_path: Path to PDF file
@@ -209,6 +243,9 @@ class BaseCORExtractor(ABC):
             else:
                 logger.error("Pytesseract not available for OCR fallback")
                 return []
+        
+        # Extract school year metadata from text
+        self.metadata = self._extract_school_year_from_text(all_text)
         
         return self._parse_text(all_text)
 
