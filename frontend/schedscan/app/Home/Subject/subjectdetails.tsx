@@ -1,4 +1,4 @@
-import { View, Text, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Alert, Modal } from "react-native";
+import { View, Text, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Alert, Modal, StyleSheet } from "react-native";
 import * as Clipboard from 'expo-clipboard';
 import Checkbox from "expo-checkbox";
 import { useState, useEffect, useCallback } from "react";
@@ -75,6 +75,7 @@ export default function SubjectDetails() {
   // Student Remarks State (Student only)
   // ============================================
   const [studentRemarks, setStudentRemarks] = useState<FacultyRemark[]>([]);
+  const [viewingStudentRemark, setViewingStudentRemark] = useState<FacultyRemark | null>(null);
 
   // ============================================
   // File Download
@@ -613,17 +614,44 @@ export default function SubjectDetails() {
             {/* Faculty Remarks Section (Student view) */}
             {studentRemarks.length > 0 && (
               <View className="mb-6">
-                <Text className="text-lg font-bold text-purple-600 mb-2">Faculty Remarks</Text>
-                {studentRemarks.map((remark) => (
-                  <View
-                    key={remark.id}
-                    className="bg-purple-50 p-3 rounded-xl mb-2 border-l-4 border-purple-400"
-                  >
-                    <Text className="text-gray-800">{remark.text}</Text>
-                    <Text className="text-purple-500 text-xs mt-1">
-                      By {remark.faculty_name} • {remark.time_ago}
-                    </Text>
+                <View className="flex-row items-center mb-3">
+                  <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="#374151" strokeWidth="2">
+                    <Path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+                  </Svg>
+                  <Text className="text-base font-bold text-gray-800 ml-2">Faculty Remarks</Text>
+                  <View className="bg-gray-100 rounded-full px-2 py-0.5 ml-2">
+                    <Text className="text-gray-500 text-xs font-medium">{studentRemarks.length}</Text>
                   </View>
+                </View>
+                {studentRemarks.map((remark) => (
+                  <TouchableOpacity
+                    key={remark.id}
+                    onPress={() => setViewingStudentRemark(remark)}
+                    activeOpacity={0.7}
+                    className="bg-white rounded-xl mb-2.5 p-3.5"
+                    style={{
+                      shadowColor: '#000',
+                      shadowOffset: { width: 0, height: 1 },
+                      shadowOpacity: 0.05,
+                      shadowRadius: 3,
+                      elevation: 1,
+                    }}
+                  >
+                    <View className="flex-row items-center mb-2">
+                      <View className="w-8 h-8 rounded-full bg-orange-100 justify-center items-center mr-2.5">
+                        <Text className="text-xs font-bold text-orange-600">
+                          {(remark.faculty_name?.charAt(0) || 'F').toUpperCase()}
+                        </Text>
+                      </View>
+                      <View className="flex-1">
+                        <Text className="font-semibold text-gray-900 text-sm">{remark.faculty_name}</Text>
+                      </View>
+                      <Text className="text-gray-400 text-xs">{remark.time_ago}</Text>
+                    </View>
+                    <Text className="text-gray-700 text-sm leading-5" numberOfLines={3}>
+                      {remark.text}
+                    </Text>
+                  </TouchableOpacity>
                 ))}
               </View>
             )}
@@ -755,6 +783,55 @@ export default function SubjectDetails() {
           onEnrolled={handleJoinClassEnrolled}
         />
       )}
+
+      {/* Student Remark Detail Modal (tap-to-expand) */}
+      <Modal visible={!!viewingStudentRemark} transparent animationType="fade" onRequestClose={() => setViewingStudentRemark(null)}>
+        <View className="flex-1 bg-black/50 justify-end">
+          <View className="bg-white rounded-t-3xl max-h-[70%]">
+            <View className="items-center pt-3 pb-2">
+              <View className="w-10 h-1 bg-gray-200 rounded-full" />
+            </View>
+            {viewingStudentRemark && (
+              <ScrollView bounces={false} contentContainerStyle={{ paddingBottom: 30 }}>
+                <View className="px-5 pb-4">
+                  {/* Faculty info */}
+                  <View className="flex-row items-center mb-4">
+                    <View className="w-11 h-11 rounded-full bg-orange-100 justify-center items-center mr-3">
+                      <Text className="text-base font-bold text-orange-600">
+                        {(viewingStudentRemark.faculty_name?.charAt(0) || 'F').toUpperCase()}
+                      </Text>
+                    </View>
+                    <View className="flex-1">
+                      <Text className="font-bold text-gray-900 text-base">{viewingStudentRemark.faculty_name}</Text>
+                      <View className="flex-row items-center mt-0.5">
+                        <View className="bg-orange-100 rounded px-1.5 py-0.5 mr-2">
+                          <Text className="text-orange-700 text-xs font-medium">{viewingStudentRemark.subject_code}</Text>
+                        </View>
+                        <Text className="text-gray-400 text-xs">{viewingStudentRemark.time_ago}</Text>
+                      </View>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => setViewingStudentRemark(null)}
+                      className="p-2 bg-gray-100 rounded-full"
+                    >
+                      <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2.5">
+                        <Path d="M18 6L6 18M6 6l12 12" />
+                      </Svg>
+                    </TouchableOpacity>
+                  </View>
+                  <View className="h-px bg-gray-100 mb-4" />
+                  <Text className="text-gray-800 text-base leading-6">{viewingStudentRemark.text}</Text>
+                  <Text className="text-gray-400 text-xs mt-4">
+                    {viewingStudentRemark.created_at
+                      ? new Date(viewingStudentRemark.created_at).toLocaleString()
+                      : viewingStudentRemark.time_ago}
+                  </Text>
+                </View>
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
     </>
   );
 }

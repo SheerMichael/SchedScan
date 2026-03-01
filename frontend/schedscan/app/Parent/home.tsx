@@ -6,6 +6,7 @@ import { useAuth } from "../../context/AuthContext";
 import { parentService, LinkedChild, ChildInfo } from "../../services/parentService";
 import { parentRemarkService, FacultyRemark } from "../../services/remarkService";
 import { Plus, X, Users, Calendar, MessageSquare } from "lucide-react-native";
+import Svg, { Path } from "react-native-svg";
 
 // --- Types ---
 type Course = {
@@ -37,6 +38,7 @@ const ParentHomePage = () => {
   // Remarks state
   const [remarks, setRemarks] = useState<FacultyRemark[]>([]);
   const [isLoadingRemarks, setIsLoadingRemarks] = useState(false);
+  const [viewingParentRemark, setViewingParentRemark] = useState<FacultyRemark | null>(null);
 
   // Load data on focus
   useFocusEffect(
@@ -270,8 +272,8 @@ const ParentHomePage = () => {
                   key={item.link_id}
                   onPress={() => selectChild(item.child)}
                   className={`mr-3 p-4 rounded-xl border-2 min-w-[140px] ${selectedChild?.id === item.child.id
-                      ? 'bg-primary-50 border-primary-500'
-                      : 'bg-white border-gray-200'
+                    ? 'bg-primary-50 border-primary-500'
+                    : 'bg-white border-gray-200'
                     }`}
                 >
                   <View className="items-center">
@@ -375,15 +377,20 @@ const ParentHomePage = () => {
             {/* Faculty Remarks Section */}
             <View className="mt-6">
               <View className="flex-row items-center mb-3">
-                <MessageSquare size={18} color="#7C3AED" />
+                <MessageSquare size={18} color="#374151" />
                 <Text className="text-lg font-bold text-gray-800 ml-2">
                   Faculty Remarks
                 </Text>
+                {remarks.length > 0 && (
+                  <View className="bg-gray-100 rounded-full px-2 py-0.5 ml-2">
+                    <Text className="text-gray-500 text-xs font-medium">{remarks.length}</Text>
+                  </View>
+                )}
               </View>
 
               {isLoadingRemarks ? (
                 <View className="py-4 items-center">
-                  <ActivityIndicator size="small" color="#7C3AED" />
+                  <ActivityIndicator size="small" color="#f97316" />
                 </View>
               ) : remarks.length === 0 ? (
                 <View className="bg-white p-6 rounded-xl border border-dashed border-gray-200 items-center">
@@ -393,24 +400,93 @@ const ParentHomePage = () => {
                 </View>
               ) : (
                 remarks.map((remark) => (
-                  <View
+                  <TouchableOpacity
                     key={remark.id}
-                    className="bg-purple-50 p-4 mb-3 rounded-xl border-l-4 border-purple-400"
+                    onPress={() => setViewingParentRemark(remark)}
+                    activeOpacity={0.7}
+                    className="bg-white rounded-xl mb-2.5 p-4"
+                    style={{
+                      shadowColor: '#000',
+                      shadowOffset: { width: 0, height: 1 },
+                      shadowOpacity: 0.05,
+                      shadowRadius: 3,
+                      elevation: 1,
+                    }}
                   >
-                    <Text className="text-gray-800">{remark.text}</Text>
-                    <View className="flex-row justify-between mt-2">
-                      <Text className="text-purple-600 text-xs font-medium">
-                        {remark.faculty_name} • {remark.subject_code}
-                      </Text>
+                    <View className="flex-row items-center mb-2">
+                      <View className="w-9 h-9 rounded-full bg-orange-100 justify-center items-center mr-2.5">
+                        <Text className="text-sm font-bold text-orange-600">
+                          {(remark.faculty_name?.charAt(0) || 'F').toUpperCase()}
+                        </Text>
+                      </View>
+                      <View className="flex-1">
+                        <Text className="font-semibold text-gray-900 text-sm">{remark.faculty_name}</Text>
+                        <View className="flex-row items-center mt-0.5">
+                          <View className="bg-orange-100 rounded px-1.5 py-0.5 mr-2">
+                            <Text className="text-orange-700 text-xs font-medium">{remark.subject_code}</Text>
+                          </View>
+                        </View>
+                      </View>
                       <Text className="text-gray-400 text-xs">{remark.time_ago}</Text>
                     </View>
-                  </View>
+                    <Text className="text-gray-700 text-sm leading-5" numberOfLines={3}>
+                      {remark.text}
+                    </Text>
+                  </TouchableOpacity>
                 ))
               )}
             </View>
           </View>
         )}
       </ScrollView>
+
+      {/* Parent Remark Detail Modal (tap-to-expand) */}
+      <Modal visible={!!viewingParentRemark} transparent animationType="fade" onRequestClose={() => setViewingParentRemark(null)}>
+        <View className="flex-1 bg-black/50 justify-end">
+          <View className="bg-white rounded-t-3xl max-h-[70%]">
+            <View className="items-center pt-3 pb-2">
+              <View className="w-10 h-1 bg-gray-200 rounded-full" />
+            </View>
+            {viewingParentRemark && (
+              <ScrollView bounces={false} contentContainerStyle={{ paddingBottom: 30 }}>
+                <View className="px-5 pb-4">
+                  <View className="flex-row items-center mb-4">
+                    <View className="w-11 h-11 rounded-full bg-orange-100 justify-center items-center mr-3">
+                      <Text className="text-base font-bold text-orange-600">
+                        {(viewingParentRemark.faculty_name?.charAt(0) || 'F').toUpperCase()}
+                      </Text>
+                    </View>
+                    <View className="flex-1">
+                      <Text className="font-bold text-gray-900 text-base">{viewingParentRemark.faculty_name}</Text>
+                      <View className="flex-row items-center mt-0.5">
+                        <View className="bg-orange-100 rounded px-1.5 py-0.5 mr-2">
+                          <Text className="text-orange-700 text-xs font-medium">{viewingParentRemark.subject_code}</Text>
+                        </View>
+                        <Text className="text-gray-400 text-xs">{viewingParentRemark.time_ago}</Text>
+                      </View>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => setViewingParentRemark(null)}
+                      className="p-2 bg-gray-100 rounded-full"
+                    >
+                      <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2.5">
+                        <Path d="M18 6L6 18M6 6l12 12" />
+                      </Svg>
+                    </TouchableOpacity>
+                  </View>
+                  <View className="h-px bg-gray-100 mb-4" />
+                  <Text className="text-gray-800 text-base leading-6">{viewingParentRemark.text}</Text>
+                  <Text className="text-gray-400 text-xs mt-4">
+                    {viewingParentRemark.created_at
+                      ? new Date(viewingParentRemark.created_at).toLocaleString()
+                      : viewingParentRemark.time_ago}
+                  </Text>
+                </View>
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       {/* Link Child Modal */}
       <Modal
