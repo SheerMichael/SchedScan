@@ -12,6 +12,8 @@ export interface SavedSchedule {
   uploadType: 'student' | 'faculty' | 'merged';
   uploadDate: string;
   isActive: boolean;
+  semester?: string;      // e.g. '1ST', '2ND', 'SUMMER'
+  schoolYear?: string;    // e.g. '2025-2026'
 }
 
 /**
@@ -91,6 +93,8 @@ interface APISchedule {
   upload_type: 'student' | 'faculty' | 'merged';
   is_active: boolean;
   courses: APICourse[];
+  semester?: string;
+  school_year?: string;
   created_at: string;
   updated_at: string;
 }
@@ -131,6 +135,8 @@ const transformAPISchedule = (apiSchedule: APISchedule): SavedSchedule => ({
   uploadType: apiSchedule.upload_type,
   isActive: apiSchedule.is_active,
   uploadDate: apiSchedule.created_at,
+  semester: apiSchedule.semester || '',
+  schoolYear: apiSchedule.school_year || '',
   courses: apiSchedule.courses.map(course => ({
     id: course.id,
     user: 0, // Not needed on frontend

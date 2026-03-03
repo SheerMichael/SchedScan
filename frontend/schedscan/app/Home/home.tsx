@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Image, ActivityIndicator, StyleSheet } from 'react-native';
 import Svg, { Path, Circle, G, Rect, Polygon } from "react-native-svg";
 import { router } from "expo-router";
@@ -19,6 +19,7 @@ import FacultyModeModal from '../../components/FacultyModeModal';
 import JoinClassModal from '../../components/JoinClassModal';
 import notificationService from '../../services/notificationService';
 import { scheduleClassReminders } from '../../services/classReminderService';
+import { getSemesterMonths, getSemesterLabel, getInitialMonth } from '../../utils/semesterUtils';
 
 export default function SchedScanApp() {
   const { user, getActiveSchedule, isOffline, hasPendingFacultyUnlock, activateFacultyMode, setPendingFacultyUnlock } = useAuth();
@@ -264,7 +265,7 @@ export default function SchedScanApp() {
       // Fetch unread notification count for badge
       notificationService.getUnreadCount()
         .then(count => setUnreadNotifCount(count))
-        .catch(() => {});
+        .catch(() => { });
     }, [user?.id])
   );
 
@@ -466,6 +467,16 @@ export default function SchedScanApp() {
   const monthsFull = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
   const daysOfWeek = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
+  // Semester-scoped month indices and label derived from the active schedule
+  const semesterMonths = useMemo(
+    () => getSemesterMonths(activeSchedule?.semester),
+    [activeSchedule?.semester]
+  );
+  const semesterLabel = useMemo(
+    () => getSemesterLabel(activeSchedule?.semester, activeSchedule?.schoolYear),
+    [activeSchedule?.semester, activeSchedule?.schoolYear]
+  );
+
   const getDaysInMonth = (month: number, year: number) => new Date(year, month + 1, 0).getDate();
   const getFirstDayOfMonth = (month: number, year: number) => new Date(year, month, 1).getDay();
 
@@ -480,19 +491,36 @@ export default function SchedScanApp() {
   };
 
   const navigateMonth = (direction: 'prev' | 'next') => {
+    const currentIdx = semesterMonths.indexOf(selectedMonth);
     if (direction === 'prev') {
-      if (selectedMonth === 0) {
-        setSelectedMonth(11);
-        setSelectedYear(selectedYear - 1);
+      if (currentIdx <= 0) {
+        // Wrap to last month in the semester range (previous year if applicable)
+        const lastSemMonth = semesterMonths[semesterMonths.length - 1];
+        setSelectedMonth(lastSemMonth);
+        if (lastSemMonth >= selectedMonth) {
+          setSelectedYear(selectedYear - 1);
+        }
       } else {
-        setSelectedMonth(selectedMonth - 1);
+        setSelectedMonth(semesterMonths[currentIdx - 1]);
+        // Handle year rollover (e.g., going from Jan to Dec within a cross-year semester)
+        if (semesterMonths[currentIdx - 1] > selectedMonth) {
+          setSelectedYear(selectedYear - 1);
+        }
       }
     } else {
-      if (selectedMonth === 11) {
-        setSelectedMonth(0);
-        setSelectedYear(selectedYear + 1);
+      if (currentIdx >= semesterMonths.length - 1) {
+        // Wrap to first month in the semester range (next year if applicable)
+        const firstSemMonth = semesterMonths[0];
+        setSelectedMonth(firstSemMonth);
+        if (firstSemMonth <= selectedMonth) {
+          setSelectedYear(selectedYear + 1);
+        }
       } else {
-        setSelectedMonth(selectedMonth + 1);
+        setSelectedMonth(semesterMonths[currentIdx + 1]);
+        // Handle year rollover
+        if (semesterMonths[currentIdx + 1] < selectedMonth) {
+          setSelectedYear(selectedYear + 1);
+        }
       }
     }
     setSelectedDay(null);
@@ -558,6 +586,14 @@ export default function SchedScanApp() {
       selectDay(selectedDay);
     }
   }, [courses, selectedMonth, selectedYear]);
+
+  // When the active schedule changes, auto-select the correct initial month for its semester
+  useEffect(() => {
+    if (activeSchedule) {
+      const initialMonth = getInitialMonth(activeSchedule.semester);
+      setSelectedMonth(initialMonth);
+    }
+  }, [activeSchedule?.id, activeSchedule?.semester]);
 
   // Select today on initial load
   useEffect(() => {
@@ -727,13 +763,22 @@ export default function SchedScanApp() {
           </TouchableOpacity>
         )}
 
-        {/* Month Selector */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-4 mt-4" contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}>
-          {months.map((month, idx) => (
-            <TouchableOpacity key={month} onPress={() => setSelectedMonth(idx)}
-              className={`px-3 py-2 rounded-full ${selectedMonth === idx ? 'bg-red-600' : 'bg-gray-100'}`}>
-              <Text className={`text-xs font-semibold ${selectedMonth === idx ? 'text-white' : 'text-gray-600'}`}>
-                {month}
+        {/* Semester Label */}
+        {activeSchedule?.semester ? (
+          <View style={{ paddingHorizontal: 16, marginTop: 12 }}>
+            <Text style={{ fontSize: 13, fontWeight: '600', color: '#6b7280' }}>
+              📅 {semesterLabel}
+            </Text>
+          </View>
+        ) : null}
+
+        {/* Month Selector (scoped to semester) */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-4 mt-3" contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}>
+          {semesterMonths.map((monthIdx) => (
+            <TouchableOpacity key={monthIdx} onPress={() => setSelectedMonth(monthIdx)}
+              className={`px-3 py-2 rounded-full ${selectedMonth === monthIdx ? 'bg-red-600' : 'bg-gray-100'}`}>
+              <Text className={`text-xs font-semibold ${selectedMonth === monthIdx ? 'text-white' : 'text-gray-600'}`}>
+                {months[monthIdx]}
               </Text>
             </TouchableOpacity>
           ))}
