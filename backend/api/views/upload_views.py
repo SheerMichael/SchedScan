@@ -1,11 +1,10 @@
-from django.core.files.storage import default_storage
-from django.core.files.base import ContentFile
 from rest_framework import status, generics
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth import get_user_model
 import os
+import tempfile
 import logging
 
 from ..serializers import CourseSerializer
@@ -49,19 +48,23 @@ class BaseCORUploadView(APIView):
         temp_file_path = None
         
         try:
-            # Save uploaded file temporarily
-            temp_file_name = f"temp_{self.upload_type}_cor_{request.user.id}_{uploaded_file.name}"
-            temp_file_path = default_storage.save(
-                f"temp/{temp_file_name}",
-                ContentFile(uploaded_file.read())
-            )
-            full_temp_path = default_storage.path(temp_file_path)
+            # Save uploaded file to a local temporary file
+            # (works with any storage backend, including S3)
+            file_extension = os.path.splitext(uploaded_file.name)[1].lower()
+            with tempfile.NamedTemporaryFile(
+                delete=False,
+                suffix=file_extension,
+                prefix=f"cor_{self.upload_type}_{request.user.id}_",
+            ) as tmp:
+                for chunk in uploaded_file.chunks():
+                    tmp.write(chunk)
+                temp_file_path = tmp.name
             
-            logger.info(f"Processing {self.upload_type.upper()} COR for user {request.user.id}: {temp_file_name}")
+            logger.info(f"Processing {self.upload_type.upper()} COR for user {request.user.id}: {uploaded_file.name}")
             
             # Use ExtractionManager for hybrid PDF/OCR extraction
             manager = ExtractionManager()
-            result = manager.extract_schedule(full_temp_path, self.upload_type)
+            result = manager.extract_schedule(temp_file_path, self.upload_type)
             
             courses_data = result['courses']
             extraction_metadata = {
@@ -132,8 +135,8 @@ class BaseCORUploadView(APIView):
         
         finally:
             # Clean up temporary file
-            if temp_file_path and default_storage.exists(temp_file_path):
-                default_storage.delete(temp_file_path)
+            if temp_file_path and os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
                 logger.info(f"Cleaned up temporary file: {temp_file_path}")
 
 
