@@ -214,13 +214,17 @@ export const scheduleStorageService = {
     courses: Course[],
     uploadType: 'student' | 'faculty',
     userId: number,
-    setAsActive: boolean = false
+    setAsActive: boolean = false,
+    semester: string = '',
+    schoolYear: string = '',
   ): Promise<SavedSchedule> => {
     try {
       const response = await api.post('/schedules/', {
         title,
         upload_type: uploadType,
         is_active: setAsActive,
+        semester,
+        school_year: schoolYear,
         courses: transformCoursesForAPI(courses),
       });
 

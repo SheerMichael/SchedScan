@@ -9,6 +9,7 @@ import { courseService, Course } from '../../services/courseService';
 import { scheduleStorageService } from '../../services/scheduleStorageService';
 import { useAuth } from '../../context/AuthContext';
 import FacultyModeModal from '../../components/FacultyModeModal';
+import { detectSemesterFromDate } from '../../utils/semesterUtils';
 
 export default function Scanner() {
   const router = useRouter();
@@ -20,6 +21,8 @@ export default function Scanner() {
   const [showTitleModal, setShowTitleModal] = useState(false);
   const [scheduleTitle, setScheduleTitle] = useState('');
   const [uploadedCourses, setUploadedCourses] = useState<Course[]>([]);
+  const [uploadedSemester, setUploadedSemester] = useState<string>('');
+  const [uploadedSchoolYear, setUploadedSchoolYear] = useState<string>('');
 
   // Faculty mode unlock modal
   const [showFacultyModeModal, setShowFacultyModeModal] = useState(false);
@@ -121,8 +124,20 @@ export default function Scanner() {
         await scheduleStorageService.recordUpload(user.id);
       }
 
-      // Store courses and show title input modal
+      // Store courses
       setUploadedCourses(response.courses);
+
+      // Capture semester data from extraction (student COR) or auto-detect (faculty)
+      if (response.semester) {
+        setUploadedSemester(response.semester);
+        setUploadedSchoolYear(response.school_year || '');
+      } else {
+        // Faculty IDP or missing data — auto-detect from today's date
+        const detected = detectSemesterFromDate();
+        setUploadedSemester(detected.semester);
+        setUploadedSchoolYear(detected.schoolYear);
+      }
+
       setIsUploading(false);
       setShowTitleModal(true);
     } catch (error: any) {
@@ -136,7 +151,7 @@ export default function Scanner() {
     if (!scheduleTitle.trim()) { Alert.alert('Error', 'Please enter a schedule title'); return; }
     if (!user?.id) { Alert.alert('Error', 'User not authenticated'); return; }
     try {
-      await scheduleStorageService.saveSchedule(scheduleTitle.trim(), uploadedCourses, selectedRole!, user.id, false);
+      await scheduleStorageService.saveSchedule(scheduleTitle.trim(), uploadedCourses, selectedRole!, user.id, false, uploadedSemester, uploadedSchoolYear);
       setShowTitleModal(false);
 
       // If this was a faculty schedule and user is not yet faculty, show unlock modal
@@ -154,7 +169,7 @@ export default function Scanner() {
     if (!scheduleTitle.trim()) { Alert.alert('Error', 'Please enter a schedule title'); return; }
     if (!user?.id) { Alert.alert('Error', 'User not authenticated'); return; }
     try {
-      await scheduleStorageService.saveSchedule(scheduleTitle.trim(), uploadedCourses, selectedRole!, user.id, true);
+      await scheduleStorageService.saveSchedule(scheduleTitle.trim(), uploadedCourses, selectedRole!, user.id, true, uploadedSemester, uploadedSchoolYear);
       setShowTitleModal(false);
 
       // If this was a faculty schedule and user is not yet faculty, show unlock modal
@@ -198,6 +213,8 @@ export default function Scanner() {
     setSelectedRole(null);
     setScheduleTitle('');
     setUploadedCourses([]);
+    setUploadedSemester('');
+    setUploadedSchoolYear('');
   };
 
   const LeftPointingArrow = ({ size = 24, color = '#ffffff' }) => (
@@ -351,11 +368,46 @@ export default function Scanner() {
             <Text className="text-sm text-gray-500 mb-4">{uploadedCourses.length} courses extracted</Text>
 
             <TextInput
-              className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 mb-4 text-base"
+              className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 mb-3 text-base"
               placeholder="e.g., 1st Sem 2025"
               value={scheduleTitle}
               onChangeText={setScheduleTitle}
               autoFocus
+            />
+
+            {/* Semester Picker */}
+            <Text className="text-sm font-semibold text-gray-700 mb-2">Semester</Text>
+            <View className="flex-row gap-2 mb-3">
+              {[
+                { label: '1st Sem', value: '1ST' },
+                { label: '2nd Sem', value: '2ND' },
+                { label: 'Summer', value: 'SUMMER' },
+              ].map((opt) => (
+                <TouchableOpacity
+                  key={opt.value}
+                  onPress={() => setUploadedSemester(opt.value)}
+                  className={`flex-1 py-2 rounded-lg border ${uploadedSemester === opt.value
+                      ? 'bg-[#B88080] border-[#B88080]'
+                      : 'bg-gray-50 border-gray-200'
+                    }`}
+                >
+                  <Text
+                    className={`text-center text-sm font-semibold ${uploadedSemester === opt.value ? 'text-white' : 'text-gray-600'
+                      }`}
+                  >
+                    {opt.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* School Year */}
+            <Text className="text-sm font-semibold text-gray-700 mb-2">School Year</Text>
+            <TextInput
+              className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 mb-4 text-base"
+              placeholder="e.g., 2025-2026"
+              value={uploadedSchoolYear}
+              onChangeText={setUploadedSchoolYear}
             />
 
             <View className="gap-3">

@@ -77,3 +77,26 @@ export function getInitialMonth(semester?: string): number {
     // Current month is outside this semester — default to the first month
     return months[0];
 }
+
+/**
+ * Auto-detect the current semester and school year based on today's date.
+ * Uses WMSU academic calendar:
+ *   Aug–Dec  → 1ST semester, school year = currentYear–nextYear
+ *   Jan–May  → 2ND semester, school year = prevYear–currentYear
+ *   Jun–Jul  → SUMMER,       school year = prevYear–currentYear
+ */
+export function detectSemesterFromDate(date: Date = new Date()): { semester: string; schoolYear: string } {
+    const month = date.getMonth(); // 0-indexed
+    const year = date.getFullYear();
+
+    if (month >= 7) {
+        // Aug (7) – Dec (11) → 1st Semester
+        return { semester: '1ST', schoolYear: `${year}-${year + 1}` };
+    } else if (month <= 4) {
+        // Jan (0) – May (4) → 2nd Semester
+        return { semester: '2ND', schoolYear: `${year - 1}-${year}` };
+    } else {
+        // Jun (5) – Jul (6) → Summer
+        return { semester: 'SUMMER', schoolYear: `${year - 1}-${year}` };
+    }
+}

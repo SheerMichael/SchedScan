@@ -388,8 +388,11 @@ export default function SchedScanApp() {
     return [];
   };
 
-  // Check if a specific date has courses
+  // Check if a specific date has courses (only within semester range)
   const hasCoursesOnDate = (day: number): boolean => {
+    // Don't show courses outside the semester's months
+    if (!semesterMonths.includes(selectedMonth)) return false;
+
     const weekday = new Date(selectedYear, selectedMonth, day).getDay();
 
     return courses.some(course => {
@@ -398,8 +401,10 @@ export default function SchedScanApp() {
     });
   };
 
-  // Get courses for a specific date
+  // Get courses for a specific date (only within semester range)
   const getCoursesForDate = (day: number): Course[] => {
+    if (!semesterMonths.includes(selectedMonth)) return [];
+
     const weekday = new Date(selectedYear, selectedMonth, day).getDay();
 
     return courses.filter(course => {
@@ -428,8 +433,14 @@ export default function SchedScanApp() {
     return hours * 60 + minutes;
   };
 
-  // Update day schedule based on selected day
+  // Update day schedule based on selected day (only within semester range)
   const updateDaySchedule = (day: number, coursesData: Course[] = courses) => {
+    // Don't show courses outside the semester's months
+    if (!semesterMonths.includes(selectedMonth)) {
+      setDaySchedule([]);
+      return;
+    }
+
     const dateCourses = coursesData.filter(course => {
       const weekday = new Date(selectedYear, selectedMonth, day).getDay();
       const courseDays = dayCodeToNumbers(course.day);
@@ -541,8 +552,8 @@ export default function SchedScanApp() {
     // Calculate the weekday (0=Sun, 1=Mon, 2=Tue, etc.)
     const weekday = new Date(selectedYear, selectedMonth, day).getDay();
 
-    // Get real courses for this specific day
-    const realCourses = courses
+    // Get real courses for this specific day (only within semester range)
+    const realCourses = !semesterMonths.includes(selectedMonth) ? [] : courses
       .filter(course => {
         const courseDays = dayCodeToNumbers(course.day);
         return courseDays.includes(weekday);

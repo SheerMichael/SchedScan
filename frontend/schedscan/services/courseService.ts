@@ -19,6 +19,8 @@ export interface UploadCORResponse {
   courses: Course[];
   total_courses: number;
   upload_type: string;
+  semester?: string;
+  school_year?: string;
 }
 
 export const courseService = {
@@ -30,7 +32,7 @@ export const courseService = {
   uploadCOR: async (file: any, uploadType: 'student' | 'faculty' = 'student'): Promise<UploadCORResponse> => {
     try {
       const formData = new FormData();
-      
+
       // Determine file type and name
       const filename = file.name || file.uri.split('/').pop() || 'cor.pdf';
       const match = /\.(\w+)$/.exec(filename);
@@ -44,7 +46,7 @@ export const courseService = {
 
       // Use appropriate endpoint based on upload type
       const endpoint = `/upload-cor/${uploadType}/`;
-      
+
       const response = await api.post(endpoint, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
