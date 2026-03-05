@@ -8,6 +8,7 @@ from django.db import transaction
 import stripe
 import logging
 import re
+import time
 
 from ..models import Payment, ParentChildLink
 
@@ -145,7 +146,7 @@ class CreateCheckoutSessionView(APIView):
                         'parent_id': str(user.id),
                         'child_slot_number': str(next_slot),
                     },
-                    'expires_after': 1800,  # Session expires after 30 minutes
+                    'expires_at': int(time.time()) + 1800,  # Session expires after 30 minutes
                 },
             )
 

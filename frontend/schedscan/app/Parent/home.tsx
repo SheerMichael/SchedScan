@@ -416,7 +416,7 @@ const ParentHomePage = () => {
               </View>
             ) : todaysCourses.length === 0 ? (
               <View className="items-center justify-center p-6 bg-white rounded-xl border-dashed border-2 border-gray-200 mb-4">
-                <Text className="text-gray-400 font-medium">No classes today 🎉</Text>
+                <Text className="text-gray-400 font-medium">No classes today.</Text>
               </View>
             ) : (
               todaysCourses.map((course, index) => (
@@ -713,7 +713,7 @@ const ParentHomePage = () => {
 
             {/* Secure badge */}
             <View className="items-center mt-3">
-              <Text className="text-gray-400 text-xs">🔒 Secured by Stripe</Text>
+              <Text className="text-gray-400 text-xs">Secured by Stripe</Text>
             </View>
           </View>
         </View>
