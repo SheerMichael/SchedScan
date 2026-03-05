@@ -1,12 +1,10 @@
-import { X } from 'lucide-react';
+import { X, Calendar, MapPin, Clock } from 'lucide-react';
 import React, { useState } from "react";
 
 export default function UserDetailsModal({ isOpen, onClose, user, allUsers }) {
   if (!isOpen) return null;
 
   const [viewMode, setViewMode] = useState("schedule");
-
-  const showTime = get_current_time();
   const showSchedule = user?.role === "Student" || user?.role === "Faculty";
 
   const activeClass = user?.schedule?.find(item =>
@@ -15,8 +13,8 @@ export default function UserDetailsModal({ isOpen, onClose, user, allUsers }) {
   );
 
   const classSession = activeClass
-    ? `Class in session: ${activeClass.location} - ${activeClass.subject_code}`
-    : "No class in session";
+    ? `SESSION ACTIVE: ${activeClass.location}`
+    : "NO ACTIVE SESSION";
 
   const studentsInCurrentClass =
     user?.role === "Faculty" && activeClass
@@ -33,141 +31,113 @@ export default function UserDetailsModal({ isOpen, onClose, user, allUsers }) {
       : [];
 
   return (
-    <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6 animate-in fade-in zoom-in duration-200 max-h-[90vh] overflow-y-auto no-scrollbar">
-        <div className="flex justify-between items-center mb-6 border-b pb-4">
-          <h2 className="text-xl font-bold text-slate-800">User Profile</h2>
-          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-full transition-colors">
-            <X size={20} className="text-slate-500" />
+    <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+      <div className="bg-[#fcfcf9] w-full max-w-lg rounded-none border-2 border-slate-900 shadow-[12px_12px_0px_0px_rgba(185,28,28,0.15)] p-0 max-h-[90vh] overflow-hidden flex flex-col">
+        
+        {/* Institutional Header */}
+        <div className="bg-slate-900 text-white p-6 flex justify-between items-center">
+          <div>
+            <p className="text-[10px] font-black tracking-[0.3em] text-primary-400 uppercase">Institutional Archive</p>
+            <h2 className="text-xl font-black uppercase tracking-tighter">User Identification File</h2>
+          </div>
+          <button onClick={onClose} className="p-2 border-2 border-slate-700 hover:border-white transition-colors">
+            <X size={20} />
           </button>
         </div>
 
-        {user && (
-          <div className="space-y-6">
-            <div className="flex items-center gap-4">
-              <div className="w-16 h-16 rounded-2xl bg-indigo-600 flex items-center justify-center text-white text-2xl font-bold">
-                {user.name.charAt(0)}
-              </div>
-              <div>
-                <p className="text-sm text-slate-500">{showTime}</p>
-                <p className="text-xs text-slate-400">{classSession}</p>
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-slate-900">{user.name}</h3>
-                <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 text-xs font-bold rounded-full uppercase tracking-wider">
-                  {user.role}
-                </span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <DetailItem label="Email Address" value={user.email} />
-              <DetailItem label="Status" value={user.status} color={user.status === 'Active' ? 'text-emerald-600' : 'text-slate-400'} />
-              <DetailItem label="Joined On" value={user.joinDate} />
-            </div>
-
-            {showSchedule && (
-              <div className="mt-6 pt-6 border-t border-gray-100">
-
-                {/* Toggle Header */}
-                <div className="flex items-center gap-2 mb-4">
-
-                  <button
-                    onClick={() => setViewMode("schedule")}
-                    className={`text-sm font-bold uppercase tracking-tight px-3 py-1 rounded-full transition
-                      ${viewMode === "schedule"
-                        ? "bg-indigo-600 text-white"
-                        : "bg-gray-100 text-slate-600"}`}
-                  >
-                    Schedule
-                  </button>
-
-                  {user.role === "Faculty" && activeClass && (
-                    <button
-                      onClick={() => setViewMode("students")}
-                      className={`text-sm font-bold uppercase tracking-tight px-3 py-1 rounded-full transition
-                        ${viewMode === "students"
-                          ? "bg-indigo-600 text-white"
-                          : "bg-gray-100 text-slate-600"}`}
-                    >
-                      Students in {activeClass.subject_code}  
-                    </button>
-                  )}
-
+        <div className="p-8 overflow-y-auto no-scrollbar">
+          {user && (
+            <div className="space-y-8">
+              {/* Profile Section */}
+              <div className="flex flex-col md:flex-row gap-6 items-start">
+                <div className="w-24 h-24 border-2 border-slate-900 bg-white flex items-center justify-center text-slate-900 text-4xl font-black shadow-[4px_4px_0px_0px_rgba(15,23,42,1)]">
+                  {user.name.charAt(0)}
                 </div>
-
-                    {viewMode === "schedule" && (
-                      <>
-                        {user.schedule && user.schedule.length > 0 ? (
-                          <div className="space-y-3">
-                            {user.schedule.map((item, idx) => (
-                              <div
-                                key={idx}
-                                className={`p-3 rounded-xl border
-                                  ${activeClass?.subject_code === item.subject_code
-                                    ? "bg-indigo-50 border-indigo-200"
-                                    : "bg-gray-50 border-gray-100"}`}
-                              >
-                                <div className="flex justify-between items-start mb-1">
-                                  <p className="font-bold text-indigo-700 text-sm">
-                                    {item.subject_code}
-                                  </p>
-                                  <p className="text-[10px] font-bold text-gray-400 bg-white px-2 py-0.5 rounded-md border border-gray-100">
-                                    {item.location}
-                                  </p>
-                                </div>
-                                <p className="text-xs text-slate-500">
-                                  {item.start_time} — {item.end_time}
-                                </p>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-sm text-gray-400 italic bg-gray-50 p-4 rounded-xl text-center">
-                            No schedule available.
-                          </p>
-                        )}
-                      </>
-                    )}
-
-                    {viewMode === "students" && user.role === "Faculty" && activeClass && (
-                      <div className="space-y-3">
-                        {studentsInCurrentClass.length > 0 ? (
-                          studentsInCurrentClass.map(student => (
-                            <div
-                              key={student.id}
-                              className="p-3 bg-gray-50 rounded-xl border border-gray-100"
-                            >
-                              <p className="font-medium text-sm text-slate-700">
-                                {student.name}
-                              </p>
-                              <p className="text-xs text-slate-400">
-                                {student.email}
-                              </p>
-                            </div>
-                          ))
-                        ) : (
-                          <p className="text-sm text-gray-400 italic text-center">
-                            No students currently in this class.
-                          </p>
-                        )}
-                      </div>
-                    )}
-
+                <div className="space-y-2">
+                   <div className="inline-block bg-primary-800 text-white px-2 py-0.5 text-[10px] font-black uppercase tracking-widest">
+                    {user.role}
                   </div>
-                )}
-          </div>
-        )}
+                  <h3 className="text-3xl font-black text-slate-900 tracking-tighter uppercase leading-none">{user.name}</h3>
+                  <p className={`text-[10px] font-black uppercase tracking-widest ${activeClass ? 'text-emerald-600' : 'text-slate-400'}`}>
+                    ● {classSession}
+                  </p>
+                </div>
+              </div>
+
+              {/* Data Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 border-y-2 border-slate-100 py-6">
+                <DetailItem label="Official Email" value={user.email} />
+                <DetailItem label="Registry Status" value={user.status} color={user.status === 'Active' ? 'text-emerald-600' : 'text-slate-400'} />
+                <DetailItem label="Joined On" value={user.joinDate} />
+              </div>
+
+              {showSchedule && (
+                <div className="space-y-6">
+                  {/* Rigid Toggles */}
+                  <div className="flex border-2 border-slate-900 p-1 bg-slate-100">
+                    <button
+                      onClick={() => setViewMode("schedule")}
+                      className={`flex-1 text-[10px] font-black uppercase tracking-widest py-2 transition-all
+                        ${viewMode === "schedule" ? "bg-white text-slate-900 shadow-sm" : "text-slate-400"}`}
+                    >
+                      Class Schedule
+                    </button>
+                    {user.role === "Faculty" && activeClass && (
+                      <button
+                        onClick={() => setViewMode("students")}
+                        className={`flex-1 text-[10px] font-black uppercase tracking-widest py-2 transition-all
+                          ${viewMode === "students" ? "bg-white text-slate-900 shadow-sm" : "text-slate-400"}`}
+                      >
+                        Enrolled Students
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="space-y-4">
+                    {viewMode === "schedule" ? (
+                      user.schedule?.map((item, idx) => (
+                        <div key={idx} className={`p-4 border-2 rounded-none transition-all ${
+                          activeClass?.subject_code === item.subject_code
+                            ? "border-primary-800 bg-primary-50/30 shadow-[4px_4px_0px_0px_rgba(185,28,28,0.1)]"
+                            : "border-slate-200 bg-white"
+                        }`}>
+                          <div className="flex justify-between items-center mb-2">
+                            <span className="text-sm font-black text-slate-900">{item.subject_code}</span>
+                            <span className="text-[10px] font-black bg-slate-900 text-white px-2 py-0.5">{item.location}</span>
+                          </div>
+                          <div className="flex items-center gap-4 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                             <span className="flex items-center gap-1"><Clock size={12}/> {item.start_time}-{item.end_time}</span>
+                             <span className="flex items-center gap-1"><Calendar size={12}/> {item.day}</span>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      studentsInCurrentClass.map(student => (
+                        <div key={student.id} className="p-4 border-2 border-slate-900 bg-white flex justify-between items-center">
+                          <div>
+                            <p className="text-xs font-black text-slate-900 uppercase">{student.name}</p>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">{student.email}</p>
+                          </div>
+                          <div className="w-2 h-2 bg-emerald-500" />
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-function DetailItem({ label, value, color = "text-slate-600" }) {
+function DetailItem({ label, value, color = "text-slate-900" }) {
   return (
     <div>
-      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{label}</p>
-      <p className={`text-sm font-medium break-all ${color}`}>{value}</p>
+      <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">{label}</p>
+      <p className={`text-xs font-black uppercase leading-tight ${color}`}>{value}</p>
     </div>
   );
 }

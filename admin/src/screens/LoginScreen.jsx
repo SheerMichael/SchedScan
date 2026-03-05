@@ -11,90 +11,74 @@ export default function LoginScreen({ onLogin }) {
   };
 
   return (
-    // Applied your specific linear gradient to the whole screen
-    <div className="min-h-screen flex flex-col bg-white">
-      
-      {/* Header section - matching your brand style */}
-      <div className="bg-linear-to-r from-indigo-100 via-blue-50 to-amber-50 p-8 h-32 flex items-center">
+    <div className="min-h-screen flex flex-col bg-slate-50 font-sans antialiased text-slate-900">
+      <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          {/* Calendar Icon from your logo */}
-          <div className="w-10 h-10 flex items-center justify-center">
-             <img src={logoImg} alt="logo" className="w-full" />
+          <img src={logoImg} alt="SchedScan Logo" className="w-8 h-8 object-contain" />
+          <div className="flex flex-col">
+            <span className="text-xl font-bold tracking-tight text-primary-700 leading-none">SchedScan</span>
+            <span className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">University Portal</span>
           </div>
-          <h1 className="text-3xl font-bold text-slate-700">SchedScan</h1>
         </div>
-      </div>
+      </header>
 
-      {/* Main Login Card Area */}
-      <main className="grow flex items-center justify-center px-4 pb-20">
-        <div className="w-full max-w-md">
-          <div className="text-center mb-10">
-            <h2 className="text-4xl font-bold text-slate-900 mb-3">Sign-in</h2>
-            <p className="text-slate-500 font-medium">Please login to continue to your account.</p>
+      <main className="grow flex items-center justify-center p-6">
+        <div className="w-full max-w-110">
+          <div className="bg-white rounded-2xl shadow-xl shadow-slate-200/60 border border-slate-200 overflow-hidden">
+            <div className="p-8 sm:p-10">
+              <div className="mb-10">
+                <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight">Login</h2>
+              </div>
+
+              <form onSubmit={handleLogin} className="space-y-6">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-2 ml-1">
+                    Email
+                  </label>
+                  <input
+                    type="email"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-800/20 focus:border-primary-700 transition-all placeholder:text-slate-400"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex justify-between mb-2 ml-1">
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                      Password
+                    </label>
+                  </div>
+                  <input
+                    type="password"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-800/20 focus:border-primary-700 transition-all"
+                  />
+                </div>
+
+                <div className="flex items-center gap-3 px-1">
+                  <input 
+                    type="checkbox" 
+                    id="keep-logged" 
+                    className="w-4 h-4 rounded border-slate-300 text-primary-700 focus:ring-primary-600 accent-primary-700" 
+                  />
+                  <label htmlFor="keep-logged" className="text-sm font-medium text-slate-600 select-none">
+                    Remember this device
+                  </label>
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full bg-primary-700 hover:bg-primary-800 text-white font-bold py-3.5 rounded-lg transition-all shadow-md shadow-red-200 active:transform active:scale-[0.98]"
+                >
+                  Login
+                </button>
+              </form>
+            </div>
           </div>
-
-          <form onSubmit={handleLogin} className="space-y-5">
-            {/* Email Input with the Blue Highlight Label */}
-            <div className="relative">
-              <label className="absolute -top-2.5 left-4 bg-white px-1 text-xs font-semibold text-blue-500 z-10">
-                Email
-              </label>
-              <input
-                type="email"
-                placeholder="admin.schedscan@email.com"
-                className="w-full px-4 py-3.5 bg-white border border-blue-400 rounded-xl focus:outline-none ring-offset-2 focus:ring-2 focus:ring-blue-500/20"
-              />
-            </div>
-
-            {/* Password Input */}
-            <input
-              type="password"
-              placeholder="Password"
-              className="w-full px-4 py-3.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-400 transition-all"
-            />
-
-            {/* Checkbox */}
-            <div className="flex items-center gap-2 px-1">
-              <input 
-                type="checkbox" 
-                id="keep-logged" 
-                className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" 
-              />
-              <label htmlFor="keep-logged" className="text-sm font-medium text-slate-600">
-                Keep me logged in
-              </label>
-            </div>
-
-            {/* Main Action Button */}
-            <button
-              type="submit"
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg shadow-blue-200"
-            >
-              Sign in
-            </button>
-
-            {/* Divider */}
-            <div className="relative flex items-center py-2">
-              <div className="grow border-t border-slate-200"></div>
-              <span className="shrink mx-4 text-slate-400 text-sm font-medium">or</span>
-              <div className="grow border-t border-slate-200"></div>
-            </div>
-
-            {/* Google Button */}
-            <button
-              type="button"
-              className="w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold py-3.5 rounded-xl flex items-center justify-center gap-3 transition-colors"
-            >
-              <img 
-                src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/action/google.svg" 
-                alt="Google" 
-                className="w-5 h-5"
-              />
-              Sign in with Google
-            </button>
-          </form>
         </div>
       </main>
+
+      <div className="fixed bottom-0 right-0 opacity-[0.03] pointer-events-none">
+         <img src={logoImg} alt="" className="w-96 h-96 -mr-20 -mb-20 grayscale" />
+      </div>
     </div>
   );
 }

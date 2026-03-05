@@ -1,4 +1,4 @@
-import { UserMinus, X } from 'lucide-react';
+import { UserMinus, X, AlertTriangle } from 'lucide-react';
 
 export default function DeactivateUserModal({ isOpen, onClose, onConfirm, userName, currentStatus }) {
   if (!isOpen) return null;
@@ -6,57 +6,55 @@ export default function DeactivateUserModal({ isOpen, onClose, onConfirm, userNa
   const isDeactivating = currentStatus === 'Active';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-    <div 
-        className="absolute inset-0 bg-black/20 transition-opacity" 
-        onClick={onClose}
-      />
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
+      <div className="relative bg-white w-full max-w-md rounded-none border-2 border-slate-900 shadow-[12px_12px_0px_0px_rgba(15,23,42,1)] overflow-hidden">
+        
+        {/* Warning Stripe */}
+        <div className={`h-2 w-full ${isDeactivating ? 'bg-primary-800' : 'bg-emerald-600'}`} />
 
-      <div className="relative bg-white w-full max-w-md rounded-2xl shadow-2xl border border-gray-100 overflow-hidden">
-        <div className="p-6">
-          <div className="flex justify-between items-start mb-4">
-            <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
-              isDeactivating ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'
+        <div className="p-8">
+          <div className="flex justify-between items-start mb-6">
+            <div className={`w-14 h-14 border-2 border-slate-900 flex items-center justify-center ${
+              isDeactivating ? 'bg-primary-50 text-primary-800 shadow-[4px_4px_0px_0px_rgba(185,28,28,1)]' : 'bg-emerald-50 text-emerald-600 shadow-[4px_4px_0px_0px_rgba(5,150,105,1)]'
             }`}>
-              <UserMinus size={24} />
+              {isDeactivating ? <UserMinus size={28} /> : <AlertTriangle size={28} />}
             </div>
-            <button 
-              onClick={onClose}
-              className="p-1 hover:bg-gray-100 rounded-lg text-gray-400 transition-colors"
-            >
+            <button onClick={onClose} className="p-2 border-2 border-slate-100 hover:border-slate-900 transition-all">
               <X size={20} />
             </button>
           </div>
 
-          <div className="mb-8">
-            <h3 className="text-xl font-bold text-slate-900 mb-2">
-              {isDeactivating ? 'Deactivate Account?' : 'Reactivate Account?'}
+          <div className="mb-10">
+            <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tighter mb-3 leading-none">
+              {isDeactivating ? 'Confirm Deactivation' : 'Confirm Reactivation'}
             </h3>
-            <p className="text-slate-500 leading-relaxed">
-              Are you sure you want to {isDeactivating ? 'deactivate' : 'reactivate'}{' '}
-              <span className="font-bold text-slate-800">{userName}</span>? 
+            <p className="text-xs font-bold text-slate-500 leading-relaxed uppercase tracking-wide">
+              SYSTEM ACTION REQUIRED FOR: <br/>
+              <span className="text-slate-900 text-lg font-black tracking-normal lowercase">{userName}</span>
+            </p>
+            <p className="mt-4 text-[11px] font-medium text-slate-400 leading-relaxed">
               {isDeactivating 
-                ? " They will no longer be able to log in to SchedScan until an admin reactivates them."
-                : " They will regain full access to their SchedScan account immediately."}
+                ? "WARNING: THIS ACTION RESTRICTS ALL ACCESS NODES FOR THIS USER. THEY WILL REMAIN IN THE REGISTRY BUT CANNOT PERFORM ANY SYSTEM SCANS OR LOGINS."
+                : "NOTICE: ACCESS PRIVILEGES WILL BE RESTORED ACROSS ALL INSTITUTIONAL PLATFORMS IMMEDIATELY."}
             </p>
           </div>
 
-          <div className="flex gap-3">
+          <div className="flex gap-4">
             <button
               onClick={onClose}
-              className="flex-1 px-4 py-3 border border-gray-200 text-slate-600 font-semibold rounded-xl hover:bg-gray-50 transition-colors"
+              className="flex-1 px-4 py-4 border-2 border-slate-900 text-slate-900 text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 transition-all"
             >
-              Cancel
+              Abort
             </button>
             <button
               onClick={onConfirm}
-              className={`flex-1 px-4 py-3 text-white font-semibold rounded-xl transition-all shadow-lg ${
+              className={`flex-1 px-4 py-4 text-white text-[10px] font-black uppercase tracking-widest shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] active:shadow-none active:translate-x-0.5 active:translate-y-0.5 transition-all ${
                 isDeactivating 
-                ? 'bg-red-600 hover:bg-red-700 shadow-red-100' 
-                : 'bg-emerald-500 hover:bg-emerald-600 shadow-emerald-100'
+                ? 'bg-primary-800 hover:bg-primary-900' 
+                : 'bg-emerald-600 hover:bg-emerald-700'
               }`}
             >
-              {isDeactivating ? 'Deactivate' : 'Reactivate'}
+              {isDeactivating ? 'Execute Deactivation' : 'Authorize Reactivation'}
             </button>
           </div>
         </div>

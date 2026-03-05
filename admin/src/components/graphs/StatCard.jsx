@@ -1,10 +1,16 @@
-
-
-export default function StatCard({ title, value }) {
+export default function StatCard({ title, value, trend, icon }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 hover:border-indigo-200 transition-colors">
-      <p className="text-sm font-medium text-gray-500">{title}</p>
-      <p className="text-3xl font-bold mt-1 text-slate-900">{value}</p>
+    <div className="relative overflow-hidden bg-white border-2 border-slate-200 rounded-none p-6 shadow-[4px_4px_0px_0px_rgba(185,28,28,0.1)] hover:shadow-none hover:translate-x-0.5 hover:translate-y-0.5 transition-all">
+      <div className="absolute top-0 right-0 w-8 h-8 bg-primary-700 [clip-path:polygon(100%_0,0_0,100%_100%)]" />
+      
+      <div className="flex flex-col gap-1">
+        <h3 className="text-sm font-bold text-slate-500 uppercase">{title}</h3>
+        <div className="flex items-end justify-between mt-4">
+          <p className="text-4xl font-black text-slate-900 tracking-tighter leading-none">
+            {value}
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
