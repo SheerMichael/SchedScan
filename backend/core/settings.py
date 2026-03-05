@@ -305,3 +305,8 @@ else:
 
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'SchedScan <noreply@schedscan.app>')
 
+# Stripe Payment Configuration
+STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY', '')
+STRIPE_PRICE_AMOUNT = 8900  # ₱89.00 in centavos
+STRIPE_CURRENCY = 'php'
+

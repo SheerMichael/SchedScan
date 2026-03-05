@@ -102,3 +102,12 @@ from .remark_views import (
     StudentRemarkListView,
     ParentRemarkListView,
 )
+
+# Payment views
+from .payment_views import (
+    CanAddChildView,
+    CreateCheckoutSessionView,
+    CheckPaymentStatusView,
+    PaymentSuccessView,
+    PaymentCancelledView,
+)

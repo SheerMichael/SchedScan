@@ -411,6 +411,71 @@ class InviteCode(models.Model):
         raise RuntimeError("Failed to generate unique invite code after 100 attempts")
 
 
+class Payment(models.Model):
+    """
+    Tracks Stripe payments for additional child linking.
+    First child is free; each additional child requires a one-time ₱89 payment.
+    """
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+    ]
+
+    parent = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='payments',
+        help_text="The parent who made this payment"
+    )
+    stripe_checkout_session_id = models.CharField(
+        max_length=255,
+        unique=True,
+        help_text="Stripe Checkout Session ID"
+    )
+    stripe_payment_intent_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Stripe PaymentIntent ID (set after payment completes)"
+    )
+    amount = models.IntegerField(
+        help_text="Amount in centavos (e.g. 8900 = ₱89.00)"
+    )
+    currency = models.CharField(
+        max_length=10,
+        default='php',
+        help_text="Payment currency"
+    )
+    status = models.CharField(
+        max_length=10,
+        choices=STATUS_CHOICES,
+        default='pending',
+        help_text="Payment status"
+    )
+    child_slot_number = models.IntegerField(
+        help_text="Which child slot this payment unlocks (2 = second child, etc.)"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the payment was completed"
+    )
+
+    class Meta:
+        verbose_name = 'Payment'
+        verbose_name_plural = 'Payments'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['parent', 'status']),
+            models.Index(fields=['stripe_checkout_session_id']),
+        ]
+
+    def __str__(self):
+        return f"Payment #{self.id} - {self.parent.email} slot {self.child_slot_number} ({self.status})"
+
+
 class PasswordResetCode(models.Model):
     """
     Stores 6-digit codes for password reset flow.

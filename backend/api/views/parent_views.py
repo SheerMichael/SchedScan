@@ -138,15 +138,34 @@ class UseInviteCodeView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # Payment gate + link creation in an atomic transaction to prevent race conditions
+        from ..models import Payment
         from django.utils import timezone
-        link = ParentChildLink.objects.create(parent=user, child=invite.student, status='active')
+        from django.db import transaction
 
-        invite.used = True
-        invite.used_by = user
-        invite.used_at = timezone.now()
-        invite.save()
+        with transaction.atomic():
+            # Lock the parent's existing links to prevent concurrent requests
+            active_children = ParentChildLink.objects.select_for_update().filter(
+                parent=user, status='active'
+            ).count()
 
-        logger.info(f"Parent {user.id} linked to student {invite.student.id} using code {code}")
+            if active_children >= 1:
+                paid_slots = Payment.objects.filter(parent=user, status='completed').count()
+                total_allowed = 1 + paid_slots
+                if active_children >= total_allowed:
+                    return Response(
+                        {"error": "Payment required to add another child", "needs_payment": True},
+                        status=status.HTTP_402_PAYMENT_REQUIRED
+                    )
+
+            link = ParentChildLink.objects.create(parent=user, child=invite.student, status='active')
+
+            invite.used = True
+            invite.used_by = user
+            invite.used_at = timezone.now()
+            invite.save()
+
+        logger.info(f"Parent {user.id} linked to student {invite.student.id}")
         return Response({
             "message": f"Successfully linked to {invite.student.get_full_name()}",
             "child": ChildInfoSerializer(invite.student).data,

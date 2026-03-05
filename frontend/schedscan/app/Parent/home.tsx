@@ -5,7 +5,9 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "../../context/AuthContext";
 import { parentService, LinkedChild, ChildInfo } from "../../services/parentService";
 import { parentRemarkService, FacultyRemark } from "../../services/remarkService";
-import { Plus, X, Users, Calendar, MessageSquare } from "lucide-react-native";
+import { paymentService } from "../../services/paymentService";
+import * as WebBrowser from 'expo-web-browser';
+import { Plus, X, Users, Calendar, MessageSquare, CreditCard } from "lucide-react-native";
 import Svg, { Path } from "react-native-svg";
 
 // --- Types ---
@@ -34,6 +36,11 @@ const ParentHomePage = () => {
   const [inviteCode, setInviteCode] = useState("");
   const [isLinking, setIsLinking] = useState(false);
   const [linkError, setLinkError] = useState("");
+
+  // Payment state
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [isCheckingPayment, setIsCheckingPayment] = useState(false);
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
 
   // Remarks state
   const [remarks, setRemarks] = useState<FacultyRemark[]>([]);
@@ -115,6 +122,73 @@ const ParentHomePage = () => {
     }
   };
 
+  const handleAddChild = async () => {
+    // Check if payment is needed before showing the link modal
+    try {
+      setIsCheckingPayment(true);
+      const result = await paymentService.checkCanAddChild();
+
+      if (result.can_add_free || !result.needs_payment) {
+        // Free slot available — go straight to link modal
+        setShowLinkModal(true);
+      } else {
+        // Payment required — show payment modal
+        setShowPaymentModal(true);
+      }
+    } catch (error: any) {
+      // If the check fails, default to showing link modal
+      // (the backend will still enforce the gate)
+      setShowLinkModal(true);
+    } finally {
+      setIsCheckingPayment(false);
+    }
+  };
+
+  const handlePayment = async () => {
+    try {
+      setIsProcessingPayment(true);
+
+      // Create Stripe Checkout Session
+      const { checkout_url, session_id } = await paymentService.createCheckoutSession();
+
+      // Open Stripe Checkout in a browser
+      setShowPaymentModal(false);
+      const browserResult = await WebBrowser.openBrowserAsync(checkout_url);
+
+      // After browser closes, poll for payment status
+      if (browserResult.type === 'cancel' || browserResult.type === 'dismiss') {
+        // User may have completed payment before dismissing
+        // Poll a few times to check
+        for (let i = 0; i < 5; i++) {
+          const status = await paymentService.checkPaymentStatus(session_id);
+          if (status.status === 'completed') {
+            Alert.alert(
+              "Payment Successful! ✅",
+              "You can now add another child. Enter their invite code.",
+              [{ text: "Continue", onPress: () => setShowLinkModal(true) }]
+            );
+            return;
+          }
+          if (status.status === 'failed') break;
+          // Wait 1 second before next poll
+          await new Promise(r => setTimeout(r, 1000));
+        }
+
+        // If we get here, payment wasn't completed
+        Alert.alert(
+          "Payment Not Completed",
+          "It looks like the payment wasn't completed. You can try again anytime.",
+          [{ text: "OK" }]
+        );
+      }
+    } catch (error: any) {
+      const message = error.response?.data?.error || "Payment failed. Please try again.";
+      Alert.alert("Payment Error", message);
+    } finally {
+      setIsProcessingPayment(false);
+    }
+  };
+
   const handleLinkChild = async () => {
     const code = inviteCode.trim().toUpperCase();
     if (!code || code.length !== 10) {
@@ -133,8 +207,15 @@ const ParentHomePage = () => {
       setInviteCode("");
       await loadChildrenData();
     } catch (error: any) {
-      const message = error.response?.data?.error || "Failed to link. Please check the code and try again.";
-      setLinkError(message);
+      if (error.response?.status === 402) {
+        // Payment required — show payment modal
+        setShowLinkModal(false);
+        setInviteCode("");
+        setShowPaymentModal(true);
+      } else {
+        const message = error.response?.data?.error || "Failed to link. Please check the code and try again.";
+        setLinkError(message);
+      }
     } finally {
       setIsLinking(false);
     }
@@ -243,11 +324,18 @@ const ParentHomePage = () => {
               <Users size={18} color="#374151" /> Linked Children
             </Text>
             <TouchableOpacity
-              className="bg-primary-600 px-3 py-2 rounded-lg flex-row items-center"
-              onPress={() => setShowLinkModal(true)}
+              className={`bg-primary-600 px-3 py-2 rounded-lg flex-row items-center ${isCheckingPayment ? 'opacity-50' : ''}`}
+              onPress={handleAddChild}
+              disabled={isCheckingPayment}
             >
-              <Plus size={16} color="#fff" />
-              <Text className="text-white font-semibold ml-1">Add Child</Text>
+              {isCheckingPayment ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <Plus size={16} color="#fff" />
+                  <Text className="text-white font-semibold ml-1">Add Child</Text>
+                </>
+              )}
             </TouchableOpacity>
           </View>
 
@@ -259,8 +347,9 @@ const ParentHomePage = () => {
                 Ask your child to share their invite code with you
               </Text>
               <TouchableOpacity
-                className="bg-primary-600 px-6 py-3 rounded-xl"
-                onPress={() => setShowLinkModal(true)}
+                className={`bg-primary-600 px-6 py-3 rounded-xl ${isCheckingPayment ? 'opacity-50' : ''}`}
+                onPress={handleAddChild}
+                disabled={isCheckingPayment}
               >
                 <Text className="text-white font-bold">Enter Invite Code</Text>
               </TouchableOpacity>
@@ -546,6 +635,85 @@ const ParentHomePage = () => {
                   <Text className="text-white font-bold text-center">Link</Text>
                 )}
               </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Payment Modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={showPaymentModal}
+        onRequestClose={() => setShowPaymentModal(false)}
+      >
+        <View className="flex-1 bg-black/50 justify-center items-center">
+          <View className="bg-white rounded-2xl p-6 w-11/12 max-w-md">
+            {/* Header */}
+            <View className="flex-row justify-between items-center mb-4">
+              <Text className="text-xl font-bold text-gray-800">Add Another Child</Text>
+              <TouchableOpacity onPress={() => setShowPaymentModal(false)}>
+                <X size={24} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Payment Info */}
+            <View className="bg-primary-50 rounded-xl p-4 mb-4">
+              <View className="flex-row items-center mb-2">
+                <CreditCard size={20} color="#7C3AED" />
+                <Text className="text-primary-800 font-semibold text-base ml-2">One-time Payment</Text>
+              </View>
+              <Text className="text-gray-600 text-sm">
+                Your first child is free! To add an additional child, a small one-time fee is required.
+              </Text>
+            </View>
+
+            {/* Price */}
+            <View className="items-center mb-6">
+              <Text className="text-4xl font-bold text-primary-600">₱89</Text>
+              <Text className="text-gray-500 text-sm mt-1">One-time payment per child</Text>
+            </View>
+
+            {/* Features */}
+            <View className="mb-6">
+              <View className="flex-row items-center mb-2">
+                <Text className="text-green-500 mr-2">✓</Text>
+                <Text className="text-gray-700 text-sm">View your child's schedule</Text>
+              </View>
+              <View className="flex-row items-center mb-2">
+                <Text className="text-green-500 mr-2">✓</Text>
+                <Text className="text-gray-700 text-sm">See faculty remarks</Text>
+              </View>
+              <View className="flex-row items-center">
+                <Text className="text-green-500 mr-2">✓</Text>
+                <Text className="text-gray-700 text-sm">Lifetime access — no recurring fees</Text>
+              </View>
+            </View>
+
+            {/* Buttons */}
+            <View className="flex-row gap-3">
+              <TouchableOpacity
+                className="flex-1 bg-gray-200 rounded-xl py-3"
+                onPress={() => setShowPaymentModal(false)}
+              >
+                <Text className="text-gray-700 font-semibold text-center">Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                className={`flex-1 bg-primary-600 rounded-xl py-3 ${isProcessingPayment ? 'opacity-50' : ''}`}
+                onPress={handlePayment}
+                disabled={isProcessingPayment}
+              >
+                {isProcessingPayment ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text className="text-white font-bold text-center">Pay Now</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+
+            {/* Secure badge */}
+            <View className="items-center mt-3">
+              <Text className="text-gray-400 text-xs">🔒 Secured by Stripe</Text>
             </View>
           </View>
         </View>
