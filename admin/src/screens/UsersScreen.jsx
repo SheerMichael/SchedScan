@@ -40,7 +40,6 @@ export default function UsersScreen() {
   const [users, setUsers] = useState(usersData);
   const [searchTerm, setSearchTerm] = useState("");
   const [rolefilter, setRoleFilter] = useState("");
-  
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10; 
 
@@ -48,17 +47,13 @@ export default function UsersScreen() {
       const matchesSearch = 
         user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         user.email.toLowerCase().includes(searchTerm.toLowerCase());
-
       const matchesRole = rolefilter === "" || 
         user.role.toLowerCase().includes(rolefilter.toLowerCase());
-
       return matchesSearch && matchesRole;
   });
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [targetUser, setTargetUser] = useState(null);
-
-
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [detailsUser, setDetailsUser] = useState(null);
 
@@ -71,26 +66,19 @@ export default function UsersScreen() {
     setTargetUser(user);
     setIsModalOpen(true);
   };
-  
 
   const handleStatusToggle = () => {
     if (!targetUser) return;
-
-    // Update the users state
     setUsers(prevUsers => 
       prevUsers.map(user => {
         if (user.id === targetUser.id) {
-          return { 
-            ...user, 
-            status: user.status === 'Active' ? 'Inactive' : 'Active' 
-          };
+          return { ...user, status: user.status === 'Active' ? 'Inactive' : 'Active' };
         }
         return user;
       })
     );
-
-    setIsModalOpen(false); // Close the modal
-    setTargetUser(null);   // Clear target
+    setIsModalOpen(false);
+    setTargetUser(null);
   };
 
   const totalPages = Math.ceil(filteredUsers.length / itemsPerPage);
@@ -98,119 +86,116 @@ export default function UsersScreen() {
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
   const currentItems = filteredUsers.slice(indexOfFirstItem, indexOfLastItem);
 
-  // 3. Helper functions for buttons
-  const goToNextPage = () => {
-    if (currentPage < totalPages) setCurrentPage(currentPage + 1);
-  };
-
-  const goToPreviousPage = () => {
-    if (currentPage > 1) setCurrentPage(currentPage - 1);
-  };
+  const goToNextPage = () => { if (currentPage < totalPages) setCurrentPage(currentPage + 1); };
+  const goToPreviousPage = () => { if (currentPage > 1) setCurrentPage(currentPage - 1); };
 
   return (
-    <div className="min-h-screen bg-gray-50 no-scrollbar pb-20">
+    <div className="min-h-screen bg-[#fcfcf9] no-scrollbar pb-20">
       <Header />
       
-      <div className="p-6 mt-4"> 
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-          <div className="relative w-full md:w-96 gap-2">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+      <div className="p-8 max-w-350 mx-auto"> 
+        <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6 mb-10">
+          <div className="relative w-full md:w-112.5">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-900" size={18} />
             <input 
               type="text"
-              placeholder="Search users..."
-              className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all"
+              placeholder="SEARCH REGISTRY..."
+              className="w-full pl-12 pr-4 py-3.5 bg-white border-2 border-slate-900 rounded-none shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] focus:outline-none focus:translate-x-0.5 focus:translate-y-0.5 focus:shadow-none transition-all font-bold text-xs tracking-widest placeholder:text-slate-300"
               value={searchTerm}
-              onChange={(e) => {
-                setSearchTerm(e.target.value);
-                setCurrentPage(1); 
-              }}
+              onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
             />
           </div>
-            <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3'>
-              <button className="px-2 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors" onClick={(e) => {setRoleFilter(''); setCurrentPage(1);}}>
-                Track All
+
+          <div className='flex flex-wrap gap-2'>
+            {[
+              { label: 'TRACK ALL', filter: '' },
+              { label: 'TRACK FACULTY', filter: 'Faculty' },
+              { label: 'TRACK STUDENTS', filter: 'Student' }
+            ].map((btn) => (
+              <button 
+                key={btn.label}
+                className={`px-6 py-3 text-[10px] font-black uppercase tracking-widest border-2 border-slate-900 transition-all ${
+                  rolefilter === btn.filter 
+                  ? "bg-primary-800 text-white shadow-none translate-x-0.5 translate-y-0.5" 
+                  : "bg-white text-slate-900 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] hover:bg-slate-50"
+                }`}
+                onClick={() => {setRoleFilter(btn.filter); setCurrentPage(1);}}
+              >
+                {btn.label}
               </button>
-              <button className="px-2 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors" onClick={(e) => {setRoleFilter('Faculty'); setCurrentPage(1);}}>
-                Track Faculty
-              </button>
-              <button className="px-2 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors" onClick={(e) => {setRoleFilter('Student'); setCurrentPage(1);}}>
-                Track Students
-              </button>
-            </div>
+            ))}
+          </div>
         </div>
 
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="bg-white border-2 border-slate-200 rounded-none shadow-[8px_8px_0px_0px_rgba(185,28,28,0.08)] overflow-hidden hover:shadow-none hover:translate-x-0.5 hover:translate-y-0.5 transition-all">
           <div className="overflow-x-auto">
-            <table className="w-full text-left">
+            <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-gray-50 border-b border-gray-100">
-                  <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-wider">User Details</th>
-                  <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Contact</th>
-                  <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Role</th>
-                  <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Status</th>
-                  <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Joined</th>
-                  <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Subscription</th>
-                  <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-wider text-right">Actions</th>
+                <tr className="bg-slate-800 text-white border-b-2 border-primary-900">
+                  <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em]">User Identification</th>
+                  <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em]">Contact Node</th>
+                  <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em]">Institutional Role</th>
+                  <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em]">State</th>
+                  <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em]">Registry Date</th>
+                  <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em]">Access Tier</th>
+                  <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em] text-right">Functions</th>
                 </tr>
               </thead>
-              {/* To show the modal just press on the user row, and to show the deactivate/reactivate button just press on the button at the right side of the user row. */}
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y-2 divide-slate-100">
                 {currentItems.map((user, index) => (
                   <tr 
                     key={`${user.id}-${index}`}  
                     onClick={() => openDetailsModal(user)} 
-                    className="hover:bg-gray-50 transition-colors cursor-pointer group"
+                    className="hover:bg-primary-50/30 transition-colors cursor-pointer group"
                   >
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600 font-bold">
-                          {user.name.charAt(0)}
+                    <td className="px-6 py-5">
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 border-2 border-slate-900 bg-white flex items-center justify-center text-slate-900 font-black text-sm">
+                          {user.name.charAt(0)} {/* Most likely photo */}
                         </div>
                         <div>
-                          <p className="font-semibold text-slate-800">{user.name}</p>
-                          <p className="text-sm text-gray-500">{user.email}</p>
+                          <p className="font-black text-slate-900 tracking-tight leading-none mb-1">{user.name.toUpperCase()}</p>
+                          <p className="text-[11px] font-bold text-slate-400 uppercase tracking-tighter">{user.email}</p>
                         </div>
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-500">{user.phone_number}</td>
-                    <td className="px-6 py-4">
-                      <span className="flex items-center gap-1.5 text-sm text-slate-600 font-medium">
-                        <Shield size={14} className="text-gray-400" />
+                    <td className="px-6 py-5 text-[11px] font-black text-slate-500">{user.phone_number}</td>
+                    <td className="px-6 py-5">
+                      <span className="flex items-center gap-2 text-[10px] font-black text-slate-900 uppercase tracking-widest">
+                        <Shield size={12} className="text-primary-700" />
                         {user.role}
                       </span>
                     </td>
-                    <td className="px-6 py-4">
-                      <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
-                        user.status === 'Active' ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-100 text-gray-500'
+                    <td className="px-6 py-5">
+                      <span className={`px-3 py-1 border-2 text-[10px] font-black uppercase tracking-widest ${
+                        user.status === 'Active' 
+                        ? 'bg-white border-emerald-600 text-emerald-600' 
+                        : 'bg-slate-100 border-slate-300 text-slate-400'
                       }`}>
                         {user.status}
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-500">{user.joinDate}</td>
-                    <td className='px-6 py-4'>
-                        <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
-                            user.premium_status === 'Active' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
+                    <td className="px-6 py-5 text-[11px] font-black text-slate-500 uppercase">{user.joinDate}</td>
+                    <td className='px-6 py-5'>
+                        <span className={`px-3 py-1 border-2 text-[10px] font-black uppercase tracking-widest ${
+                            user.premium_status === 'Active' 
+                            ? 'bg-primary-800 border-primary-800 text-white' 
+                            : 'bg-white border-slate-900 text-slate-900'
                         }`}>
                             {user.premium_status === 'Active' ? 'Premium' : 'Standard'}
                         </span>
                     </td>
-                    <td className="px-6 py-4 text-right">
-                      <div className="flex justify-end gap-2">
+                    <td className="px-6 py-5 text-right">
                         <button 
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                openDeactivateModal(user);
-                            }}
-                            className={`p-2 rounded-lg transition-colors ${
+                            onClick={(e) => { e.stopPropagation(); openDeactivateModal(user); }}
+                            className={`p-2 border-2 transition-all ${
                                 user.status === 'Active' 
-                                ? 'text-gray-400 hover:text-amber-500 hover:bg-amber-50' 
-                                : 'text-emerald-500 hover:bg-emerald-50'
+                                ? 'border-slate-200 text-slate-300 hover:border-primary-700 hover:text-primary-700 hover:bg-primary-50' 
+                                : 'border-emerald-600 text-emerald-600 hover:bg-emerald-50'
                             }`}
-                            title={user.status === 'Active' ? 'Deactivate' : 'Reactivate'}
                         >
-                            {user.status === 'Active' ? <UserMinus size={18} /> : <Power size={18} />}
+                            {user.status === 'Active' ? <UserMinus size={16} /> : <Power size={16} />}
                         </button>
-                      </div>
                     </td>
                   </tr>
                 ))}
@@ -218,40 +203,38 @@ export default function UsersScreen() {
             </table>
           </div>
             
-          
-          <div className="px-6 py-4 bg-gray-50/50 border-t border-gray-100 flex justify-between items-center">
-            <p className="text-sm text-gray-500 font-medium">
-              Showing <span className="text-slate-900">{indexOfFirstItem + 1}</span> to <span className="text-slate-900">{Math.min(indexOfLastItem, filteredUsers.length)}</span> of <span className="text-slate-900">{filteredUsers.length}</span> users
+          {/* Pagination Surface */}
+          <div className="px-6 py-6 bg-slate-50 border-t-2 border-slate-900 flex flex-col md:flex-row justify-between items-center gap-4">
+            <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.2em]">
+              Records: <span className="text-slate-900">{indexOfFirstItem + 1}-{Math.min(indexOfLastItem, filteredUsers.length)}</span> / <span className="text-slate-900">{filteredUsers.length}</span>
             </p>
             
-            <div className="flex items-center gap-4">
-              <span className="text-sm text-gray-500">
+            <div className="flex items-center gap-6">
+              <span className="text-[10px] font-black text-slate-900 uppercase tracking-widest">
                 Page {currentPage} of {totalPages || 1}
               </span>
-              <div className="flex gap-2">
+              <div className="flex gap-3">
                 <button 
                   onClick={goToPreviousPage}
                   disabled={currentPage === 1}
-                  className={`flex items-center gap-1 px-3 py-1.5 text-sm font-semibold rounded-lg border transition-all ${
+                  className={`flex items-center gap-2 px-4 py-2 text-[10px] font-black uppercase tracking-widest border-2 transition-all ${
                     currentPage === 1 
-                    ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' 
-                    : 'bg-white text-slate-700 border-gray-200 hover:bg-gray-50 shadow-sm'
+                    ? 'bg-white border-slate-100 text-slate-200 cursor-not-allowed' 
+                    : 'bg-white border-slate-900 text-slate-900 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] hover:translate-x-px hover:translate-y-px hover:shadow-none'
                   }`}
                 >
-                  <ChevronLeft size={16} />
-                  Previous
+                  <ChevronLeft size={14} /> PREV
                 </button>
                 <button 
                   onClick={goToNextPage}
                   disabled={currentPage === totalPages || totalPages === 0}
-                  className={`flex items-center gap-1 px-3 py-1.5 text-sm font-semibold rounded-lg border transition-all ${
+                  className={`flex items-center gap-2 px-4 py-2 text-[10px] font-black uppercase tracking-widest border-2 transition-all ${
                     (currentPage === totalPages || totalPages === 0)
-                    ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' 
-                    : 'bg-white text-slate-700 border-gray-200 hover:bg-gray-50 shadow-sm'
+                    ? 'bg-white border-slate-100 text-slate-200 cursor-not-allowed' 
+                    : 'bg-white border-slate-900 text-slate-900 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] hover:translate-x-px hover:translate-y-px hover:shadow-none'
                   }`}
                 >
-                  Next
-                  <ChevronRight size={16} />
+                  NEXT <ChevronRight size={14} />
                 </button>
               </div>
             </div>
@@ -259,6 +242,7 @@ export default function UsersScreen() {
         </div>
       </div>
 
+      {/* Modals remain integrated but will inherit global rigid styles */}
       <DeactivateUserModal 
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
@@ -266,7 +250,6 @@ export default function UsersScreen() {
         userName={targetUser?.name}
         currentStatus={targetUser?.status}
       />
-
       <UserDetailsModal 
         isOpen={isDetailsOpen}
         onClose={() => setIsDetailsOpen(false)}
@@ -279,10 +262,12 @@ export default function UsersScreen() {
 
 function Header() {
   return (
-    <div className="bg-linear-to-r from-indigo-100 via-blue-50 to-amber-50 p-8 h-48 flex items-end">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-3xl font-bold text-slate-800">User Accounts</h1>
+    <header className="bg-white border-b border-slate-200 px-4 py-7">
+      <div className="max-w-350 mx-auto relative z-10">
+        <h1 className="text-4xl font-black text-slate-900 tracking-tighter">
+          User <span className="text-primary-800">Management</span>
+        </h1>
       </div>
-    </div>
+    </header>
   );
 }
