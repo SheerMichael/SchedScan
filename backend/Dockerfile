@@ -26,14 +26,9 @@ RUN echo "=== App directory contents ===" && ls -la && \
 # Verify tesseract installation
 RUN which tesseract && tesseract --version
 
-# Collect static files
-RUN python manage.py collectstatic --noinput
-
 # Expose port
 EXPOSE 8080
 
-# Run gunicorn with extended timeout for OCR processing
-# --timeout 300: Allow requests to take up to 5 minutes (OCR can be slow)
-# --workers 2: Use 2 worker processes
-# --threads 2: Use 2 threads per worker
-CMD ["sh", "-c", "python manage.py migrate --noinput && gunicorn --bind 0.0.0.0:8080 --timeout 300 --workers 2 --threads 2 core.wsgi:application"]
+# Run migrations, collect static files, then start gunicorn
+# collectstatic runs here (not during build) so it has access to environment variables
+CMD ["sh", "-c", "python manage.py migrate --noinput && python manage.py collectstatic --noinput && gunicorn --bind 0.0.0.0:8080 --timeout 300 --workers 2 --threads 2 core.wsgi:application"]
