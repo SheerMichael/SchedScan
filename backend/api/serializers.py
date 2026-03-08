@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from rest_framework.validators import UniqueValidator
 from rest_framework_simplejwt.tokens import RefreshToken
+import re
 from .models import Course, Schedule, Task, ParentChildLink, InviteCode, ClassCode, ClassEnrollment, FacultyTask, FacultyTaskFile, FacultyTaskCompletion, Notification, FacultyRemark
 from .utils.timetable_generator import generate_and_save_timetable
 
@@ -15,7 +16,7 @@ class UserSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = User
-        fields = ['id', 'email', 'first_name', 'last_name', 'user_type', 'profile_picture', 'created_at']
+        fields = ['id', 'email', 'first_name', 'last_name', 'user_type', 'student_number', 'profile_picture', 'created_at']
         read_only_fields = ['id', 'created_at']
 
 
@@ -47,18 +48,52 @@ class RegisterSerializer(serializers.ModelSerializer):
         required=False,
         help_text="Type of user account"
     )
+    student_number = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        max_length=20,
+        help_text="Student number from COR (e.g., 2022-01191). Required for student accounts."
+    )
     profile_picture = serializers.ImageField(required=False, allow_null=True)
 
     class Meta:
         model = User
-        fields = ['email', 'password', 'password2', 'first_name', 'last_name', 'user_type', 'profile_picture']
+        fields = ['email', 'password', 'password2', 'first_name', 'last_name', 'user_type', 'student_number', 'profile_picture']
+
+    def validate_student_number(self, value):
+        """
+        Validate student number format (YYYY-NNNNN) and uniqueness.
+        """
+        if not value:
+            return value
+        if not re.match(r'^\d{4}-\d{4,6}$', value):
+            raise serializers.ValidationError(
+                "Student number must be in the format YYYY-NNNNN (e.g., 2022-01191)."
+            )
+        # Check uniqueness
+        if User.objects.filter(student_number=value).exists():
+            raise serializers.ValidationError(
+                "A user with this student number already exists."
+            )
+        return value
 
     def validate(self, attrs):
         """
-        Validate that password and password2 match if password2 is provided
+        Validate that password and password2 match if password2 is provided.
+        Validate that student accounts provide a student number.
         """
         if 'password2' in attrs and attrs.get('password') != attrs.get('password2'):
             raise serializers.ValidationError({"password": "Password fields didn't match."})
+        
+        # Require student_number for student accounts
+        user_type = attrs.get('user_type', 'student')
+        student_number = attrs.get('student_number')
+        if user_type == 'student' and not student_number:
+            raise serializers.ValidationError(
+                {"student_number": "Student number is required for student accounts."}
+            )
+        
         return attrs
 
     def create(self, validated_data):
@@ -67,6 +102,11 @@ class RegisterSerializer(serializers.ModelSerializer):
         """
         # Remove password2 from validated_data as it's not a model field
         validated_data.pop('password2', None)
+        
+        # Coerce blank student_number to None to avoid unique constraint
+        # violations (multiple NULLs are fine, multiple '' are not)
+        if not validated_data.get('student_number'):
+            validated_data['student_number'] = None
         
         # Extract password
         password = validated_data.pop('password')
@@ -127,7 +167,7 @@ class UserWithTokenSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'email', 'first_name', 'last_name', 'profile_picture', 'tokens']
+        fields = ['id', 'email', 'first_name', 'last_name', 'student_number', 'profile_picture', 'tokens']
 
     def get_tokens(self, user):
         """

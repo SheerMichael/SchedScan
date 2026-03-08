@@ -9,6 +9,7 @@ import logging
 
 from ..serializers import CourseSerializer
 from ..models import Course
+from ..permissions import IsAdminUser
 from ..utils.extraction_manager import ExtractionManager
 
 User = get_user_model()
@@ -67,6 +68,7 @@ class BaseCORUploadView(APIView):
             result = manager.extract_schedule(temp_file_path, self.upload_type)
             
             courses_data = result['courses']
+            extracted_student_number = result.get('student_number', '')
             extraction_metadata = {
                 'method': result['extraction_method'],
                 'confidence': result['confidence'],
@@ -78,6 +80,26 @@ class BaseCORUploadView(APIView):
             
             logger.info(f"Extraction completed using {result['extraction_method']} method "
                        f"(confidence: {result['confidence']}, time: {result['processing_time']}s)")
+            
+            # Verify COR ownership: check that the student number in the COR
+            # matches the student number the user registered with
+            if self.upload_type == 'student' and extracted_student_number:
+                user_student_number = getattr(request.user, 'student_number', None)
+                if user_student_number and extracted_student_number != user_student_number:
+                    logger.warning(
+                        f"COR verification failed for user {request.user.id}: "
+                        f"COR student number '{extracted_student_number}' does not match "
+                        f"user student number '{user_student_number}'"
+                    )
+                    return Response(
+                        {
+                            "error": "COR verification failed. The student number in "
+                                     "this COR does not match your registered student "
+                                     f"number ({user_student_number}). "
+                                     "Please upload your own COR.",
+                        },
+                        status=status.HTTP_403_FORBIDDEN
+                    )
             
             if not courses_data:
                 return Response(
@@ -127,8 +149,7 @@ class BaseCORUploadView(APIView):
             logger.error(f"Error processing {self.upload_type.upper()} COR for user {request.user.id}: {str(e)}")
             return Response(
                 {
-                    "error": "Failed to process the document",
-                    "details": str(e)
+                    "error": "Failed to process the document. Please try again or use a different file.",
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
@@ -236,17 +257,18 @@ class UserCoursesView(generics.ListAPIView):
 
 class DeleteAllCoursesView(APIView):
     """
-    API endpoint to delete all courses for all users (admin operation).
-    
+    API endpoint to delete all courses for all users (admin-only operation).
+
     DELETE /api/courses/delete-all/
-    Headers: Authorization: Bearer <access_token>
-    
+    Headers: Authorization: Bearer <admin_access_token>
+
     Response: {
         "message": "Successfully deleted N courses for all users",
         "deleted_count": N
     }
     """
-    permission_classes = [IsAuthenticated]
+    # Restricted to staff admins – ordinary users must never reach this.
+    permission_classes = [IsAdminUser]
     
     def delete(self, request):
         try:
@@ -266,8 +288,7 @@ class DeleteAllCoursesView(APIView):
             logger.error(f"Error deleting all courses: {str(e)}")
             return Response(
                 {
-                    "error": "Failed to delete courses",
-                    "details": str(e)
+                    "error": "Failed to delete courses.",
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

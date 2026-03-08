@@ -59,7 +59,9 @@ def create_test_user():
         'password': TEST_USER_PASSWORD,
         'password2': TEST_USER_PASSWORD,
         'first_name': 'Test',
-        'last_name': 'User'
+        'last_name': 'User',
+        'user_type': 'student',
+        'student_number': '2024-99999'
     }
     
     try:

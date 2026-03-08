@@ -222,11 +222,21 @@ class StudentPDFExtractor(BasePDFExtractor):
         re.IGNORECASE
     )
     
+    # Pattern for extracting student number from COR header
+    # Anchored to the line following the "Student Number" header
+    # Matches: "2022-01191", "2023-04795" (YYYY-NNNNN format)
+    STUDENT_NUMBER_PATTERN = re.compile(
+        r'Student\s+Number\s*\n.*?(\d{4}-\d{4,6})\s*$',
+        re.MULTILINE | re.IGNORECASE
+    )
+    
     def _extract_metadata(self, page) -> Dict:
         """
-        Extract semester and school year from the COR header.
+        Extract semester, school year, and student number from the COR header.
         
         WMSU COR format has a header area:
+            Name                     Program  Major   Student Number
+            LASTNAME, FIRST MIDDLE   BSCS             2022-01191
             College                  Sem/SY            Level
             COLLEGE OF ...           1ST 2025-2026     3
         
@@ -234,9 +244,9 @@ class StudentPDFExtractor(BasePDFExtractor):
             page: pdfplumber page object
             
         Returns:
-            Dictionary with 'semester' and 'school_year' keys
+            Dictionary with 'semester', 'school_year', and 'student_number' keys
         """
-        metadata = {'semester': '', 'school_year': ''}
+        metadata = {'semester': '', 'school_year': '', 'student_number': ''}
         
         try:
             text = page.extract_text()
@@ -255,6 +265,15 @@ class StudentPDFExtractor(BasePDFExtractor):
                            f"school_year: {metadata['school_year']}")
             else:
                 logger.warning("Could not find semester/school year in COR header")
+            
+            # Extract student number from the header area
+            # Pattern is anchored to the line after "Student Number" header
+            sn_match = self.STUDENT_NUMBER_PATTERN.search(text)
+            if sn_match:
+                metadata['student_number'] = sn_match.group(1)
+                logger.info(f"Found student number: {metadata['student_number']}")
+            else:
+                logger.warning("Could not find student number in COR header")
         
         except Exception as e:
             logger.warning(f"Error extracting metadata: {str(e)}")

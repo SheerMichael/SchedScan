@@ -3,9 +3,9 @@ import {
   format, addMonths, subMonths, startOfMonth, endOfMonth, 
   startOfWeek, endOfWeek, isSameMonth, isSameDay, eachDayOfInterval, parseISO 
 } from 'date-fns';
-import { ChevronLeft, ChevronRight, X, ChevronDown, Calendar as CalendarIcon } from 'lucide-react';
+import { ChevronLeft, ChevronRight, X, ChevronDown, Calendar as CalendarIcon, Loader2, AlertCircle } from 'lucide-react';
 
-export default function AddHolidayModal({ isOpen, onClose, onSave, initialData }) {
+export default function AddHolidayModal({ isOpen, onClose, onSave, initialData, isSaving = false, saveError = null }) {
   const [holidayName, setHolidayName] = useState('');
   const [recurrence, setRecurrence] = useState('Recurring');
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -30,12 +30,12 @@ export default function AddHolidayModal({ isOpen, onClose, onSave, initialData }
   const handleSubmit = (e) => {
     e.preventDefault();
     onSave({
-      id: initialData?.id || Date.now(),
+      id: initialData?.id,
       name: holidayName,
       date: format(selectedDate, 'yyyy-MM-dd'),
       type: recurrence
     });
-    onClose();
+    // The parent (CalendarScreen) closes the modal after the async API call completes
   };
 
   return (
@@ -97,11 +97,20 @@ export default function AddHolidayModal({ isOpen, onClose, onSave, initialData }
             </div>
           </div>
 
+          {saveError && (
+            <div className="flex items-start gap-2 bg-red-50 border-2 border-red-700 px-4 py-3">
+              <AlertCircle size={14} className="text-red-700 mt-0.5 shrink-0" />
+              <p className="text-[10px] font-bold text-red-700 uppercase tracking-wider">{saveError}</p>
+            </div>
+          )}
+
           <button 
             type="submit" 
-            className="w-full py-5 bg-slate-900 text-white text-[11px] font-black uppercase tracking-[0.2em] shadow-[6px_6px_0px_0px_rgba(185,28,28,1)] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none transition-all"
+            disabled={isSaving}
+            className="w-full py-5 bg-slate-900 text-white text-[11px] font-black uppercase tracking-[0.2em] shadow-[6px_6px_0px_0px_rgba(185,28,28,1)] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none transition-all disabled:opacity-60 disabled:cursor-not-allowed disabled:translate-x-0 disabled:translate-y-0 disabled:shadow-[6px_6px_0px_0px_rgba(185,28,28,1)] flex items-center justify-center gap-2"
           >
-            {initialData ? 'Update Holiday' : 'Record Holiday'}
+            {isSaving && <Loader2 size={14} className="animate-spin" />}
+            {isSaving ? 'Saving…' : initialData ? 'Update Holiday' : 'Record Holiday'}
           </button>
         </form>
       </div>

@@ -98,4 +98,24 @@ urlpatterns = [
     path('payment/status/', views.CheckPaymentStatusView.as_view(), name='check_payment_status'),
     path('payment/success/', views.PaymentSuccessView.as_view(), name='payment_success'),
     path('payment/cancelled/', views.PaymentCancelledView.as_view(), name='payment_cancelled'),
+
+    # -----------------------------------------------------------------------
+    # Admin dashboard endpoints (all require is_staff via IsAdminUser)
+    # -----------------------------------------------------------------------
+    path('admin/login/', views.AdminLoginView.as_view(), name='admin_login'),
+
+    # User management
+    path('admin/users/', views.AdminUserListView.as_view(), name='admin_user_list'),
+    path('admin/users/<int:pk>/', views.AdminUserDetailView.as_view(), name='admin_user_detail'),
+
+    # Analytics
+    path('admin/analytics/', views.AdminAnalyticsView.as_view(), name='admin_analytics'),
+    path('admin/analytics/chart/', views.AdminAnalyticsChartView.as_view(), name='admin_analytics_chart'),
+
+    # Holiday CRUD
+    path('admin/holidays/', views.AdminHolidayListCreateView.as_view(), name='admin_holiday_list'),
+    path('admin/holidays/<int:pk>/', views.AdminHolidayDetailView.as_view(), name='admin_holiday_detail'),
+
+    # Audit log
+    path('admin/audit-log/', views.AdminAuditLogView.as_view(), name='admin_audit_log'),
 ]
