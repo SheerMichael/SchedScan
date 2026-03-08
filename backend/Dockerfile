@@ -26,9 +26,13 @@ RUN echo "=== App directory contents ===" && ls -la && \
 # Verify tesseract installation
 RUN which tesseract && tesseract --version
 
+# Collect static files during build
+# Use a dummy secret key + build flag so settings.py doesn't raise an error
+RUN DJANGO_SECRET_KEY=build-placeholder DJANGO_BUILD_PHASE=1 python manage.py collectstatic --noinput
+
 # Expose port
 EXPOSE 8080
 
-# Run migrations, collect static files, then start gunicorn
-# collectstatic runs here (not during build) so it has access to environment variables
-CMD ["sh", "-c", "python manage.py migrate --noinput && python manage.py collectstatic --noinput && gunicorn --bind 0.0.0.0:8080 --timeout 300 --workers 2 --threads 2 core.wsgi:application"]
+# Run migrations then start gunicorn
+# At runtime, DigitalOcean injects the real environment variables
+CMD ["sh", "-c", "python manage.py migrate --noinput && gunicorn --bind 0.0.0.0:8080 --timeout 300 --workers 2 --threads 2 core.wsgi:application"]

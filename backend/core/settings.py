@@ -27,8 +27,10 @@ DEBUG = os.getenv("DJANGO_DEBUG", "False") == "True"
 
 # SECURITY WARNING: keep the secret key used in production secret!
 # In production (DEBUG=False), DJANGO_SECRET_KEY *must* be set or the app refuses to start.
+# DJANGO_BUILD_PHASE is set during Docker image build to skip the check.
 _secret = os.getenv("DJANGO_SECRET_KEY", "")
-if not _secret and not DEBUG:
+_build_phase = os.getenv("DJANGO_BUILD_PHASE", "") == "1"
+if not _secret and not DEBUG and not _build_phase:
     raise RuntimeError(
         "DJANGO_SECRET_KEY environment variable is required in production. "
         "Generate one with: python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())'"
