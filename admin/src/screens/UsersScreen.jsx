@@ -14,7 +14,12 @@ const usersData = [
       { subject_code: "CS101", location: "LR2", start_time: "7:00 AM", end_time: "10:00 AM", day: "MWS" },
       { subject_code: "MATH21", location: "LR1", start_time: "10:30 AM", end_time: "12:00 PM", day: "WS" }
     ]},
-  { id: 3, name: "Mike Johnson", phone_number: "555-123-4567", email: "mike.j@example.com", role: "Student", status: "Inactive", joinDate: "Jan 28, 2026", premium_status: "Inactive" },
+  { id: 3, name: "Mike Johnson", phone_number: "555-123-4567", email: "mike.j@example.com", role: "Parent", status: "Active", joinDate: "Jan 28, 2026", premium_status: "Active", 
+      linked_students: [
+        { id: 1 },
+        { id: 4 }
+      ]
+    },
   { id: 4, name: "Elena Rodriguez", phone_number: "444-987-6543", email: "elena.r@example.com", role: "Faculty", status: "Active", joinDate: "Feb 10, 2026", premium_status: "Active" },
   { id: 5, name: "John Doe", phone_number: "123-456-7890", email: "john@example.com", role: "Student", status: "Active", joinDate: "Jan 12, 2026", premium_status: "Active" },
   { id: 6, name: "Sarah Smith", phone_number: "987-654-3210", email: "sarah.s@example.com", role: "Faculty", status: "Active", joinDate: "Feb 05, 2026", premium_status: "Inactive" },
@@ -134,7 +139,7 @@ export default function UsersScreen() {
                 <tr className="bg-slate-800 text-white border-b-2 border-primary-900">
                   <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em]">User Identification</th>
                   <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em]">Contact Node</th>
-                  <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em]">Institutional Role</th>
+                  <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em]">Role</th>
                   <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em]">State</th>
                   <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em]">Registry Date</th>
                   <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em]">Access Tier</th>
