@@ -92,6 +92,9 @@ urlpatterns = [
     path('student/remarks/', views.StudentRemarkListView.as_view(), name='student_remark_list'),
     path('parent/child/remarks/', views.ParentRemarkListView.as_view(), name='parent_remark_list'),
 
+    # Public holiday endpoint (all authenticated users)
+    path('holidays/', views.HolidayListView.as_view(), name='holiday_list'),
+
     # Payment endpoints
     path('payment/can-add-child/', views.CanAddChildView.as_view(), name='can_add_child'),
     path('payment/create-checkout-session/', views.CreateCheckoutSessionView.as_view(), name='create_checkout_session'),

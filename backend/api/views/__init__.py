@@ -112,6 +112,11 @@ from .payment_views import (
     PaymentCancelledView,
 )
 
+# Public holiday views
+from .holiday_views import (
+    HolidayListView,
+)
+
 # Admin dashboard views
 from .admin_views import (
     AdminLoginView,

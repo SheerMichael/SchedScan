@@ -19,6 +19,7 @@ import FacultyModeModal from '../../components/FacultyModeModal';
 import JoinClassModal from '../../components/JoinClassModal';
 import notificationService from '../../services/notificationService';
 import { scheduleClassReminders } from '../../services/classReminderService';
+import { getHolidays, buildHolidayMap, Holiday } from '../../services/holidayService';
 import { getSemesterMonths, getSemesterLabel, getInitialMonth } from '../../utils/semesterUtils';
 
 export default function SchedScanApp() {
@@ -34,6 +35,7 @@ export default function SchedScanApp() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [isLoadingCourses, setIsLoadingCourses] = useState(true);
   const [activeSchedule, setActiveSchedule] = useState<SavedSchedule | null>(null);
+  const [holidays, setHolidays] = useState<Holiday[]>([]);
 
   type ScheduleItem = {
     title: string;
@@ -262,12 +264,28 @@ export default function SchedScanApp() {
   useFocusEffect(
     React.useCallback(() => {
       loadActiveSchedule();
+      loadHolidays();
       // Fetch unread notification count for badge
       notificationService.getUnreadCount()
         .then(count => setUnreadNotifCount(count))
         .catch(() => { });
     }, [user?.id])
   );
+
+  // Reload holidays when the user navigates to a different month/year
+  useEffect(() => {
+    loadHolidays();
+  }, [selectedYear, selectedMonth]);
+
+  const loadHolidays = async () => {
+    try {
+      // Fetch holidays for the currently viewed month
+      const data = await getHolidays(selectedYear, selectedMonth + 1);
+      setHolidays(data);
+    } catch (e) {
+      console.warn('Failed to load holidays:', e);
+    }
+  };
 
   const loadActiveSchedule = async () => {
     if (!user?.id) {
@@ -470,8 +488,25 @@ export default function SchedScanApp() {
 
   const weeklySchedule: WeeklySchedule = {};
 
-  // ✅ One-time Holidays / Events
-  const holidaySchedule: { [key: string]: ScheduleItem[] } = {};
+  // ✅ One-time Holidays / Events — populated from backend
+  const holidaySchedule: { [key: string]: ScheduleItem[] } = useMemo(() => {
+    const map = buildHolidayMap(holidays, selectedYear);
+    const result: { [key: string]: ScheduleItem[] } = {};
+    for (const [dateKey, hols] of Object.entries(map)) {
+      result[dateKey] = hols.map(h => ({
+        title: h.name,
+        subjectName: '',
+        time: 'All Day',
+        startTime: '',
+        endTime: '',
+        location: '',
+        day: '',
+        priority_level: 'Holiday',
+        source_type: null,
+      }));
+    }
+    return result;
+  }, [holidays, selectedYear]);
 
   const years = Array.from({ length: endYear - startYear + 1 }, (_, i) => startYear + i);
   const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
@@ -591,12 +626,12 @@ export default function SchedScanApp() {
     setDaySchedule(schedule);
   };
 
-  // Re-calculate day schedule when courses or selected month/year changes
+  // Re-calculate day schedule when courses, holidays, or selected month/year changes
   useEffect(() => {
-    if (selectedDay !== null && courses.length > 0) {
+    if (selectedDay !== null) {
       selectDay(selectedDay);
     }
-  }, [courses, selectedMonth, selectedYear]);
+  }, [courses, holidaySchedule, selectedMonth, selectedYear]);
 
   // When the active schedule changes, auto-select the correct initial month for its semester
   useEffect(() => {
