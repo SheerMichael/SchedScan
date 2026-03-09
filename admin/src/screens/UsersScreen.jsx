@@ -115,7 +115,8 @@ export default function UsersScreen() {
             {[
               { label: 'TRACK ALL', filter: '' },
               { label: 'TRACK FACULTY', filter: 'Faculty' },
-              { label: 'TRACK STUDENTS', filter: 'Student' }
+              { label: 'TRACK STUDENTS', filter: 'Student' },
+              { label: 'TRACK PARENTS', filter: 'Parent' },
             ].map((btn) => (
               <button 
                 key={btn.label}
