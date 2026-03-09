@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { 
   format, addMonths, subMonths, startOfMonth, endOfMonth, 
-  startOfWeek, endOfWeek, isSameMonth, isSameDay, eachDayOfInterval, parseISO 
+  startOfWeek, endOfWeek, isSameMonth, isSameDay, eachDayOfInterval, parseISO, isBefore, isAfter
 } from 'date-fns';
 import { 
   Edit2, Trash2, Plus, ChevronLeft, ChevronRight, Loader2, AlertCircle
@@ -94,17 +94,21 @@ export default function CalendarControlScreen() {
 
   const getHolidayForDay = (day) => {
     return holidays.find(h => {
-      const hDate = parseISO(h.date);
-      if (h.type === "Recurring") {
-        return day.getMonth() === hDate.getMonth() && day.getDate() === hDate.getDate();
-      }
-      return isSameDay(day, hDate);
+      const start = parseISO(h.startDate || h.date);
+      const end = h.endDate ? parseISO(h.endDate) : start;
+      
+      const isWithinRange = (isSameDay(day, start) || isAfter(day, start)) && (isSameDay(day, end) || isBefore(day, end));
+
+      const isRecurringMatch = day.getMonth() === start.getMonth() && day.getDate() === start.getDate();
+
+      if (h.type === "Recurring") return isRecurringMatch;
+      return isWithinRange;
     });
   };
 
   const visibleHolidays = useMemo(() => {
     return holidays.filter(h => {
-      const hDate = parseISO(h.date);
+      const hDate = parseISO(h.startDate);
       if (h.type === "Recurring") {
         return hDate.getMonth() === currentMonth.getMonth();
       }
@@ -112,9 +116,9 @@ export default function CalendarControlScreen() {
     });
   }, [currentMonth, holidays]);
 
-  return (
-    <div className="min-h-screen bg-primary-100 no-scrollbar pb-20">
-      <Header title="Calendar Control" />
+return (
+    <div className="min-h-screen bg-[#fcfcf9] no-scrollbar pb-20 selection:bg-primary-100">
+      <Header/>
       
       <div className="p-8 max-w-350 mx-auto">
 
@@ -149,6 +153,7 @@ export default function CalendarControlScreen() {
                   <tr className="bg-slate-900 text-white">
                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest">Event Designation</th>
                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest">Reference Date</th>
+                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest">Period</th>
                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest">Classification</th>
                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-center">Functions</th>
                   </tr>
@@ -209,7 +214,7 @@ export default function CalendarControlScreen() {
             </div>
           </div>
 
-          <div className="w-full xl:w-100 bg-white border-2 border-slate-900 shadow-[8px_8px_0px_0px_rgba(15,23,42,0.05)] p-8 rounded-none h-fit">
+          <div className="w-full xl:w-96 bg-white border-2 border-slate-900 shadow-[8px_8px_0px_0px_rgba(15,23,42,0.05)] p-8 rounded-none h-fit">
             <CalendarWidget 
               currentMonth={currentMonth} 
               setCurrentMonth={setCurrentMonth}
@@ -270,9 +275,12 @@ function CalendarWidget({ currentMonth, setCurrentMonth, getHolidayForDay }) {
               <span className={`
                 w-full h-full flex items-center justify-center border-2 text-xs font-black transition-all cursor-default
                 ${!isCurrentMonth ? 'border-transparent text-slate-200' : 'border-slate-100 text-slate-900'}
-                ${isToday ? 'border-primary-700 bg-primary-50/50 text-primary-800' : ''}
-                ${holiday?.type === 'Recurring' ? 'bg-primary-800 border-primary-800 text-white shadow-[3px_3px_0px_0px_rgba(0,0,0,0.2)]' : ''}
-                ${holiday?.type === 'One-time' ? 'bg-slate-900 border-slate-900 text-white' : ''}
+                
+                ${holiday?.type === 'Recurring' ? 'bg-primary-800! border-primary-800! text-white! shadow-[3px_3px_0px_0px_rgba(0,0,0,0.2)]' : ''}
+                
+                ${holiday?.type === 'One-time' ? 'bg-slate-900! border-slate-900! text-white!' : ''}
+                
+                ${isToday ? 'ring-2 ring-primary-700 ring-offset-1 border-primary-700!' : ''}
               `}>
                 {format(day, 'd')}
               </span>
@@ -297,7 +305,7 @@ const LegendItem = ({ color, label }) => (
   </div>
 );
 
-function Header({ title }) {
+function Header() {
   return (
     <header className="bg-white border-b border-slate-200 px-4 py-7">
       <div className="max-w-350 mx-auto relative z-10">

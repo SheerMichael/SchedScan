@@ -1,16 +1,30 @@
 import { X, Calendar, MapPin, Clock } from 'lucide-react';
-import React, { useState } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 
 export default function UserDetailsModal({ isOpen, onClose, user, allUsers }) {
   if (!isOpen) return null;
 
-  const [viewMode, setViewMode] = useState("schedule");
-  const showSchedule = user?.role === "Student" || user?.role === "Faculty";
+  const activeClass = useMemo(() => {
+    return user?.schedule?.find(item =>
+      is_today_in_schedule(item.day) &&
+      compare_time(item.start_time, item.end_time)
+    );
+  }, [user]);
 
-  const activeClass = user?.schedule?.find(item =>
-    is_today_in_schedule(item.day) &&
-    compare_time(item.start_time, item.end_time)
-  );
+  const [viewMode, setViewMode] = useState(user?.role === "Parent" ? "linked" : "schedule");
+
+  useEffect(() => {
+    if (user) {
+      setViewMode(user.role === "Parent" ? "linked" : "schedule");
+    }
+  }, [user?.id]);
+
+  if (!isOpen) return null;
+
+  const showSchedule = user?.role === "Student" || user?.role === "Faculty";
+  const showLinkedTab = (user.role === "Faculty" && activeClass) || 
+                          user?.role === "Parent" || 
+                          user?.role === "Student";
 
   const classSession = activeClass
     ? `SESSION ACTIVE: ${activeClass.location}`
@@ -30,6 +44,39 @@ export default function UserDetailsModal({ isOpen, onClose, user, allUsers }) {
         )
       : [];
 
+  const linkedAccounts = useMemo(() => {
+    if (!user || !allUsers) return [];
+
+    if (user.role === "Faculty" && activeClass) {
+      return allUsers.filter(u =>
+        u.role === "Student" &&
+        u.schedule?.some(s =>
+          s.subject_code === activeClass.subject_code &&
+          s.location === activeClass.location &&
+          s.start_time === activeClass.start_time &&
+          s.end_time === activeClass.end_time &&
+          s.day === activeClass.day
+        )
+      );
+    }
+
+    if (user.role === "Parent") {
+      const childIds = user.linked_students?.map(s => s.id) || [];
+      return allUsers.filter(u => childIds.includes(u.id));
+    }
+
+    if (user.role === "Student") {
+      return allUsers.filter(u => 
+        u.role === "Parent" && 
+        u.linked_students?.some(s => s.id === user.id)
+      );
+    }
+
+    return [];
+  }, [user, allUsers, activeClass]);
+
+  const linkedTabLabel = user?.role === "Faculty" ? "Enrolled Students" : "Linked Accounts";
+
   return (
     <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
       <div className="bg-[#fcfcf9] w-full max-w-lg rounded-none border-2 border-slate-900 shadow-[12px_12px_0px_0px_rgba(185,28,28,0.15)] p-0 max-h-[90vh] overflow-hidden flex flex-col">
@@ -37,8 +84,7 @@ export default function UserDetailsModal({ isOpen, onClose, user, allUsers }) {
         {/* Institutional Header */}
         <div className="bg-slate-900 text-white p-6 flex justify-between items-center">
           <div>
-            <p className="text-[10px] font-black tracking-[0.3em] text-primary-400 uppercase">Institutional Archive</p>
-            <h2 className="text-xl font-black uppercase tracking-tighter">User Identification File</h2>
+            <h2 className="text-xl font-black uppercase tracking-tighter">User Identification</h2>
           </div>
           <button onClick={onClose} className="p-2 border-2 border-slate-700 hover:border-white transition-colors">
             <X size={20} />
@@ -74,22 +120,24 @@ export default function UserDetailsModal({ isOpen, onClose, user, allUsers }) {
 
               {showSchedule && (
                 <div className="space-y-6">
-                  {/* Rigid Toggles */}
                   <div className="flex border-2 border-slate-900 p-1 bg-slate-100">
-                    <button
-                      onClick={() => setViewMode("schedule")}
-                      className={`flex-1 text-[10px] font-black uppercase tracking-widest py-2 transition-all
-                        ${viewMode === "schedule" ? "bg-white text-slate-900 shadow-sm" : "text-slate-400"}`}
-                    >
-                      Class Schedule
-                    </button>
-                    {user.role === "Faculty" && activeClass && (
+                    {(user?.role === "Student" || user?.role === "Faculty") && (
                       <button
-                        onClick={() => setViewMode("students")}
+                        onClick={() => setViewMode("schedule")}
                         className={`flex-1 text-[10px] font-black uppercase tracking-widest py-2 transition-all
-                          ${viewMode === "students" ? "bg-white text-slate-900 shadow-sm" : "text-slate-400"}`}
+                          ${viewMode === "schedule" ? "bg-white text-slate-900 shadow-sm" : "text-slate-400"}`}
                       >
-                        Enrolled Students
+                        Class Schedule
+                      </button>
+                    )}
+                    
+                    {showLinkedTab && (
+                      <button
+                        onClick={() => setViewMode("linked")}
+                        className={`flex-1 text-[10px] font-black uppercase tracking-widest py-2 transition-all
+                          ${viewMode === "linked" ? "bg-white text-slate-900 shadow-sm" : "text-slate-400"}`}
+                      >
+                        {linkedTabLabel}
                       </button>
                     )}
                   </div>
@@ -113,13 +161,18 @@ export default function UserDetailsModal({ isOpen, onClose, user, allUsers }) {
                         </div>
                       ))
                     ) : (
-                      studentsInCurrentClass.map(student => (
-                        <div key={student.id} className="p-4 border-2 border-slate-900 bg-white flex justify-between items-center">
+                      linkedAccounts.map(linkedUser => (
+                        <div key={linkedUser.id} className="p-4 border-2 border-slate-900 bg-white flex justify-between items-center shadow-[4px_4px_0px_0px_rgba(15,23,42,1)]">
                           <div>
-                            <p className="text-xs font-black text-slate-900 uppercase">{student.name}</p>
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">{student.email}</p>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-[9px] font-black bg-primary-800 text-white px-1.5 py-0.5 uppercase">
+                                {linkedUser.role}
+                              </span>
+                              <p className="text-xs font-black text-slate-900 uppercase">{linkedUser.name}</p>
+                            </div>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">{linkedUser.email}</p>
                           </div>
-                          <div className="w-2 h-2 bg-emerald-500" />
+                          <div className={`w-2 h-2 ${linkedUser.status === 'Active' ? 'bg-emerald-500' : 'bg-slate-300'}`} />
                         </div>
                       ))
                     )}
