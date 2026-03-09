@@ -111,3 +111,15 @@ from .payment_views import (
     PaymentSuccessView,
     PaymentCancelledView,
 )
+
+# Admin dashboard views
+from .admin_views import (
+    AdminLoginView,
+    AdminUserListView,
+    AdminUserDetailView,
+    AdminAnalyticsView,
+    AdminAnalyticsChartView,
+    AdminHolidayListCreateView,
+    AdminHolidayDetailView,
+    AdminAuditLogView,
+)

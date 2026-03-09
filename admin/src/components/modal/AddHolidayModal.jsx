@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { format, parseISO, isValid, isAfter, isSameDay } from 'date-fns';
-import { X, ChevronDown, Calendar as CalendarIcon, ArrowRight, CheckSquare, Square } from 'lucide-react';
+import { 
+  format, addMonths, subMonths, startOfMonth, endOfMonth, 
+  startOfWeek, endOfWeek, isSameMonth, isSameDay, eachDayOfInterval, parseISO 
+} from 'date-fns';
+import { ChevronLeft, ChevronRight, X, ChevronDown, Calendar as CalendarIcon, Loader2, AlertCircle } from 'lucide-react';
 
-export default function AddHolidayModal({ isOpen, onClose, onSave, initialData }) {
+export default function AddHolidayModal({ isOpen, onClose, onSave, initialData, isSaving = false, saveError = null }) {
   const [holidayName, setHolidayName] = useState('');
   const [recurrence, setRecurrence] = useState('Recurring');
   const [timePeriod, setTimePeriod] = useState('All Day');
@@ -48,14 +51,14 @@ export default function AddHolidayModal({ isOpen, onClose, onSave, initialData }
     }
 
     onSave({
-      id: initialData?.id || Date.now(),
+      id: initialData?.id,
       name: holidayName,
       date: startDate,
       endDate: isRange ? endDate : null,
       type: recurrence,
       period: timePeriod
     });
-    onClose();
+    // The parent (CalendarScreen) closes the modal after the async API call completes
   };
 
   return (
@@ -164,10 +167,20 @@ export default function AddHolidayModal({ isOpen, onClose, onSave, initialData }
             Format of the dates is strictly YYYY-MM-DD. For example, September 5, 2024 would be entered as 2024-09-05.
           </p>
 
-          <button type="submit" 
-            className="w-full py-5 bg-slate-900 text-white text-[11px] font-black uppercase tracking-[0.2em] shadow-[6px_6px_0px_0px_rgba(185,28,28,1)] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none transition-all mt-4"
+          {saveError && (
+            <div className="flex items-start gap-2 bg-red-50 border-2 border-red-700 px-4 py-3">
+              <AlertCircle size={14} className="text-red-700 mt-0.5 shrink-0" />
+              <p className="text-[10px] font-bold text-red-700 uppercase tracking-wider">{saveError}</p>
+            </div>
+          )}
+
+          <button 
+            type="submit" 
+            disabled={isSaving}
+            className="w-full py-5 bg-slate-900 text-white text-[11px] font-black uppercase tracking-[0.2em] shadow-[6px_6px_0px_0px_rgba(185,28,28,1)] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none transition-all disabled:opacity-60 disabled:cursor-not-allowed disabled:translate-x-0 disabled:translate-y-0 disabled:shadow-[6px_6px_0px_0px_rgba(185,28,28,1)] flex items-center justify-center gap-2"
           >
-            {initialData ? 'Commit Record Updates' : 'Authorize Event Entry'}
+            {isSaving && <Loader2 size={14} className="animate-spin" />}
+            {isSaving ? 'Saving…' : initialData ? 'Update Holiday' : 'Record Holiday'}
           </button>
         </form>
       </div>

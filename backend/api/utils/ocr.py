@@ -159,7 +159,7 @@ class BaseCORExtractor(ABC):
         """
         self.dpi = dpi
         # Metadata extracted during processing
-        self.metadata = {'semester': '', 'school_year': ''}
+        self.metadata = {'semester': '', 'school_year': '', 'student_number': ''}
         logger.info(f"Initialized {self.__class__.__name__}")
     
     # Pattern for extracting semester and school year
@@ -169,17 +169,25 @@ class BaseCORExtractor(ABC):
         re.IGNORECASE
     )
     
+    # Pattern for extracting student number from COR header
+    # Anchored to the line following the "Student Number" header
+    # Matches: "2022-01191", "2023-04795" (YYYY-NNNNN format)
+    STUDENT_NUMBER_PATTERN = re.compile(
+        r'Student\s+Number\s*\n.*?(\d{4}-\d{4,6})\s*$',
+        re.MULTILINE | re.IGNORECASE
+    )
+    
     def _extract_school_year_from_text(self, text: str) -> Dict:
         """
-        Extract semester and school year from COR text.
+        Extract semester, school year, and student number from COR text.
         
         Args:
             text: Full text extracted from document
             
         Returns:
-            Dictionary with 'semester' and 'school_year' keys
+            Dictionary with 'semester', 'school_year', and 'student_number' keys
         """
-        metadata = {'semester': '', 'school_year': ''}
+        metadata = {'semester': '', 'school_year': '', 'student_number': ''}
         
         # Search within the first portion of the text (header area)
         header_text = text[:1000] if len(text) > 1000 else text
@@ -190,6 +198,12 @@ class BaseCORExtractor(ABC):
             metadata['school_year'] = match.group(2).replace(' ', '')
             logger.info(f"OCR found semester: {metadata['semester']}, "
                        f"school_year: {metadata['school_year']}")
+        
+        # Extract student number - anchored to "Student Number" header line
+        sn_match = self.STUDENT_NUMBER_PATTERN.search(header_text)
+        if sn_match:
+            metadata['student_number'] = sn_match.group(1)
+            logger.info(f"OCR found student number: {metadata['student_number']}")
         
         return metadata
 

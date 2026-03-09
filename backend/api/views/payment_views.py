@@ -8,6 +8,7 @@ from django.db import transaction
 import stripe
 import logging
 import re
+import time
 
 from ..models import Payment, ParentChildLink
 
@@ -76,7 +77,12 @@ class CreateCheckoutSessionView(APIView):
             return Response({"error": "Payment system is not configured"},
                             status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
-        stripe_client = stripe.StripeClient(settings.STRIPE_SECRET_KEY)
+        stripe_client = stripe.StripeClient(
+            settings.STRIPE_SECRET_KEY,
+            http_client=stripe.RequestsClient(timeout=30),
+        )
+
+        logger.info(f"Creating checkout session for parent {user.id}")
 
         # Determine slot number
         active_children = ParentChildLink.objects.filter(
@@ -145,7 +151,7 @@ class CreateCheckoutSessionView(APIView):
                         'parent_id': str(user.id),
                         'child_slot_number': str(next_slot),
                     },
-                    'expires_after': 1800,  # Session expires after 30 minutes
+                    'expires_at': int(time.time()) + 1800,  # Session expires after 30 minutes
                 },
             )
 
@@ -171,6 +177,12 @@ class CreateCheckoutSessionView(APIView):
             return Response(
                 {"error": "Failed to create payment session. Please try again."},
                 status=status.HTTP_502_BAD_GATEWAY
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error creating checkout session: {type(e).__name__}: {e}")
+            return Response(
+                {"error": f"An unexpected error occurred: {type(e).__name__}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 
@@ -209,7 +221,10 @@ class CheckPaymentStatusView(APIView):
             return Response({"error": "Payment system is not configured"},
                             status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
-        stripe_client = stripe.StripeClient(settings.STRIPE_SECRET_KEY)
+        stripe_client = stripe.StripeClient(
+            settings.STRIPE_SECRET_KEY,
+            http_client=stripe.RequestsClient(timeout=30),
+        )
 
         try:
             session = stripe_client.checkout.sessions.retrieve(session_id)
@@ -243,6 +258,12 @@ class CheckPaymentStatusView(APIView):
             return Response(
                 {"error": "Failed to check payment status"},
                 status=status.HTTP_502_BAD_GATEWAY
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error checking payment status: {type(e).__name__}: {e}")
+            return Response(
+                {"error": f"An unexpected error occurred: {type(e).__name__}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 

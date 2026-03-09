@@ -113,6 +113,7 @@ export default function UserDetailsModal({ isOpen, onClose, user, allUsers }) {
               {/* Data Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 border-y-2 border-slate-100 py-6">
                 <DetailItem label="Official Email" value={user.email} />
+                {user.student_number && <DetailItem label="Student Number" value={user.student_number} />}
                 <DetailItem label="Registry Status" value={user.status} color={user.status === 'Active' ? 'text-emerald-600' : 'text-slate-400'} />
                 <DetailItem label="Joined On" value={user.joinDate} />
               </div>

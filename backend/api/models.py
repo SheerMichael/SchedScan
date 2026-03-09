@@ -57,6 +57,13 @@ class User(AbstractUser):
         default='student',
         help_text="Type of user account: student, faculty, or parent"
     )
+    student_number = models.CharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        unique=True,
+        help_text="Student number from COR (e.g., 2022-01191). Required for students to verify COR ownership."
+    )
     profile_picture = models.ImageField(
         upload_to='profile_pictures/',
         null=True,
@@ -917,3 +924,122 @@ class FacultyRemark(models.Model):
 
     def __str__(self):
         return f"{self.faculty.email} → {self.student.email} [{self.subject_code}]: {self.text[:50]}"
+
+
+# ============================================
+# Holiday Model (managed by admin dashboard)
+# ============================================
+
+class Holiday(models.Model):
+    """
+    Institution-wide holidays managed by admins via the admin dashboard.
+    Recurring holidays repeat every year on the same month/day.
+    One-time holidays apply only on the specific date.
+    """
+    HOLIDAY_TYPE_CHOICES = [
+        ('one_time', 'One-time'),
+        ('recurring', 'Recurring'),
+    ]
+
+    name = models.CharField(
+        max_length=200,
+        help_text="Name/title of the holiday"
+    )
+    date = models.DateField(
+        help_text="Date of the holiday (for recurring: only month+day matter)"
+    )
+    holiday_type = models.CharField(
+        max_length=10,
+        choices=HOLIDAY_TYPE_CHOICES,
+        default='one_time',
+        help_text="Whether this holiday repeats annually"
+    )
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='created_holidays',
+        help_text="Admin who created this holiday"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Holiday'
+        verbose_name_plural = 'Holidays'
+        ordering = ['date']
+        indexes = [
+            models.Index(fields=['date']),
+            models.Index(fields=['holiday_type']),
+        ]
+
+    def __str__(self):
+        label = "Recurring" if self.holiday_type == 'recurring' else "One-time"
+        return f"{self.name} ({self.date}) [{label}]"
+
+
+# ============================================
+# Admin Audit Log Model
+# ============================================
+
+class AdminAuditLog(models.Model):
+    """
+    Records admin actions for accountability and auditing.
+    Written automatically by admin views whenever a state-changing action occurs.
+    """
+    ACTION_CHOICES = [
+        ('user_deactivated', 'User Deactivated'),
+        ('user_reactivated', 'User Reactivated'),
+        ('holiday_created', 'Holiday Created'),
+        ('holiday_updated', 'Holiday Updated'),
+        ('holiday_deleted', 'Holiday Deleted'),
+        ('admin_login', 'Admin Login'),
+    ]
+
+    admin = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='audit_logs',
+        help_text="The admin who performed the action"
+    )
+    action = models.CharField(
+        max_length=30,
+        choices=ACTION_CHOICES,
+        help_text="The type of action performed"
+    )
+    target_type = models.CharField(
+        max_length=50,
+        blank=True,
+        default='',
+        help_text="The model type affected (e.g. 'User', 'Holiday')"
+    )
+    target_id = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Primary key of the affected object"
+    )
+    detail = models.TextField(
+        blank=True,
+        default='',
+        help_text="Human-readable description of what changed"
+    )
+    ip_address = models.GenericIPAddressField(
+        null=True,
+        blank=True,
+        help_text="IP address of the admin at time of action"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Admin Audit Log'
+        verbose_name_plural = 'Admin Audit Logs'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['admin', '-created_at']),
+            models.Index(fields=['action']),
+        ]
+
+    def __str__(self):
+        admin_email = self.admin.email if self.admin else 'Unknown'
+        return f"[{self.created_at:%Y-%m-%d %H:%M}] {admin_email}: {self.get_action_display()}"

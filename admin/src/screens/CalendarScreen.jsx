@@ -1,54 +1,95 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { 
   format, addMonths, subMonths, startOfMonth, endOfMonth, 
   startOfWeek, endOfWeek, isSameMonth, isSameDay, eachDayOfInterval, parseISO, isBefore, isAfter
 } from 'date-fns';
 import { 
-  Edit2, Trash2, Plus, ChevronLeft, ChevronRight, Clock, ArrowRight
+  Edit2, Trash2, Plus, ChevronLeft, ChevronRight, Loader2, AlertCircle
 } from 'lucide-react';
 import AddHolidayModal from '../components/modal/AddHolidayModal';
 import DeleteConfirmationModal from '../components/modal/DeleteConfirmationModal';
+import { holidaysApi, parseApiError } from '../services/api';
 
-{/* Initial holidays data for the single months you need to 0_ and also an example format for date (March 2, 2026) does not work*/}
-const initialHolidays = [
-  { id: 1, name: "All Saint's Day Eve", startDate: "2026-03-31", endDate: "", period: "Morning", type: "Recurring" },
-  { id: 2, name: "WMSU Palaro", startDate: "2026-02-19", endDate: "2026-02-23", period: "Afternoon", type: "One-time" },
-  { id: 3, name: "New Year's Day", startDate: "2026-01-01", endDate: "", period: "Morning", type: "Recurring" },
-];
+/** Normalize API holiday_type → display type used throughout the UI */
+function toDisplayType(apiType) {
+  return apiType === 'recurring' ? 'Recurring' : 'One-time';
+}
+
+/** Normalize UI display type → API holiday_type */
+function toApiType(displayType) {
+  return displayType === 'Recurring' ? 'recurring' : 'one_time';
+}
 
 export default function CalendarControlScreen() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [holidays, setHolidays] = useState(initialHolidays);
+  const [holidays, setHolidays] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
   const [isAddEditOpen, setIsAddEditOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [selectedHoliday, setSelectedHoliday] = useState(null);
 
-  const handleOpenAdd = () => { setSelectedHoliday(null); setIsAddEditOpen(true); };
-  const handleOpenEdit = (holiday) => { setSelectedHoliday(holiday); setIsAddEditOpen(true); };
+  const fetchHolidays = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { data } = await holidaysApi.list();
+      setHolidays(
+        data.map(h => ({
+          id: h.id,
+          name: h.name,
+          date: h.date,
+          type: toDisplayType(h.holiday_type),
+        }))
+      );
+    } catch (err) {
+      setError(parseApiError(err).message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchHolidays(); }, [fetchHolidays]);
+
+  const handleOpenAdd = () => { setSelectedHoliday(null); setSaveError(null); setIsAddEditOpen(true); };
+  const handleOpenEdit = (holiday) => { setSelectedHoliday(holiday); setSaveError(null); setIsAddEditOpen(true); };
   const handleOpenDelete = (holiday) => { setSelectedHoliday(holiday); setIsDeleteOpen(true); };
 
-  const handleSaveHoliday = (holidayData) => {
-
-    const formattedData = {
-      ...holidayData,
-      startDate: holidayData.date, 
-    };
-
-    if (selectedHoliday) {
-      setHolidays(prev => prev.map(h => 
-        h.id === selectedHoliday.id ? { ...formattedData, id: selectedHoliday.id } : h
-      ));
-    } else {
-      setHolidays(prev => [...prev, formattedData]);
+  const handleSaveHoliday = async (holidayData) => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const payload = {
+        name: holidayData.name,
+        date: holidayData.date,
+        holiday_type: toApiType(holidayData.type),
+      };
+      if (selectedHoliday) {
+        await holidaysApi.update(selectedHoliday.id, payload);
+      } else {
+        await holidaysApi.create(payload);
+      }
+      setIsAddEditOpen(false);
+      await fetchHolidays();
+    } catch (err) {
+      setSaveError(parseApiError(err).message);
+    } finally {
+      setSaving(false);
     }
-    setIsAddEditOpen(false);
-    setSelectedHoliday(null);
   };
 
-  const handleConfirmDelete = () => {
-    setHolidays(prev => prev.filter(h => h.id !== selectedHoliday.id));
-    setIsDeleteOpen(false);
-    setSelectedHoliday(null);
+  const handleConfirmDelete = async () => {
+    try {
+      await holidaysApi.delete(selectedHoliday.id);
+      setHolidays(prev => prev.filter(h => h.id !== selectedHoliday.id));
+      setIsDeleteOpen(false);
+      setSelectedHoliday(null);
+    } catch (err) {
+      setIsDeleteOpen(false);
+      setError(parseApiError(err).message);
+    }
   };
 
   const getHolidayForDay = (day) => {
@@ -79,7 +120,16 @@ return (
     <div className="min-h-screen bg-[#fcfcf9] no-scrollbar pb-20 selection:bg-primary-100">
       <Header/>
       
-      <div className="p-8 max-w-7xl mx-auto">
+      <div className="p-8 max-w-350 mx-auto">
+
+        {error && (
+          <div className="mb-6 flex items-start gap-3 bg-red-50 border-2 border-red-700 px-5 py-4">
+            <AlertCircle size={16} className="text-red-700 mt-0.5 shrink-0" />
+            <div className="flex-1 text-[11px] font-bold text-red-700 uppercase tracking-wider">{error}</div>
+            <button onClick={fetchHolidays} className="text-[10px] font-black text-red-700 uppercase tracking-widest underline underline-offset-2 hover:no-underline">Retry</button>
+          </div>
+        )}
+
         <div className="flex flex-col xl:flex-row gap-8">
           
           <div className="flex-1 bg-white border-2 border-slate-900 shadow-[8px_8px_0px_0px_rgba(185,28,28,0.08)] rounded-none overflow-hidden h-fit">
@@ -109,60 +159,56 @@ return (
                   </tr>
                 </thead>
                 <tbody className="divide-y-2 divide-slate-100">
-                  {visibleHolidays.map((holiday) => (
-                    <tr key={holiday.id} className="hover:bg-primary-50/30 transition-colors group">
-                      <td className="px-6 py-5 text-sm font-black text-slate-900 uppercase tracking-tight">{holiday.name}</td>
-                      
-                      {/* FIXED: Reference Date Column */}
-                      <td className="px-6 py-5 text-[11px] font-bold text-slate-500 uppercase tracking-tighter">
-                        {holiday.endDate && holiday.endDate !== holiday.startDate ? (
-                          <div className="flex items-center gap-2">
-                            <span>{format(parseISO(holiday.startDate), 'MMM dd')}</span>
-                            <ArrowRight size={12} className="text-primary-700" />
-                            <span>{format(parseISO(holiday.endDate), 'MMM dd, yyyy')}</span>
-                          </div>
-                        ) : (
-                          holiday.type === "Recurring" 
-                            ? format(parseISO(holiday.startDate), 'MMMM dd') + " [ANNUAL]"
-                            : format(parseISO(holiday.startDate), 'MMMM dd, yyyy')
-                        )}
-                      </td>
-
-                      <td className="px-6 py-5 text-[11px] font-bold text-slate-500 uppercase tracking-tighter">
-                        <div className="flex items-center gap-2">
-                          <Clock size={12} className="text-slate-400" />
-                          {holiday.period || 'ALL DAY'}
-                        </div>
-                      </td>
-
-                      <td className="px-6 py-5">
-                        <span className={`px-3 py-1 border-2 text-[10px] font-black uppercase tracking-widest ${
-                          holiday.type === 'Recurring' 
-                            ? 'bg-primary-800 border-primary-800 text-white' 
-                            : 'bg-white border-slate-900 text-slate-900'
-                        }`}>
-                          {holiday.type}
-                        </span>
-                      </td>
-
-                      <td className="px-6 py-5">
-                        <div className="flex justify-center gap-3">
-                          <button 
-                            onClick={(e) => { e.stopPropagation(); handleOpenEdit(holiday); }} 
-                            className="p-2 border-2 border-slate-200 text-slate-400 hover:border-slate-900 hover:text-slate-900 transition-all"
-                          >
-                            <Edit2 size={16} />
-                          </button>
-                          <button 
-                            onClick={(e) => { e.stopPropagation(); handleOpenDelete(holiday); }}
-                            className="p-2 border-2 border-slate-200 text-slate-400 hover:border-primary-700 hover:text-primary-700 transition-all"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
+                  {loading ? (
+                    <tr>
+                      <td colSpan="4" className="px-6 py-16 text-center">
+                        <Loader2 size={20} className="animate-spin text-slate-300 mx-auto" />
                       </td>
                     </tr>
-                  ))}
+                  ) : visibleHolidays.length === 0 ? (
+                    <tr>
+                      <td colSpan="4" className="px-6 py-16 text-center text-slate-300 text-[10px] font-black uppercase tracking-[0.4em]">
+                        No active records for this period.
+                      </td>
+                    </tr>
+                  ) : (
+                    visibleHolidays.map((holiday) => (
+                      <tr key={holiday.id} className="hover:bg-primary-50/30 transition-colors group">
+                        <td className="px-6 py-5 text-sm font-black text-slate-900 uppercase tracking-tight">{holiday.name}</td>
+                        <td className="px-6 py-5 text-[11px] font-bold text-slate-500 uppercase tracking-tighter">
+                          {holiday.type === "Recurring" 
+                            ? format(parseISO(holiday.date), 'MMMM dd') + " [ANNUAL]"
+                            : format(parseISO(holiday.date), 'MMMM dd, yyyy')
+                          }
+                        </td>
+                        <td className="px-6 py-5">
+                          <span className={`px-3 py-1 border-2 text-[10px] font-black uppercase tracking-widest ${
+                            holiday.type === 'Recurring' 
+                              ? 'bg-primary-800 border-primary-800 text-white' 
+                              : 'bg-white border-slate-900 text-slate-900'
+                          }`}>
+                            {holiday.type}
+                          </span>
+                        </td>
+                        <td className="px-6 py-5">
+                          <div className="flex justify-center gap-3">
+                            <button 
+                              onClick={() => handleOpenEdit(holiday)} 
+                              className="p-2 border-2 border-slate-200 text-slate-400 hover:border-slate-900 hover:text-slate-900 transition-all"
+                            >
+                              <Edit2 size={16} />
+                            </button>
+                            <button 
+                              onClick={() => handleOpenDelete(holiday)}
+                              className="p-2 border-2 border-slate-200 text-slate-400 hover:border-primary-700 hover:text-primary-700 transition-all"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -180,9 +226,11 @@ return (
 
       <AddHolidayModal 
         isOpen={isAddEditOpen} 
-        onClose={() => setIsAddEditOpen(false)} 
+        onClose={() => { setIsAddEditOpen(false); setSaveError(null); }}
         onSave={handleSaveHoliday}
         initialData={selectedHoliday}
+        isSaving={saving}
+        saveError={saveError}
       />
 
       <DeleteConfirmationModal 
