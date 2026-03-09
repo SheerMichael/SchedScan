@@ -1,6 +1,19 @@
 name: schedscan
 region: sgp
 
+static_sites:
+  - name: schedscan-admin
+    source_dir: admin
+    github:
+      repo: SheerMichael/SchedScan
+      branch: main
+      deploy_on_push: true
+    build_command: npm run build
+    output_dir: dist
+    catchall_document: index.html
+    routes:
+      - path: /portal
+
 services:
   - name: schedscan-api
     source_dir: /

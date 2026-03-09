@@ -22,7 +22,7 @@ export default function App() {
   if (isLoading) return null;
 
   return (
-    <Router>
+    <Router basename="/portal">
       <div className="flex h-screen bg-slate-50">
         {isAuthenticated && <Sidebar onLogout={logout} />}
 
