@@ -1,5 +1,4 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
-import { useState } from "react";
 
 import Sidebar from "./components/sidebar/sidebar";
 import LoginScreen from "./screens/LoginScreen";
@@ -10,49 +9,32 @@ import CalendarScreen from "./screens/CalendarScreen";
 import ReportLogsScreen from "./screens/ReportLogsScreen";
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const { isAuthenticated, isLoading, logout } = useAuth();
 
-  const handleLogin = () => setIsAuthenticated(true);
-  const handleLogout = () => setIsAuthenticated(false);
+  // Prevent rendering routes until we know if the user is authenticated
+  if (isLoading) return null;
 
   return (
     <Router>
       <div className="flex h-screen bg-slate-50">
-        {isAuthenticated && <Sidebar onLogout={handleLogout} />}
-        
+        {isAuthenticated && <Sidebar onLogout={logout} />}
+
         <main className="flex-1 overflow-auto">
           <Routes>
-            <Route 
-              path="/login" 
-              element={!isAuthenticated ? <LoginScreen onLogin={handleLogin} /> : <Navigate to="/" />} 
-            />
-            
-            <Route 
-              path="/" 
-              element={isAuthenticated ? <DashboardScreen /> : <Navigate to="/login" />} 
-            />
-            
-            <Route 
-              path="/analytics" 
-              element={isAuthenticated ? <AnalyticsScreen /> : <Navigate to="/login" />} 
-            />
-            
-            <Route 
-              path="/calendar" 
-              element={isAuthenticated ? <CalendarScreen /> : <Navigate to="/login" />} 
-            />
-            
-            <Route 
-              path="/users" 
-              element={isAuthenticated ? <UsersScreen /> : <Navigate to="/login" />} 
-            />
-
-            <Route 
-              path="/report-logs" 
-              element={isAuthenticated ? <ReportLogsScreen /> : <Navigate to="/login" />} 
+            <Route
+              path="/login"
+              element={!isAuthenticated ? <LoginScreen /> : <Navigate to="/" replace />}
             />
 
             <Route path="*" element={<Navigate to="/login" />} />
+            <Route path="/" element={<ProtectedRoute><DashboardScreen /></ProtectedRoute>} />
+            <Route path="/analytics" element={<ProtectedRoute><AnalyticsScreen /></ProtectedRoute>} />
+            <Route path="/calendar" element={<ProtectedRoute><CalendarScreen /></ProtectedRoute>} />
+            <Route path="/users" element={<ProtectedRoute><UsersScreen /></ProtectedRoute>} />
+            <Route path="/report-logs" element={<ProtectedRoute><ReportLogsScreen /></ProtectedRoute>} />
+
+            {/* Catch-all */}
+            <Route path="*" element={<Navigate to="/login" replace />} />
           </Routes>
         </main>
       </div>

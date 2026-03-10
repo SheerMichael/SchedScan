@@ -138,6 +138,7 @@ class ExtractionManager:
                     'confidence': quality,
                     'semester': semester,
                     'school_year': school_year,
+                    'student_number': pdf_result.get('student_number', ''),
                 }
             else:
                 logger.warning(f"PDF extraction quality ({quality}) below threshold ({self.quality_threshold}), "
@@ -184,6 +185,7 @@ class ExtractionManager:
                 'confidence': quality,
                 'semester': ocr_extractor.metadata.get('semester', ''),
                 'school_year': ocr_extractor.metadata.get('school_year', ''),
+                'student_number': ocr_extractor.metadata.get('student_number', ''),
             }
         
         except Exception as e:
@@ -211,6 +213,7 @@ class ExtractionManager:
                 'confidence': 0.0,
                 'semester': '',
                 'school_year': '',
+                'student_number': '',
             }
         
         logger.info("Using OCR fallback extraction...")
@@ -229,6 +232,7 @@ class ExtractionManager:
                 'confidence': quality,
                 'semester': ocr_extractor.metadata.get('semester', ''),
                 'school_year': ocr_extractor.metadata.get('school_year', ''),
+                'student_number': ocr_extractor.metadata.get('student_number', ''),
             }
         
         except Exception as e:

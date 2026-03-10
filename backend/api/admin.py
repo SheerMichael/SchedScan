@@ -1,7 +1,11 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.translation import gettext_lazy as _
-from .models import User, ClassCode, ClassEnrollment, FacultyTask, FacultyTaskFile, FacultyTaskCompletion, FacultyRemark
+from .models import (
+    User, ClassCode, ClassEnrollment,
+    FacultyTask, FacultyTaskFile, FacultyTaskCompletion, FacultyRemark,
+    Holiday, AdminAuditLog,
+)
 
 
 @admin.register(User)
@@ -78,4 +82,27 @@ class FacultyTaskCompletionAdmin(admin.ModelAdmin):
     list_display = ['task', 'student', 'is_completed', 'completed_at']
     list_filter = ['is_completed', 'completed_at']
     search_fields = ['student__email', 'task__text']
+
+
+@admin.register(Holiday)
+class HolidayAdmin(admin.ModelAdmin):
+    list_display = ['name', 'date', 'holiday_type', 'created_by', 'created_at']
+    list_filter = ['holiday_type', 'date']
+    search_fields = ['name']
+    readonly_fields = ['created_at', 'updated_at']
+    raw_id_fields = ['created_by']
+
+
+@admin.register(AdminAuditLog)
+class AdminAuditLogAdmin(admin.ModelAdmin):
+    list_display = ['admin', 'action', 'target_type', 'target_id', 'ip_address', 'created_at']
+    list_filter = ['action', 'created_at']
+    search_fields = ['admin__email', 'detail']
+    readonly_fields = ['admin', 'action', 'target_type', 'target_id', 'detail', 'ip_address', 'created_at']
+
+    def has_add_permission(self, request):
+        return False  # Audit logs are system-generated; forbid manual creation
+
+    def has_change_permission(self, request, obj=None):
+        return False  # Immutable records
 

@@ -9,6 +9,7 @@ import { useAuth } from '../../context/AuthContext';
 type SignUpData = {
   first_name: string;
   last_name: string;
+  student_number: string;
   email: string;
   password: string;
   confirmPassword: string;
@@ -106,6 +107,16 @@ const SignUp1Screen = ({
             }
           />
         </View>
+
+        <TextInput
+          className="bg-white rounded-xl p-4 mb-5 w-full"
+          placeholder="Student Number (e.g., 2022-01191)"
+          value={formData.student_number}
+          onChangeText={(text) =>
+            setFormData((prev: SignUpData) => ({ ...prev, student_number: text }))
+          }
+          keyboardType="numbers-and-punctuation"
+        />
       </View>
 
       <TouchableOpacity
@@ -226,6 +237,7 @@ const AuthFlow = () => {
   const [formData, setFormData] = useState<SignUpData>({
     first_name: "",
     last_name: "",
+    student_number: "",
     email: "",
     password: "",
     confirmPassword: "",
@@ -277,6 +289,16 @@ const AuthFlow = () => {
       return;
     }
 
+    if (formData.user_type === 'student' && !formData.student_number) {
+      Alert.alert('Error', 'Please enter your student number');
+      return;
+    }
+
+    if (formData.user_type === 'student' && !/^\d{4}-\d{4,6}$/.test(formData.student_number)) {
+      Alert.alert('Error', 'Student number must be in the format YYYY-NNNNN (e.g., 2022-01191)');
+      return;
+    }
+
     if (!formData.email) {
       Alert.alert('Error', 'Please enter your email');
       return;
@@ -313,6 +335,7 @@ const AuthFlow = () => {
         first_name: formData.first_name,
         last_name: formData.last_name,
         user_type: formData.user_type,
+        student_number: formData.user_type === 'student' ? formData.student_number : undefined,
         profile_picture: image || undefined,
       });
 
@@ -348,6 +371,8 @@ const AuthFlow = () => {
           errorMessage = `First Name: ${Array.isArray(data.first_name) ? data.first_name[0] : data.first_name}`;
         } else if (data.last_name) {
           errorMessage = `Last Name: ${Array.isArray(data.last_name) ? data.last_name[0] : data.last_name}`;
+        } else if (data.student_number) {
+          errorMessage = `Student Number: ${Array.isArray(data.student_number) ? data.student_number[0] : data.student_number}`;
         } else if (data.detail) {
           errorMessage = data.detail;
         } else if (data.non_field_errors) {

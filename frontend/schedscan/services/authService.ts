@@ -12,6 +12,7 @@ export interface RegisterData {
   first_name: string;
   last_name: string;
   user_type?: 'student' | 'faculty' | 'parent';
+  student_number?: string;
   profile_picture?: any;
 }
 
@@ -21,6 +22,7 @@ export interface User {
   first_name: string;
   last_name: string;
   user_type: 'student' | 'faculty' | 'parent';
+  student_number: string | null;
   profile_picture: string | null;
   created_at: string;
 }
@@ -48,6 +50,9 @@ export const authService = {
       formData.append('last_name', data.last_name);
       if (data.user_type) {
         formData.append('user_type', data.user_type);
+      }
+      if (data.student_number) {
+        formData.append('student_number', data.student_number);
       }
 
       // Add profile picture if provided

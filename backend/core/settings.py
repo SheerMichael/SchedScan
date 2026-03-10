@@ -21,11 +21,21 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Load .env file from the project root (SchedScan/.env)
 load_dotenv(BASE_DIR.parent / ".env")
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-secret-key-change-in-production")
-
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv("DJANGO_DEBUG", "True") == "True"
+# Defaults to False (fail-closed) — set DJANGO_DEBUG=True explicitly for local dev.
+DEBUG = os.getenv("DJANGO_DEBUG", "False") == "True"
+
+# SECURITY WARNING: keep the secret key used in production secret!
+# In production (DEBUG=False), DJANGO_SECRET_KEY *must* be set or the app refuses to start.
+# DJANGO_BUILD_PHASE is set during Docker image build to skip the check.
+_secret = os.getenv("DJANGO_SECRET_KEY", "")
+_build_phase = os.getenv("DJANGO_BUILD_PHASE", "") == "1"
+if not _secret and not DEBUG and not _build_phase:
+    raise RuntimeError(
+        "DJANGO_SECRET_KEY environment variable is required in production. "
+        "Generate one with: python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())'"
+    )
+SECRET_KEY = _secret or "dev-secret-key-NOT-FOR-PRODUCTION"
 
 # Allow all hosts in development, use env var in production
 if DEBUG:
@@ -227,6 +237,12 @@ REST_FRAMEWORK = {
         'rest_framework.parsers.MultiPartParser',
         'rest_framework.parsers.FormParser',
     ],
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.ScopedRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'admin_login': '5/min',   # brute-force protection on the admin login
+    },
 }
 
 # Simple JWT Configuration
@@ -257,12 +273,12 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:8081",
     "http://127.0.0.1:8081",
     "http://192.168.1.15:8081",
+    "http://localhost:5173",       # Vite dev server (admin dashboard)
     "https://schedscan-5gfy.ondigitalocean.app",
 ]
 
-# For development, allow all origins from Expo
-# Set CORS_ALLOW_ALL=False in production environment variables
-CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL', 'True') == 'True'
+# Defaults to False (fail-closed).  Set CORS_ALLOW_ALL=True for local dev only.
+CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL', 'False') == 'True'
 
 CORS_ALLOW_CREDENTIALS = True
 
@@ -309,4 +325,28 @@ DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'SchedScan <noreply@schedsc
 STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY', '')
 STRIPE_PRICE_AMOUNT = 8900  # ₱89.00 in centavos
 STRIPE_CURRENCY = 'php'
+
+# ---------------------------------------------------------------------------
+# Production security hardening
+# DigitalOcean App Platform terminates TLS at the load-balancer and forwards
+# X-Forwarded-Proto. These settings ensure Django knows the request was HTTPS.
+# ---------------------------------------------------------------------------
+if not DEBUG:
+    # Tell Django to trust the X-Forwarded-Proto header from DO's load balancer
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+    # Redirect all HTTP → HTTPS
+    SECURE_SSL_REDIRECT = True
+
+    # HSTS: tell browsers to only use HTTPS for 1 year (include subdomains)
+    SECURE_HSTS_SECONDS = 31_536_000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+
+    # Cookies: only send over HTTPS
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+
+    # Prevent the browser from MIME-sniffing the content type
+    SECURE_CONTENT_TYPE_NOSNIFF = True
 
