@@ -7,6 +7,7 @@ import DashboardScreen from "./screens/DashboardScreen";
 import AnalyticsScreen from "./screens/AnalyticsScreen";
 import UsersScreen from "./screens/UsersScreen";
 import CalendarScreen from "./screens/CalendarScreen";
+import ReportLogsScreen from "./screens/ReportLogsScreen";
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -46,7 +47,11 @@ export default function App() {
               element={isAuthenticated ? <UsersScreen /> : <Navigate to="/login" />} 
             />
 
-            {/* 4. Catch-all: Send unknown links to Login */}
+            <Route 
+              path="/report-logs" 
+              element={isAuthenticated ? <ReportLogsScreen /> : <Navigate to="/login" />} 
+            />
+
             <Route path="*" element={<Navigate to="/login" />} />
           </Routes>
         </main>
