@@ -7,6 +7,14 @@ import AnalyticsScreen from "./screens/AnalyticsScreen";
 import UsersScreen from "./screens/UsersScreen";
 import CalendarScreen from "./screens/CalendarScreen";
 import ReportLogsScreen from "./screens/ReportLogsScreen";
+import { useAuth } from "./context/AuthContext";
+
+/** Redirects to /login when the user is not authenticated. */
+function ProtectedRoute({ children }) {
+  const { isAuthenticated, isLoading } = useAuth();
+  if (isLoading) return null; // Avoid flash of redirect before localStorage check
+  return isAuthenticated ? children : <Navigate to="/login" replace />;
+}
 
 export default function App() {
   const { isAuthenticated, isLoading, logout } = useAuth();
@@ -26,7 +34,6 @@ export default function App() {
               element={!isAuthenticated ? <LoginScreen /> : <Navigate to="/" replace />}
             />
 
-            <Route path="*" element={<Navigate to="/login" />} />
             <Route path="/" element={<ProtectedRoute><DashboardScreen /></ProtectedRoute>} />
             <Route path="/analytics" element={<ProtectedRoute><AnalyticsScreen /></ProtectedRoute>} />
             <Route path="/calendar" element={<ProtectedRoute><CalendarScreen /></ProtectedRoute>} />
