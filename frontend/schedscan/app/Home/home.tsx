@@ -20,6 +20,7 @@ import JoinClassModal from '../../components/JoinClassModal';
 import notificationService from '../../services/notificationService';
 import { scheduleClassReminders } from '../../services/classReminderService';
 import { getHolidays, buildHolidayMap, Holiday } from '../../services/holidayService';
+import { getCalendarEvents, buildCalendarEventMap, formatEventTime, CalendarEvent } from '../../services/calendarEventService';
 import { getSemesterMonths, getSemesterLabel, getInitialMonth } from '../../utils/semesterUtils';
 
 export default function SchedScanApp() {
@@ -36,6 +37,7 @@ export default function SchedScanApp() {
   const [isLoadingCourses, setIsLoadingCourses] = useState(true);
   const [activeSchedule, setActiveSchedule] = useState<SavedSchedule | null>(null);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
 
   type ScheduleItem = {
     title: string;
@@ -63,8 +65,9 @@ export default function SchedScanApp() {
     if (activeSchedule?.uploadType === 'faculty') return '#f97316'; // orange
     if (activeSchedule?.uploadType === 'student') return '#ef4444'; // red
 
-    // Fallback for holidays
+    // Fallback for holidays and calendar events
     if (item.priority_level === 'Holiday') return '#16a34a'; // green
+    if (item.priority_level === 'Event') return '#3b82f6'; // blue
 
     return '#ef4444'; // default red
   };
@@ -272,9 +275,10 @@ export default function SchedScanApp() {
     }, [user?.id])
   );
 
-  // Reload holidays when the user navigates to a different month/year
+  // Reload holidays and calendar events when the user navigates to a different month/year
   useEffect(() => {
     loadHolidays();
+    loadCalendarEvents();
   }, [selectedYear, selectedMonth]);
 
   const loadHolidays = async () => {
@@ -284,6 +288,15 @@ export default function SchedScanApp() {
       setHolidays(data);
     } catch (e) {
       console.warn('Failed to load holidays:', e);
+    }
+  };
+
+  const loadCalendarEvents = async () => {
+    try {
+      const data = await getCalendarEvents(selectedYear, selectedMonth + 1);
+      setCalendarEvents(data);
+    } catch (e) {
+      console.warn('Failed to load calendar events:', e);
     }
   };
 
@@ -508,6 +521,31 @@ export default function SchedScanApp() {
     return result;
   }, [holidays, selectedYear]);
 
+  // ✅ Admin calendar events — visible to user based on role
+  const calendarEventSchedule: { [key: string]: ScheduleItem[] } = useMemo(() => {
+    const map = buildCalendarEventMap(calendarEvents, selectedYear);
+    const result: { [key: string]: ScheduleItem[] } = {};
+    for (const [dateKey, evts] of Object.entries(map)) {
+      result[dateKey] = evts.map(e => {
+        const timeStr = e.start_time
+          ? `${formatEventTime(e.start_time)}${e.end_time ? ` - ${formatEventTime(e.end_time)}` : ''}`
+          : 'All Day';
+        return {
+          title: e.title,
+          subjectName: e.description || '',
+          time: timeStr,
+          startTime: e.start_time || '',
+          endTime: e.end_time || '',
+          location: e.location || '',
+          day: '',
+          priority_level: 'Event',
+          source_type: null,
+        };
+      });
+    }
+    return result;
+  }, [calendarEvents, selectedYear]);
+
   const years = Array.from({ length: endYear - startYear + 1 }, (_, i) => startYear + i);
   const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
   const monthsFull = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
@@ -577,12 +615,19 @@ export default function SchedScanApp() {
     return holidaySchedule[key] !== undefined;
   };
 
+  // Check if date has an admin calendar event
+  const hasCalendarEvent = (day: number) => {
+    const key = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    return calendarEventSchedule[key] !== undefined;
+  };
+
   // ✅ UPDATED — Only show real courses from backend
   const selectDay = (day: number) => {
     setSelectedDay(day);
 
     const dateKey = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const holiday = holidaySchedule[dateKey] ?? [];
+    const calEvent = calendarEventSchedule[dateKey] ?? [];
 
     // Calculate the weekday (0=Sun, 1=Mon, 2=Tue, etc.)
     const weekday = new Date(selectedYear, selectedMonth, day).getDay();
@@ -622,16 +667,16 @@ export default function SchedScanApp() {
         source_type: course.source_type || null,  // Include source_type for color coding
       }));
 
-    const schedule = [...holiday, ...realCourses];
+    const schedule = [...holiday, ...calEvent, ...realCourses];
     setDaySchedule(schedule);
   };
 
-  // Re-calculate day schedule when courses, holidays, or selected month/year changes
+  // Re-calculate day schedule when courses, holidays, events, or selected month/year changes
   useEffect(() => {
     if (selectedDay !== null) {
       selectDay(selectedDay);
     }
-  }, [courses, holidaySchedule, selectedMonth, selectedYear]);
+  }, [courses, holidaySchedule, calendarEventSchedule, selectedMonth, selectedYear]);
 
   // When the active schedule changes, auto-select the correct initial month for its semester
   useEffect(() => {
@@ -866,6 +911,7 @@ export default function SchedScanApp() {
                 const hasCourses = hasCoursesOnDate(day);
                 const selected = selectedDay === day;
                 const holiday = isHoliday(day);
+                const hasEvent = hasCalendarEvent(day);
 
                 return (
                   <View key={idx} className="w-[14.28%] aspect-square justify-center items-center">
@@ -874,7 +920,8 @@ export default function SchedScanApp() {
                       className={`w-9 h-9 rounded-full justify-center items-center
                         ${selected ? 'bg-primary-600' : ''}
                         ${holiday && !selected ? 'bg-green-300' : ''}
-                        ${hasCourses && !selected && !holiday ? 'bg-yellow-300' : ''}
+                        ${hasEvent && !holiday && !selected ? 'bg-blue-300' : ''}
+                        ${hasCourses && !selected && !holiday && !hasEvent ? 'bg-yellow-300' : ''}
                       `}
                       activeOpacity={0.7}
                     >
@@ -928,8 +975,8 @@ export default function SchedScanApp() {
                     <View className="flex-1">
                       <View className="flex-row items-center">
                         <Text className="font-bold text-base text-black">{item.title}</Text>
-                        {/* Show badge for merged schedules (source_type) or non-merged schedules (uploadType) */}
-                        {(item.source_type || activeSchedule?.uploadType === 'faculty' || activeSchedule?.uploadType === 'student') && (
+                        {/* Show badge for merged schedules (source_type) or non-merged schedules (uploadType) — only for Class items */}
+                        {item.priority_level === 'Class' && (item.source_type || activeSchedule?.uploadType === 'faculty' || activeSchedule?.uploadType === 'student') && (
                           <View
                             className="ml-2 px-2 py-0.5 rounded-full"
                             style={{ backgroundColor: courseColor + '20' }}

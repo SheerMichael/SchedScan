@@ -95,6 +95,9 @@ urlpatterns = [
     # Public holiday endpoint (all authenticated users)
     path('holidays/', views.HolidayListView.as_view(), name='holiday_list'),
 
+    # Public calendar events endpoint (filtered by user role)
+    path('calendar-events/', views.CalendarEventListView.as_view(), name='calendar_event_list'),
+
     # Payment endpoints
     path('payment/can-add-child/', views.CanAddChildView.as_view(), name='can_add_child'),
     path('payment/create-checkout-session/', views.CreateCheckoutSessionView.as_view(), name='create_checkout_session'),
@@ -118,6 +121,10 @@ urlpatterns = [
     # Holiday CRUD
     path('admin/holidays/', views.AdminHolidayListCreateView.as_view(), name='admin_holiday_list'),
     path('admin/holidays/<int:pk>/', views.AdminHolidayDetailView.as_view(), name='admin_holiday_detail'),
+
+    # Calendar Event CRUD
+    path('admin/calendar-events/', views.AdminCalendarEventListCreateView.as_view(), name='admin_calendar_event_list'),
+    path('admin/calendar-events/<int:pk>/', views.AdminCalendarEventDetailView.as_view(), name='admin_calendar_event_detail'),
 
     # Audit log
     path('admin/audit-log/', views.AdminAuditLogView.as_view(), name='admin_audit_log'),

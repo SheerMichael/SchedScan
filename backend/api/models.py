@@ -979,6 +979,93 @@ class Holiday(models.Model):
 
 
 # ============================================
+# Calendar Event Model (managed by admin dashboard)
+# ============================================
+
+class CalendarEvent(models.Model):
+    """
+    Institution-wide calendar events managed by admins via the admin dashboard.
+    Events appear on every user's calendar (optionally filtered by user role).
+    Recurring events repeat every year on the same month/day.
+    """
+    EVENT_TYPE_CHOICES = [
+        ('one_time', 'One-time'),
+        ('recurring', 'Recurring'),
+    ]
+
+    VISIBILITY_CHOICES = [
+        ('all', 'All Users'),
+        ('student', 'Students Only'),
+        ('faculty', 'Faculty Only'),
+    ]
+
+    title = models.CharField(
+        max_length=200,
+        help_text="Title of the event"
+    )
+    description = models.TextField(
+        blank=True,
+        default='',
+        help_text="Optional description or details"
+    )
+    date = models.DateField(
+        help_text="Date of the event (for recurring: only month+day matter)"
+    )
+    start_time = models.TimeField(
+        null=True,
+        blank=True,
+        help_text="Optional start time (null = all-day event)"
+    )
+    end_time = models.TimeField(
+        null=True,
+        blank=True,
+        help_text="Optional end time"
+    )
+    location = models.CharField(
+        max_length=200,
+        blank=True,
+        default='',
+        help_text="Optional venue / location"
+    )
+    event_type = models.CharField(
+        max_length=10,
+        choices=EVENT_TYPE_CHOICES,
+        default='one_time',
+        help_text="Whether this event repeats annually"
+    )
+    visibility = models.CharField(
+        max_length=10,
+        choices=VISIBILITY_CHOICES,
+        default='all',
+        help_text="Which user roles can see this event"
+    )
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='created_calendar_events',
+        help_text="Admin who created this event"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Calendar Event'
+        verbose_name_plural = 'Calendar Events'
+        ordering = ['date', 'start_time']
+        indexes = [
+            models.Index(fields=['date']),
+            models.Index(fields=['event_type']),
+            models.Index(fields=['visibility']),
+        ]
+
+    def __str__(self):
+        label = "Recurring" if self.event_type == 'recurring' else "One-time"
+        vis = self.get_visibility_display()
+        return f"{self.title} ({self.date}) [{label}] [{vis}]"
+
+
+# ============================================
 # Admin Audit Log Model
 # ============================================
 
@@ -993,6 +1080,9 @@ class AdminAuditLog(models.Model):
         ('holiday_created', 'Holiday Created'),
         ('holiday_updated', 'Holiday Updated'),
         ('holiday_deleted', 'Holiday Deleted'),
+        ('event_created', 'Calendar Event Created'),
+        ('event_updated', 'Calendar Event Updated'),
+        ('event_deleted', 'Calendar Event Deleted'),
         ('admin_login', 'Admin Login'),
     ]
 

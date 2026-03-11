@@ -309,6 +309,30 @@ export const holidaysApi = {
 };
 
 // ---------------------------------------------------------------------------
+// Calendar Events
+// ---------------------------------------------------------------------------
+
+export const calendarEventsApi = {
+  /**
+   * List calendar events.
+   * params: { year, month }
+   */
+  list: (params = {}) => apiClient.get("/admin/calendar-events/", { params }),
+
+  /**
+   * Create a calendar event.
+   * @param {{ title, description, date, start_time, end_time, location, event_type, visibility }} data
+   */
+  create: (data) => apiClient.post("/admin/calendar-events/", data),
+
+  /** Full or partial update. */
+  update: (id, data) => apiClient.patch(`/admin/calendar-events/${id}/`, data),
+
+  /** Delete by id. */
+  delete: (id) => apiClient.delete(`/admin/calendar-events/${id}/`),
+};
+
+// ---------------------------------------------------------------------------
 // Audit Log
 // ---------------------------------------------------------------------------
 

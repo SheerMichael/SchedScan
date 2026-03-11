@@ -117,6 +117,13 @@ from .holiday_views import (
     HolidayListView,
 )
 
+# Calendar event views (public + admin)
+from .calendar_event_views import (
+    CalendarEventListView,
+    AdminCalendarEventListCreateView,
+    AdminCalendarEventDetailView,
+)
+
 # Admin dashboard views
 from .admin_views import (
     AdminLoginView,
