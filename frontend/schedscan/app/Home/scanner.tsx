@@ -23,11 +23,29 @@ export default function Scanner() {
   const [uploadedCourses, setUploadedCourses] = useState<Course[]>([]);
   const [uploadedSemester, setUploadedSemester] = useState<string>('');
   const [uploadedSchoolYear, setUploadedSchoolYear] = useState<string>('');
+  const [reportModal, setReportModal] = useState(false);
+  const [incidentDetails, setIncidentDetails] = useState('');
 
   // Faculty mode unlock modal
   const [showFacultyModeModal, setShowFacultyModeModal] = useState(false);
 
   // --- Logic Helpers (Rate Limit, Upload, Etc) ---
+
+  const handleSubmit = () => {
+
+    const reportData = {
+      originator: "SYSTEM ADMIN", 
+      timestamp: new Date().toISOString().split('T')[0] + " " + new Date().toLocaleTimeString(),
+      incidentDetails: incidentDetails,
+      status: "PENDING",
+    };
+
+    console.log("Submitting:", reportData);
+    
+    setIncidentDetails('');
+    setReportModal(false);
+    router.back()
+  };
 
   const checkRateLimit = async (): Promise<boolean> => {
     if (!user?.id) {
@@ -57,7 +75,7 @@ export default function Scanner() {
         setSelectedFile({ uri: file.uri, name: file.name, mimeType: file.mimeType, size: file.size, uploadType: selectedRole });
         await uploadFile(file, selectedRole);
       }
-    } catch (error) { Alert.alert('Error', 'Failed to pick document'); }
+    } catch (error) { Alert.alert('Error', 'Failed to pick document'), setReportModal(true); }
   };
 
   const handleImageGallery = async () => {
@@ -144,6 +162,7 @@ export default function Scanner() {
       const errorMessage = error.response?.data?.error || 'Failed to upload file. Please try again.';
       Alert.alert('Error', errorMessage);
       setIsUploading(false);
+      setReportModal(true);
     }
   };
 
@@ -433,6 +452,52 @@ export default function Scanner() {
         onConfirm={handleFacultyModeConfirm}
         onDismiss={handleFacultyModeDismiss}
       />
+
+    <Modal
+      visible={reportModal}
+      transparent={true}
+      animationType="fade"
+      onRequestClose={() => setReportModal(false)}
+    >
+      <View className="flex-1 bg-black/60 justify-center items-center px-6">
+        <View className="bg-white rounded-2xl p-6 w-full shadow-lg">
+          
+          <Text className="text-xl font-bold text-gray-800 mb-1">Submit Report</Text>
+          <Text className="text-sm text-gray-500 mb-4">Fill in the incident details below.</Text>
+
+          <Text className="text-[10px] font-bold text-gray-400 mt-2 mb-1 uppercase tracking-widest">Details</Text>
+            <TextInput
+              className="bg-gray-100 p-4 rounded-xl mb-6 text-gray-800 border border-gray-200"
+              placeholder="e.g. Ayaw mag scan / Kulang schedule"
+              placeholderTextColor="#A0A0A0"
+              multiline={true}
+              numberOfLines={4}
+              textAlignVertical="top"
+              value={incidentDetails}
+              onChangeText={setIncidentDetails}
+            />
+
+          {/* ACTIONS */}
+          <View className="flex-row gap-x-3">
+
+            <TouchableOpacity 
+              className="flex-1 py-3" 
+              onPress={() => setReportModal(false)}
+            >
+              <Text className="text-center font-bold text-gray-400">Cancel</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              className="flex-1 bg-primary-700 py-3 rounded-xl shadow-md" 
+              onPress={handleSubmit}
+            >
+              <Text className="text-center font-bold text-white uppercase">Submit</Text>
+            </TouchableOpacity>
+          </View>
+          
+        </View>
+      </View>
+    </Modal>
 
     </View>
   );
