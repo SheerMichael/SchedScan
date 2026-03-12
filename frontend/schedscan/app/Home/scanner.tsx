@@ -465,7 +465,7 @@ export default function Scanner() {
           <Text className="text-xl font-bold text-gray-800 mb-1">Submit Report</Text>
           <Text className="text-sm text-gray-500 mb-4">Fill in the incident details below.</Text>
 
-          <Text className="text-[10px] font-bold text-gray-400 mt-2 mb-1 uppercase tracking-widest">Details</Text>
+          <Text className="text-[10px] font-bold text-gray-400 mt-2 mb-1 uppercase tracking-widest">Remarks</Text>
             <TextInput
               className="bg-gray-100 p-4 rounded-xl mb-6 text-gray-800 border border-gray-200"
               placeholder="e.g. Ayaw mag scan / Kulang schedule"

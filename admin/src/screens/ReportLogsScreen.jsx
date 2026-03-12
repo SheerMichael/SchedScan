@@ -2,10 +2,10 @@ import { useState, useMemo } from 'react';
 import { Search, AlertCircle, Clock, ChevronLeft, ChevronRight, Trash2, Wrench, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
 const logsData = [
-  { id: 1, name: "John Doe", time: "2026-03-10 14:30:22", main_error: "Scanner Error", extra_details: "Not Scanning", status: "Investigating" },
-  { id: 2, name: "Sarah Smith", time: "2026-03-10 13:15:05", main_error: "Scanner Error", extra_details: "Ayaw mag scan", status: "Resolved" },
-  { id: 3, name: "System Admin", time: "2026-03-10 12:00:00", main_error: "Scanner Error", extra_details: "Kulang schedule", status: "Investigating" },
-  { id: 4, name: "David Wilson", time: "2026-03-10 11:45:30", main_error: "Scanner Error", extra_details: "idk", status: "Pending" },
+  { id: 1, name: "John Doe", time: "2026-03-10 14:30:22", remarks: "Not Scanning", status: "Investigating" },
+  { id: 2, name: "Sarah Smith", time: "2026-03-10 13:15:05", remarks: "Ayaw mag scan", status: "Resolved" },
+  { id: 3, name: "System Admin", time: "2026-03-10 12:00:00", remarks: "Kulang schedule", status: "Investigating" },
+  { id: 4, name: "David Wilson", time: "2026-03-10 11:45:30",  remarks: "idk", status: "Pending" },
 ];
 
 // Status and Actions are placeholders for now the functionality will be implemented later.
@@ -22,7 +22,7 @@ export default function ReportsLogsScreen() {
     let result = logs.filter(log => 
       log.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       log.main_error.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.extra_details.toLowerCase().includes(searchTerm.toLowerCase())
+      log.remarks.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
     // Date Sorting Logic
@@ -85,8 +85,7 @@ export default function ReportsLogsScreen() {
                         Timestamp <ArrowUpDown size={12} className="opacity-50" />
                     </div>
                   </th>
-                  <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em]">Error Signature</th>
-                  <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em]">Incident Details</th>
+                  <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em]">User Remarks</th>
                   <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em]">Status</th>
                   <th className="px-6 py-5 text-[10px] font-black uppercase tracking-[0.2em] text-right">Actions</th>
                 </tr>
@@ -103,15 +102,9 @@ export default function ReportsLogsScreen() {
                         {log.time}
                       </div>
                     </td>
-                    <td className="px-6 py-5">
-                      <span className="flex items-center gap-2 text-[10px] font-black text-primary-800 uppercase tracking-widest">
-                        <AlertCircle size={14} />
-                        {log.main_error}
-                      </span>
-                    </td>
                     <td className="px-6 py-5 max-w-xs">
                       <p className="text-[11px] font-bold text-slate-400 uppercase tracking-tighter truncate">
-                        {log.extra_details}
+                        {log.remarks}
                       </p>
                     </td>
                     <td className="px-6 py-5">
