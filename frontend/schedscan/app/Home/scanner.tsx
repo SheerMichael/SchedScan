@@ -2,7 +2,7 @@ import { View, Text, TouchableOpacity, Image, Alert, ActivityIndicator, Modal, T
 import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import Svg, { Path } from 'react-native-svg';
-import { Images, Files, GraduationCap, Briefcase, ArrowRight } from "lucide-react-native";
+import { Images, Files, GraduationCap, Briefcase, ArrowRight, AlertTriangle } from "lucide-react-native";
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { courseService, Course } from '../../services/courseService';
@@ -25,26 +25,35 @@ export default function Scanner() {
   const [uploadedSchoolYear, setUploadedSchoolYear] = useState<string>('');
   const [reportModal, setReportModal] = useState(false);
   const [incidentDetails, setIncidentDetails] = useState('');
+  const [uploadError, setUploadError] = useState('');
 
   // Faculty mode unlock modal
   const [showFacultyModeModal, setShowFacultyModeModal] = useState(false);
 
   // --- Logic Helpers (Rate Limit, Upload, Etc) ---
 
+  const MAX_REPORT_LENGTH = 500;
+
   const handleSubmit = () => {
+    const sanitizedDetails = incidentDetails.trim().slice(0, MAX_REPORT_LENGTH);
+    if (!sanitizedDetails) return;
 
     const reportData = {
       originator: "SYSTEM ADMIN", 
       timestamp: new Date().toISOString().split('T')[0] + " " + new Date().toLocaleTimeString(),
-      incidentDetails: incidentDetails,
+      incidentDetails: sanitizedDetails,
       status: "PENDING",
     };
 
     console.log("Submitting:", reportData);
-    
-    setIncidentDetails('');
+    dismissErrorModal();
+    router.back();
+  };
+
+  const dismissErrorModal = () => {
     setReportModal(false);
-    router.back()
+    setUploadError('');
+    setIncidentDetails('');
   };
 
   const checkRateLimit = async (): Promise<boolean> => {
@@ -75,7 +84,10 @@ export default function Scanner() {
         setSelectedFile({ uri: file.uri, name: file.name, mimeType: file.mimeType, size: file.size, uploadType: selectedRole });
         await uploadFile(file, selectedRole);
       }
-    } catch (error) { Alert.alert('Error', 'Failed to pick document'), setReportModal(true); }
+    } catch (error) {
+      setUploadError('Failed to pick document. Please try again.');
+      setReportModal(true);
+    }
   };
 
   const handleImageGallery = async () => {
@@ -160,7 +172,7 @@ export default function Scanner() {
       setShowTitleModal(true);
     } catch (error: any) {
       const errorMessage = error.response?.data?.error || 'Failed to upload file. Please try again.';
-      Alert.alert('Error', errorMessage);
+      setUploadError(errorMessage);
       setIsUploading(false);
       setReportModal(true);
     }
@@ -457,44 +469,64 @@ export default function Scanner() {
       visible={reportModal}
       transparent={true}
       animationType="fade"
-      onRequestClose={() => setReportModal(false)}
+      onRequestClose={dismissErrorModal}
     >
       <View className="flex-1 bg-black/60 justify-center items-center px-6">
-        <View className="bg-white rounded-2xl p-6 w-full shadow-lg">
-          
-          <Text className="text-xl font-bold text-gray-800 mb-1">Submit Report</Text>
-          <Text className="text-sm text-gray-500 mb-4">Fill in the incident details below.</Text>
+        <View className="bg-white rounded-2xl w-full shadow-lg overflow-hidden">
 
-          <Text className="text-[10px] font-bold text-gray-400 mt-2 mb-1 uppercase tracking-widest">Remarks</Text>
+          {/* Error Banner */}
+          {uploadError ? (
+            <View className="bg-red-50 px-5 pt-5 pb-4 border-b border-red-100">
+              <View className="flex-row items-start">
+                <View className="bg-red-100 p-2 rounded-full mr-3 mt-0.5">
+                  <AlertTriangle size={20} color="#DC2626" />
+                </View>
+                <View className="flex-1">
+                  <Text className="text-base font-bold text-red-700 mb-1">Upload Failed</Text>
+                  <Text className="text-sm text-red-600 leading-5">{uploadError}</Text>
+                </View>
+              </View>
+            </View>
+          ) : null}
+
+          {/* Report Form */}
+          <View className="p-5">
+            <Text className="text-lg font-bold text-gray-800 mb-1">Report a Problem</Text>
+            <Text className="text-xs text-gray-400 mb-3">Optionally describe what happened so we can investigate.</Text>
+
             <TextInput
-              className="bg-gray-100 p-4 rounded-xl mb-6 text-gray-800 border border-gray-200"
+              className="bg-gray-50 p-4 rounded-xl text-gray-800 border border-gray-200 min-h-[100px]"
               placeholder="e.g. Ayaw mag scan / Kulang schedule"
               placeholderTextColor="#A0A0A0"
               multiline={true}
               numberOfLines={4}
               textAlignVertical="top"
+              maxLength={MAX_REPORT_LENGTH}
               value={incidentDetails}
               onChangeText={setIncidentDetails}
             />
+            <Text className="text-[10px] text-gray-300 text-right mt-1">{incidentDetails.length}/{MAX_REPORT_LENGTH}</Text>
 
-          {/* ACTIONS */}
-          <View className="flex-row gap-x-3">
+            {/* Actions */}
+            <View className="flex-row gap-x-3 mt-3">
+              <TouchableOpacity
+                className="flex-1 py-3 rounded-xl border border-gray-200"
+                onPress={dismissErrorModal}
+              >
+                <Text className="text-center font-semibold text-gray-500">Dismiss</Text>
+              </TouchableOpacity>
 
-            <TouchableOpacity 
-              className="flex-1 py-3" 
-              onPress={() => setReportModal(false)}
-            >
-              <Text className="text-center font-bold text-gray-400">Cancel</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              className="flex-1 bg-primary-700 py-3 rounded-xl shadow-md" 
-              onPress={handleSubmit}
-            >
-              <Text className="text-center font-bold text-white uppercase">Submit</Text>
-            </TouchableOpacity>
+              <TouchableOpacity
+                className="flex-1 py-3 rounded-xl bg-[#B88080]"
+                onPress={handleSubmit}
+                disabled={!incidentDetails.trim()}
+                style={{ opacity: incidentDetails.trim() ? 1 : 0.4 }}
+              >
+                <Text className="text-center font-bold text-white">Submit Report</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-          
+
         </View>
       </View>
     </Modal>

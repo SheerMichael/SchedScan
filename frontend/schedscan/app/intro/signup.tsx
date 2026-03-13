@@ -4,7 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import Svg, { Path, Circle, Rect, G } from 'react-native-svg';
+import { Info, CheckCircle2, AlertCircle } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
+
+const STUDENT_NUMBER_REGEX = /^\d{4}-\d{4,6}$/;
 
 type SignUpData = {
   first_name: string;
@@ -24,6 +27,9 @@ type SignUp1Props = {
   setFormData: React.Dispatch<React.SetStateAction<SignUpData>>;
   image: string | null;
   pickImageOption: () => void;
+  studentNumberError: string;
+  studentNumberValid: boolean;
+  onStudentNumberBlur: () => void;
 };
 
 type SignUp2Props = {
@@ -59,75 +65,129 @@ const ProgressBar = ({ step }: { step: number }) => {
   );
 };
 
-// ✅ Screen 1 – Photo + First Name
+// ✅ Screen 1 – Photo + Name + Student Number
 const SignUp1Screen = ({
   setScreen,
   formData,
   setFormData,
   image,
-  pickImageOption
-}: SignUp1Props) => (
-  <SafeAreaView className="flex-1 bg-white px-4 m-2">
-    <TouchableOpacity onPress={() => router.back()} className="mb-5 w-4">
-      <ChevronRightIcon size={30} color="#000000" />
-    </TouchableOpacity>
+  pickImageOption,
+  studentNumberError,
+  studentNumberValid,
+  onStudentNumberBlur,
+}: SignUp1Props) => {
+  const canProceed =
+    formData.first_name.trim().length > 0 &&
+    formData.last_name.trim().length > 0 &&
+    studentNumberValid;
 
-    <ProgressBar step={1} />
-
-    <View className="mt-20 ml-8 mr-8">
-
-      <Text className="text-3xl font-bold mb-2 text-primary-900">What's your name?</Text>
-      <Text className="text-base font-medium mb-4 text-gray-600">Enter your name.</Text>
-
-      <View className='flex h-90 w-full items-center justify-center rounded-md border border-zinc-300 mb-8 bg-primary-200'>
-        <Image
-          source={image ? { uri: image } : require("../../assets/images/PlaceholderImage.png")}
-          style={{ width: 90, height: 90, borderRadius: 100, marginBottom: 20, margin: 6, marginTop: 6 }}
-        />
-
-        <TouchableOpacity onPress={pickImageOption} className="p-4 bg-blue-500 rounded-xl mb-6 w-80">
-          <Text className="text-white font-bold text-center">Upload Photo</Text>
-        </TouchableOpacity>
-
-        <View className='flex flex-row gap-6'>
-          <TextInput
-            className="bg-white rounded-xl p-4 mb-5 w-36"
-            placeholder="First Name"
-            value={formData.first_name}
-            onChangeText={(text) =>
-              setFormData((prev: SignUpData) => ({ ...prev, first_name: text }))
-            }
-          />
-          <TextInput
-            className="bg-white rounded-xl p-4 mb-5 w-36"
-            placeholder="Last Name"
-            value={formData.last_name}
-            onChangeText={(text) =>
-              setFormData((prev: SignUpData) => ({ ...prev, last_name: text }))
-            }
-          />
-        </View>
-
-        <TextInput
-          className="bg-white rounded-xl p-4 mb-5 w-full"
-          placeholder="Student Number (e.g., 2022-01191)"
-          value={formData.student_number}
-          onChangeText={(text) =>
-            setFormData((prev: SignUpData) => ({ ...prev, student_number: text }))
-          }
-          keyboardType="numbers-and-punctuation"
-        />
-      </View>
-
-      <TouchableOpacity
-        className="bg-primary-900 rounded-2xl py-4 px-8 w-full flex items-center"
-        onPress={() => setScreen('signup2')}
-      >
-        <Text className="text-white font-bold">Next</Text>
+  return (
+    <SafeAreaView className="flex-1 bg-white px-4 m-2">
+      <TouchableOpacity onPress={() => router.back()} className="mb-5 w-4">
+        <ChevronRightIcon size={30} color="#000000" />
       </TouchableOpacity>
-    </View>
-  </SafeAreaView>
-);
+
+      <ProgressBar step={1} />
+
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 32 }}>
+        <View className="mt-10 ml-4 mr-4">
+          <Text className="text-3xl font-bold mb-1 text-primary-900">What's your name?</Text>
+          <Text className="text-base font-medium mb-5 text-gray-600">Enter your details below.</Text>
+
+          {/* Profile photo card */}
+          <View className="w-full items-center justify-center rounded-2xl border border-zinc-300 mb-6 bg-primary-200 py-5">
+            <Image
+              source={image ? { uri: image } : require("../../assets/images/PlaceholderImage.png")}
+              style={{ width: 90, height: 90, borderRadius: 100, marginBottom: 16 }}
+            />
+            <TouchableOpacity onPress={pickImageOption} className="py-3 px-8 bg-blue-500 rounded-xl">
+              <Text className="text-white font-bold text-center">Upload Photo</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Name row */}
+          <View className="flex-row gap-3 mb-4">
+            <TextInput
+              className="flex-1 bg-gray-50 border border-gray-200 rounded-xl p-4"
+              placeholder="First Name"
+              value={formData.first_name}
+              onChangeText={(text) =>
+                setFormData((prev: SignUpData) => ({ ...prev, first_name: text }))
+              }
+              autoCapitalize="words"
+            />
+            <TextInput
+              className="flex-1 bg-gray-50 border border-gray-200 rounded-xl p-4"
+              placeholder="Last Name"
+              value={formData.last_name}
+              onChangeText={(text) =>
+                setFormData((prev: SignUpData) => ({ ...prev, last_name: text }))
+              }
+              autoCapitalize="words"
+            />
+          </View>
+
+          {/* COR Info Banner */}
+          <View className="flex-row items-start bg-blue-50 border border-blue-200 rounded-xl p-4 mb-3 gap-3">
+            <Info size={18} color="#2563EB" style={{ marginTop: 1, flexShrink: 0 }} />
+            <View className="flex-1">
+              <Text className="text-sm font-bold text-blue-800 mb-0.5">Important — COR Verification</Text>
+              <Text className="text-xs text-blue-700 leading-4">
+                The student number you enter here must exactly match the number on your Certificate of Registration (COR). SchedScan uses it to verify your schedule uploads.
+              </Text>
+            </View>
+          </View>
+
+          {/* Student Number field */}
+          <TextInput
+            className={`bg-gray-50 border rounded-xl p-4 mb-1 ${
+              studentNumberError
+                ? 'border-red-400 bg-red-50'
+                : studentNumberValid
+                ? 'border-green-400 bg-green-50'
+                : 'border-gray-200'
+            }`}
+            placeholder="Student Number (e.g., 2022-01191)"
+            value={formData.student_number}
+            onChangeText={(text) =>
+              setFormData((prev: SignUpData) => ({ ...prev, student_number: text }))
+            }
+            onBlur={onStudentNumberBlur}
+            keyboardType="numbers-and-punctuation"
+            autoCorrect={false}
+          />
+
+          {/* Inline feedback */}
+          {studentNumberError ? (
+            <View className="flex-row items-center gap-1 mb-4">
+              <AlertCircle size={13} color="#DC2626" />
+              <Text className="text-xs text-red-600">{studentNumberError}</Text>
+            </View>
+          ) : studentNumberValid ? (
+            <View className="flex-row items-center gap-1 mb-4">
+              <CheckCircle2 size={13} color="#16A34A" />
+              <Text className="text-xs text-green-600">Looks good!</Text>
+            </View>
+          ) : (
+            <Text className="text-[10px] text-gray-400 mb-4">Format: YYYY-NNNNN (e.g., 2022-01191)</Text>
+          )}
+
+          {/* Next button — gated */}
+          <TouchableOpacity
+            className={`rounded-2xl py-4 px-8 w-full items-center ${
+              canProceed ? 'bg-primary-900' : 'bg-gray-300'
+            }`}
+            onPress={() => canProceed && setScreen('signup2')}
+            disabled={!canProceed}
+            activeOpacity={canProceed ? 0.8 : 1}
+          >
+            <Text className={`font-bold ${canProceed ? 'text-white' : 'text-gray-400'}`}>Next</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    </SafeAreaView>
+  );
+};
 
 // ✅ Screen 2 – Email
 const SignUp2Screen = ({
@@ -244,6 +304,16 @@ const AuthFlow = () => {
     user_type: 'student'
   });
 
+  // Inline student number validation state
+  const [studentNumberTouched, setStudentNumberTouched] = useState(false);
+  const studentNumberValid = STUDENT_NUMBER_REGEX.test(formData.student_number);
+  const studentNumberError =
+    studentNumberTouched && formData.student_number && !studentNumberValid
+      ? 'Use format YYYY-NNNNN (e.g., 2022-01191)'
+      : studentNumberTouched && !formData.student_number
+      ? 'Student number is required'
+      : '';
+
   const pickImageOption = () => {
     Alert.alert("Select Image Source", "Choose an option", [
       { text: "Camera", onPress: () => openCamera() },
@@ -283,19 +353,14 @@ const AuthFlow = () => {
   };
 
   const handleSignup = async () => {
-    // Validation
+    // Validation — student number is already gated at step 1, but double-check as a safety net
     if (!formData.first_name || !formData.last_name) {
       Alert.alert('Error', 'Please enter your first and last name');
       return;
     }
 
-    if (formData.user_type === 'student' && !formData.student_number) {
-      Alert.alert('Error', 'Please enter your student number');
-      return;
-    }
-
-    if (formData.user_type === 'student' && !/^\d{4}-\d{4,6}$/.test(formData.student_number)) {
-      Alert.alert('Error', 'Student number must be in the format YYYY-NNNNN (e.g., 2022-01191)');
+    if (formData.user_type === 'student' && !STUDENT_NUMBER_REGEX.test(formData.student_number)) {
+      Alert.alert('Error', 'Please go back and enter a valid student number (e.g., 2022-01191)');
       return;
     }
 
@@ -396,6 +461,9 @@ const AuthFlow = () => {
           setFormData={setFormData}
           image={image}
           pickImageOption={pickImageOption}
+          studentNumberError={studentNumberError}
+          studentNumberValid={studentNumberValid}
+          onStudentNumberBlur={() => setStudentNumberTouched(true)}
         />
       )}
 
