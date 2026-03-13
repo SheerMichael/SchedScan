@@ -10,6 +10,7 @@ import { scheduleStorageService } from '../../services/scheduleStorageService';
 import { useAuth } from '../../context/AuthContext';
 import FacultyModeModal from '../../components/FacultyModeModal';
 import { detectSemesterFromDate } from '../../utils/semesterUtils';
+import api from '../../services/api';
 
 export default function Scanner() {
   const router = useRouter();
@@ -34,20 +35,21 @@ export default function Scanner() {
 
   const MAX_REPORT_LENGTH = 500;
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const sanitizedDetails = incidentDetails.trim().slice(0, MAX_REPORT_LENGTH);
     if (!sanitizedDetails) return;
 
-    const reportData = {
-      originator: "SYSTEM ADMIN", 
-      timestamp: new Date().toISOString().split('T')[0] + " " + new Date().toLocaleTimeString(),
-      incidentDetails: sanitizedDetails,
-      status: "PENDING",
-    };
-
-    console.log("Submitting:", reportData);
+    try {
+      await api.post('/reports/submit/', {
+        description: sanitizedDetails,
+        upload_error: uploadError,
+      });
+      Alert.alert('Report Submitted', 'Thank you — our team will investigate.');
+    } catch (error: any) {
+      console.error('Failed to submit report:', error);
+      Alert.alert('Submission Failed', 'Could not send your report. Please try again later.');
+    }
     dismissErrorModal();
-    router.back();
   };
 
   const dismissErrorModal = () => {

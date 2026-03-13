@@ -5,10 +5,11 @@ from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth import get_user_model
 import os
 import tempfile
+import traceback
 import logging
 
 from ..serializers import CourseSerializer
-from ..models import Course
+from ..models import Course, ExtractionLog, IncidentReport
 from ..permissions import IsAdminUser
 from ..utils.extraction_manager import ExtractionManager
 
@@ -66,6 +67,9 @@ class BaseCORUploadView(APIView):
             # Use ExtractionManager for hybrid PDF/OCR extraction
             manager = ExtractionManager()
             result = manager.extract_schedule(temp_file_path, self.upload_type)
+            
+            # Determine file extension for telemetry
+            _file_ext = os.path.splitext(uploaded_file.name)[1].lower().lstrip('.')
             
             courses_data = result['courses']
             extracted_student_number = result.get('student_number', '')
@@ -132,6 +136,23 @@ class BaseCORUploadView(APIView):
             
             logger.info(f"Successfully created {len(created_courses)} courses for user {request.user.id} ({self.upload_type.upper()} COR)")
             
+            # Write extraction telemetry (success)
+            try:
+                ExtractionLog.objects.create(
+                    user=request.user,
+                    file_name=uploaded_file.name,
+                    file_type=_file_ext,
+                    upload_type=self.upload_type,
+                    extraction_method=result['extraction_method'],
+                    confidence=result['confidence'],
+                    courses_extracted=len(created_courses),
+                    success=True,
+                    processing_time=result['processing_time'],
+                    attempts=result.get('attempts', []),
+                )
+            except Exception:
+                logger.exception("Failed to write ExtractionLog (success)")
+            
             return Response(
                 {
                     "message": f"Successfully processed {self.upload_type.upper()} COR and created {len(created_courses)} courses",
@@ -147,6 +168,26 @@ class BaseCORUploadView(APIView):
         
         except Exception as e:
             logger.error(f"Error processing {self.upload_type.upper()} COR for user {request.user.id}: {str(e)}")
+            
+            # Write extraction telemetry (failure)
+            try:
+                _file_ext_err = os.path.splitext(uploaded_file.name)[1].lower().lstrip('.')
+                ExtractionLog.objects.create(
+                    user=request.user,
+                    file_name=uploaded_file.name,
+                    file_type=_file_ext_err,
+                    upload_type=self.upload_type,
+                    extraction_method='none',
+                    confidence=0.0,
+                    courses_extracted=0,
+                    success=False,
+                    error_message=traceback.format_exc()[:2000],
+                    processing_time=0.0,
+                    attempts=[],
+                )
+            except Exception:
+                logger.exception("Failed to write ExtractionLog (failure)")
+            
             return Response(
                 {
                     "error": "Failed to process the document. Please try again or use a different file.",
@@ -292,3 +333,59 @@ class DeleteAllCoursesView(APIView):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class SubmitIncidentReportView(APIView):
+    """
+    POST /api/reports/submit/
+
+    Allows authenticated mobile users to submit a problem report
+    from the Scanner's "Submit Report" modal.
+
+    Request body:
+        {
+            "description": "Ayaw mag scan / Kulang schedule",
+            "upload_error": "Failed to process the document..."  (optional)
+        }
+
+    Response (201):
+        { "id": 1, "status": "pending", "created_at": "..." }
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        description = str(request.data.get("description", "")).strip()
+        upload_error = str(request.data.get("upload_error", "")).strip()
+
+        if not description:
+            return Response(
+                {"error": "Description is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Enforce max length
+        description = description[:500]
+        upload_error = upload_error[:2000]
+
+        report = IncidentReport.objects.create(
+            reporter=request.user,
+            description=description,
+            upload_error=upload_error,
+            status="pending",
+        )
+
+        logger.info(
+            "Incident report #%d submitted by user %s",
+            report.id,
+            request.user.email,
+        )
+
+        return Response(
+            {
+                "id": report.id,
+                "status": report.status,
+                "created_at": report.created_at,
+            },
+            status=status.HTTP_201_CREATED,
+        )

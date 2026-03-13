@@ -8,7 +8,7 @@ import logging
 from datetime import timedelta, date
 
 from django.contrib.auth import authenticate, get_user_model
-from django.db.models import Count, Sum, Q
+from django.db.models import Avg, Count, Sum, Q
 from django.db.models.functions import TruncDate
 from django.utils import timezone
 
@@ -21,7 +21,9 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from ..models import (
     AdminAuditLog,
     ClassEnrollment,
+    ExtractionLog,
     Holiday,
+    IncidentReport,
     ParentChildLink,
     Payment,
     Schedule,
@@ -932,3 +934,393 @@ class AdminAuditLogView(APIView):
 
         logs = AdminAuditLog.objects.select_related("admin").order_by("-created_at")[:limit]
         return Response(AuditLogSerializer(logs, many=True).data)
+
+
+# ---------------------------------------------------------------------------
+# Extraction Health Monitoring
+# ---------------------------------------------------------------------------
+
+class AdminExtractionAnalyticsView(APIView):
+    """
+    GET /api/admin/extraction/analytics/
+
+    Returns aggregated extraction statistics for the health dashboard.
+
+    Query params:
+        - days: int (default 30, max 365)
+
+    Response:
+    {
+        "period_days": 30,
+        "total_extractions": int,
+        "successful": int,
+        "failed": int,
+        "success_rate": float,
+        "avg_confidence": float,
+        "avg_processing_time": float,
+        "method_breakdown": { "pdf_text": int, "ocr": int, "ocr_fallback": int, ... },
+        "upload_type_breakdown": { "student": int, "faculty": int }
+    }
+    """
+
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        try:
+            days = min(365, max(1, int(request.query_params.get("days", 30))))
+        except (ValueError, TypeError):
+            days = 30
+
+        cutoff = timezone.now() - timedelta(days=days)
+        qs = ExtractionLog.objects.filter(created_at__gte=cutoff)
+
+        total = qs.count()
+        successful = qs.filter(success=True).count()
+        failed = total - successful
+
+        agg = qs.aggregate(
+            avg_conf=Avg("confidence"),
+            avg_time=Avg("processing_time"),
+        )
+
+        # Method breakdown
+        method_raw = (
+            qs.values("extraction_method")
+            .annotate(n=Count("id"))
+            .order_by("-n")
+        )
+        method_breakdown = {r["extraction_method"]: r["n"] for r in method_raw}
+
+        # Upload type breakdown
+        type_raw = (
+            qs.values("upload_type")
+            .annotate(n=Count("id"))
+            .order_by("-n")
+        )
+        type_breakdown = {r["upload_type"]: r["n"] for r in type_raw}
+
+        return Response({
+            "period_days": days,
+            "total_extractions": total,
+            "successful": successful,
+            "failed": failed,
+            "success_rate": round(successful / total, 4) if total else 0.0,
+            "avg_confidence": round(agg["avg_conf"] or 0.0, 4),
+            "avg_processing_time": round(agg["avg_time"] or 0.0, 3),
+            "method_breakdown": method_breakdown,
+            "upload_type_breakdown": type_breakdown,
+        })
+
+
+class AdminExtractionChartView(APIView):
+    """
+    GET /api/admin/extraction/analytics/chart/
+
+    Returns daily success/failure counts for charting.
+
+    Query params:
+        - days: int (default 7, max 90)
+
+    Response:
+    {
+        "days": 7,
+        "data": [
+            { "date": "2026-03-07", "label": "Sat", "success": 5, "failure": 1 },
+            ...
+        ]
+    }
+    """
+
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        try:
+            days = min(90, max(1, int(request.query_params.get("days", 7))))
+        except (ValueError, TypeError):
+            days = 7
+
+        today = timezone.now().date()
+        start = today - timedelta(days=days - 1)
+
+        # Success counts per day
+        success_raw = (
+            ExtractionLog.objects.filter(created_at__date__gte=start, success=True)
+            .annotate(day=TruncDate("created_at"))
+            .values("day")
+            .annotate(count=Count("id"))
+            .order_by("day")
+        )
+        success_map = {str(r["day"]): r["count"] for r in success_raw}
+
+        # Failure counts per day
+        failure_raw = (
+            ExtractionLog.objects.filter(created_at__date__gte=start, success=False)
+            .annotate(day=TruncDate("created_at"))
+            .values("day")
+            .annotate(count=Count("id"))
+            .order_by("day")
+        )
+        failure_map = {str(r["day"]): r["count"] for r in failure_raw}
+
+        chart_data = []
+        for i in range(days):
+            d = start + timedelta(days=i)
+            d_str = str(d)
+            chart_data.append({
+                "date": d_str,
+                "label": d.strftime("%a"),
+                "success": success_map.get(d_str, 0),
+                "failure": failure_map.get(d_str, 0),
+            })
+
+        return Response({"days": days, "data": chart_data})
+
+
+class AdminFailedExtractionListView(APIView):
+    """
+    GET /api/admin/extraction/failed/
+
+    Paginated list of failed extraction logs for debugging.
+
+    Query params:
+        - search    : filter by file_name or error_message
+        - page      : int (default 1)
+        - page_size : int (default 20, max 100)
+    """
+
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        qs = ExtractionLog.objects.select_related("user").filter(success=False).order_by("-created_at")
+
+        search = request.query_params.get("search", "").strip()
+        if search:
+            qs = qs.filter(
+                Q(file_name__icontains=search)
+                | Q(error_message__icontains=search)
+            )
+
+        # Pagination
+        try:
+            page = max(1, int(request.query_params.get("page", 1)))
+            page_size = min(100, max(1, int(request.query_params.get("page_size", 20))))
+        except (ValueError, TypeError):
+            page, page_size = 1, 20
+
+        total = qs.count()
+        start = (page - 1) * page_size
+        logs = qs[start: start + page_size]
+
+        results = []
+        for log in logs:
+            results.append({
+                "id": log.id,
+                "user_email": log.user.email if log.user else None,
+                "file_name": log.file_name,
+                "file_type": log.file_type,
+                "upload_type": log.upload_type,
+                "extraction_method": log.extraction_method,
+                "confidence": log.confidence,
+                "courses_extracted": log.courses_extracted,
+                "error_message": log.error_message,
+                "raw_text_preview": log.raw_text_preview[:500],
+                "processing_time": log.processing_time,
+                "attempts": log.attempts,
+                "created_at": log.created_at,
+            })
+
+        return Response({
+            "count": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": max(1, -(-total // page_size)),
+            "results": results,
+        })
+
+
+# ---------------------------------------------------------------------------
+# Incident Reports Console
+# ---------------------------------------------------------------------------
+
+class AdminIncidentReportListView(APIView):
+    """
+    GET /api/admin/incidents/
+
+    Paginated list of user-submitted incident reports.
+
+    Query params:
+        - search    : filter by reporter email or description
+        - status    : pending | investigating | resolved
+        - page      : int (default 1)
+        - page_size : int (default 20, max 100)
+    """
+
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        qs = IncidentReport.objects.select_related(
+            "reporter", "resolved_by"
+        ).order_by("-created_at")
+
+        search = request.query_params.get("search", "").strip()
+        if search:
+            qs = qs.filter(
+                Q(reporter__email__icontains=search)
+                | Q(reporter__first_name__icontains=search)
+                | Q(reporter__last_name__icontains=search)
+                | Q(description__icontains=search)
+            )
+
+        report_status = request.query_params.get("status", "").strip().lower()
+        if report_status in ("pending", "investigating", "resolved"):
+            qs = qs.filter(status=report_status)
+
+        # Pagination
+        try:
+            page = max(1, int(request.query_params.get("page", 1)))
+            page_size = min(100, max(1, int(request.query_params.get("page_size", 20))))
+        except (ValueError, TypeError):
+            page, page_size = 1, 20
+
+        total = qs.count()
+        start = (page - 1) * page_size
+        reports = qs[start: start + page_size]
+
+        results = []
+        for r in reports:
+            results.append({
+                "id": r.id,
+                "reporter_email": r.reporter.email if r.reporter else None,
+                "reporter_name": r.reporter.get_full_name() if r.reporter else "Unknown",
+                "description": r.description,
+                "upload_error": r.upload_error,
+                "status": r.status,
+                "admin_notes": r.admin_notes,
+                "resolved_by_email": r.resolved_by.email if r.resolved_by else None,
+                "resolved_at": r.resolved_at,
+                "created_at": r.created_at,
+                "updated_at": r.updated_at,
+            })
+
+        return Response({
+            "count": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": max(1, -(-total // page_size)),
+            "results": results,
+        })
+
+
+class AdminIncidentReportDetailView(APIView):
+    """
+    GET   /api/admin/incidents/<pk>/  – retrieve single report
+    PATCH /api/admin/incidents/<pk>/  – update status and/or admin_notes
+
+    When status changes to 'resolved', resolved_by and resolved_at are set automatically.
+    """
+
+    permission_classes = [IsAdminUser]
+
+    def _get_report(self, pk):
+        try:
+            return IncidentReport.objects.select_related(
+                "reporter", "resolved_by"
+            ).get(pk=pk)
+        except IncidentReport.DoesNotExist:
+            return None
+
+    def get(self, request, pk):
+        report = self._get_report(pk)
+        if not report:
+            return Response({"error": "Report not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response({
+            "id": report.id,
+            "reporter_email": report.reporter.email if report.reporter else None,
+            "reporter_name": report.reporter.get_full_name() if report.reporter else "Unknown",
+            "description": report.description,
+            "upload_error": report.upload_error,
+            "status": report.status,
+            "admin_notes": report.admin_notes,
+            "resolved_by_email": report.resolved_by.email if report.resolved_by else None,
+            "resolved_at": report.resolved_at,
+            "created_at": report.created_at,
+            "updated_at": report.updated_at,
+        })
+
+    def patch(self, request, pk):
+        report = self._get_report(pk)
+        if not report:
+            return Response({"error": "Report not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        ip = _get_client_ip(request)
+        changes_made = []
+
+        # --- status ---
+        if "status" in request.data:
+            new_status = str(request.data["status"]).strip().lower()
+            if new_status not in ("pending", "investigating", "resolved"):
+                return Response(
+                    {"error": "status must be 'pending', 'investigating', or 'resolved'."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if new_status != report.status:
+                old_status = report.status
+                report.status = new_status
+                changes_made.append("status")
+
+                if new_status == "resolved":
+                    report.resolved_by = request.user
+                    report.resolved_at = timezone.now()
+                    changes_made.extend(["resolved_by", "resolved_at"])
+                elif old_status == "resolved":
+                    # Re-opening a resolved report clears resolution metadata
+                    report.resolved_by = None
+                    report.resolved_at = None
+                    changes_made.extend(["resolved_by", "resolved_at"])
+
+        # --- admin_notes ---
+        if "admin_notes" in request.data:
+            new_notes = str(request.data["admin_notes"]).strip()[:2000]
+            if new_notes != report.admin_notes:
+                report.admin_notes = new_notes
+                changes_made.append("admin_notes")
+
+        if not changes_made:
+            return Response(self._serialize(report))
+
+        report.save(update_fields=changes_made + ["updated_at"])
+
+        _write_audit(
+            admin=request.user,
+            action="incident_updated",
+            target_type="IncidentReport",
+            target_id=report.id,
+            detail=(
+                f"Admin {request.user.email} updated incident #{report.id}: "
+                + ", ".join(changes_made)
+            ),
+            ip=ip,
+        )
+
+        logger.info(
+            "Admin %s updated incident #%d: %s",
+            request.user.email, report.id, ", ".join(changes_made),
+        )
+
+        return Response(self._serialize(report))
+
+    def _serialize(self, r):
+        return {
+            "id": r.id,
+            "reporter_email": r.reporter.email if r.reporter else None,
+            "reporter_name": r.reporter.get_full_name() if r.reporter else "Unknown",
+            "description": r.description,
+            "upload_error": r.upload_error,
+            "status": r.status,
+            "admin_notes": r.admin_notes,
+            "resolved_by_email": r.resolved_by.email if r.resolved_by else None,
+            "resolved_at": r.resolved_at,
+            "created_at": r.created_at,
+            "updated_at": r.updated_at,
+        }

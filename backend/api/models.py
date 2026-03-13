@@ -1096,6 +1096,7 @@ class AdminAuditLog(models.Model):
         ('event_created', 'Calendar Event Created'),
         ('event_updated', 'Calendar Event Updated'),
         ('event_deleted', 'Calendar Event Deleted'),
+        ('incident_updated', 'Incident Report Updated'),
         ('admin_login', 'Admin Login'),
     ]
 
@@ -1146,3 +1147,169 @@ class AdminAuditLog(models.Model):
     def __str__(self):
         admin_email = self.admin.email if self.admin else 'Unknown'
         return f"[{self.created_at:%Y-%m-%d %H:%M}] {admin_email}: {self.get_action_display()}"
+
+
+# ============================================
+# Extraction Health Monitoring Models
+# ============================================
+
+class ExtractionLog(models.Model):
+    """
+    Telemetry record for every COR upload attempt (success or failure).
+    Used by the admin Extraction Health dashboard to track OCR performance,
+    identify regressions, and debug problematic documents.
+    """
+    EXTRACTION_METHOD_CHOICES = [
+        ('pdf_text', 'PDF Text Extraction'),
+        ('ocr', 'OCR (Direct)'),
+        ('ocr_fallback', 'OCR (Fallback)'),
+        ('pdf_text_only', 'PDF Text Only (No OCR)'),
+        ('none', 'None (Failed Before Extraction)'),
+    ]
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='extraction_logs',
+        help_text="The user who uploaded the document",
+    )
+    file_name = models.CharField(
+        max_length=255,
+        help_text="Original filename of the uploaded document",
+    )
+    file_type = models.CharField(
+        max_length=10,
+        help_text="File extension, e.g. 'pdf', 'jpg', 'png'",
+    )
+    upload_type = models.CharField(
+        max_length=10,
+        choices=[('student', 'Student'), ('faculty', 'Faculty')],
+        help_text="Whether this was a student or faculty COR upload",
+    )
+    extraction_method = models.CharField(
+        max_length=20,
+        choices=EXTRACTION_METHOD_CHOICES,
+        default='none',
+        help_text="Which extraction method produced the final result",
+    )
+    confidence = models.FloatField(
+        default=0.0,
+        help_text="Quality score of the extraction (0.0–1.0)",
+    )
+    courses_extracted = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of courses successfully extracted",
+    )
+    success = models.BooleanField(
+        default=False,
+        help_text="Whether the extraction produced usable results",
+    )
+    error_message = models.TextField(
+        blank=True,
+        default='',
+        help_text="Error details when extraction fails",
+    )
+    raw_text_preview = models.TextField(
+        blank=True,
+        default='',
+        help_text="First ~2000 chars of extracted text (for debugging)",
+    )
+    processing_time = models.FloatField(
+        default=0.0,
+        help_text="Total processing time in seconds",
+    )
+    attempts = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Ordered list of extraction methods attempted",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Extraction Log'
+        verbose_name_plural = 'Extraction Logs'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['-created_at']),
+            models.Index(fields=['success']),
+            models.Index(fields=['extraction_method']),
+            models.Index(fields=['upload_type']),
+        ]
+
+    def __str__(self):
+        status = "✓" if self.success else "✗"
+        return (
+            f"[{status}] {self.file_name} — {self.get_extraction_method_display()} "
+            f"({self.confidence:.0%}) {self.created_at:%Y-%m-%d %H:%M}"
+        )
+
+
+class IncidentReport(models.Model):
+    """
+    User-submitted problem reports from the mobile Scanner's "Submit Report" modal.
+    Admins can triage these via the admin dashboard Incident Reports console.
+    """
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('investigating', 'Under Investigation'),
+        ('resolved', 'Resolved'),
+    ]
+
+    reporter = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='incident_reports',
+        help_text="The user who submitted this report",
+    )
+    description = models.TextField(
+        help_text="User-written description of the problem (max 500 chars enforced at view layer)",
+    )
+    upload_error = models.TextField(
+        blank=True,
+        default='',
+        help_text="The system error message that was shown to the user",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending',
+        help_text="Current triage status",
+    )
+    admin_notes = models.TextField(
+        blank=True,
+        default='',
+        help_text="Internal notes written by admins during investigation",
+    )
+    resolved_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='resolved_incidents',
+        help_text="Admin who resolved this report",
+    )
+    resolved_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When this report was marked as resolved",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Incident Report'
+        verbose_name_plural = 'Incident Reports'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status']),
+            models.Index(fields=['-created_at']),
+            models.Index(fields=['reporter', '-created_at']),
+        ]
+
+    def __str__(self):
+        reporter_email = self.reporter.email if self.reporter else 'Unknown'
+        return f"[{self.get_status_display()}] {reporter_email}: {self.description[:60]}"

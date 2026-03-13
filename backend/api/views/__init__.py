@@ -21,6 +21,7 @@ from .upload_views import (
     UploadFacultyCORView,
     UserCoursesView,
     DeleteAllCoursesView,
+    SubmitIncidentReportView,
 )
 
 # Schedule views
@@ -137,4 +138,9 @@ from .admin_views import (
     AdminHolidayListCreateView,
     AdminHolidayDetailView,
     AdminAuditLogView,
+    AdminExtractionAnalyticsView,
+    AdminExtractionChartView,
+    AdminFailedExtractionListView,
+    AdminIncidentReportListView,
+    AdminIncidentReportDetailView,
 )

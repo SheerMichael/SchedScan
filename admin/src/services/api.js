@@ -341,4 +341,55 @@ export const auditApi = {
   list: (limit = 50) => apiClient.get("/admin/audit-log/", { params: { limit } }),
 };
 
+// ---------------------------------------------------------------------------
+// Extraction Health Monitoring
+// ---------------------------------------------------------------------------
+
+export const extractionApi = {
+  /**
+   * Aggregated extraction stats.
+   * @param {number} days  1-365 (default 30)
+   */
+  analytics: (days = 30) =>
+    apiClient.get("/admin/extraction/analytics/", { params: { days } }),
+
+  /**
+   * Daily success/failure chart data.
+   * @param {number} days  1-90 (default 7)
+   */
+  chart: (days = 7) =>
+    apiClient.get("/admin/extraction/analytics/chart/", { params: { days } }),
+
+  /**
+   * Paginated list of failed extraction logs.
+   * params: { search, page, page_size }
+   */
+  failed: (params = {}) =>
+    apiClient.get("/admin/extraction/failed/", { params }),
+};
+
+// ---------------------------------------------------------------------------
+// Incident Reports
+// ---------------------------------------------------------------------------
+
+export const incidentsApi = {
+  /**
+   * Paginated list of incident reports.
+   * params: { search, status, page, page_size }
+   */
+  list: (params = {}) =>
+    apiClient.get("/admin/incidents/", { params }),
+
+  /** Get a single incident report. */
+  get: (id) => apiClient.get(`/admin/incidents/${id}/`),
+
+  /**
+   * Update status and/or admin_notes.
+   * @param {number} id
+   * @param {{ status?: string, admin_notes?: string }} data
+   */
+  update: (id, data) =>
+    apiClient.patch(`/admin/incidents/${id}/`, data),
+};
+
 export default apiClient;

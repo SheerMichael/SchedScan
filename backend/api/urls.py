@@ -133,4 +133,16 @@ urlpatterns = [
 
     # Audit log
     path('admin/audit-log/', views.AdminAuditLogView.as_view(), name='admin_audit_log'),
+
+    # Extraction health monitoring (admin)
+    path('admin/extraction/analytics/', views.AdminExtractionAnalyticsView.as_view(), name='admin_extraction_analytics'),
+    path('admin/extraction/analytics/chart/', views.AdminExtractionChartView.as_view(), name='admin_extraction_chart'),
+    path('admin/extraction/failed/', views.AdminFailedExtractionListView.as_view(), name='admin_failed_extractions'),
+
+    # Incident reports (admin)
+    path('admin/incidents/', views.AdminIncidentReportListView.as_view(), name='admin_incident_list'),
+    path('admin/incidents/<int:pk>/', views.AdminIncidentReportDetailView.as_view(), name='admin_incident_detail'),
+
+    # Incident reports (mobile user)
+    path('reports/submit/', views.SubmitIncidentReportView.as_view(), name='submit_incident_report'),
 ]
