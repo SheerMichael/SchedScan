@@ -76,6 +76,13 @@ class User(AbstractUser):
         blank=True,
         help_text="Expo push notification token for this device"
     )
+    is_verified = models.BooleanField(
+        default=False,
+        help_text=(
+            "Whether this account has been admin-verified. "
+            "Faculty accounts should be verified before they can generate class codes."
+        ),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -1077,6 +1084,12 @@ class AdminAuditLog(models.Model):
     ACTION_CHOICES = [
         ('user_deactivated', 'User Deactivated'),
         ('user_reactivated', 'User Reactivated'),
+        ('faculty_verified', 'Faculty Verified'),
+        ('faculty_unverified', 'Faculty Unverified'),
+        ('user_role_changed', 'User Role Changed'),
+        ('user_profile_edited', 'User Profile Edited'),
+        ('parent_link_created', 'Parent Link Created'),
+        ('parent_link_revoked', 'Parent Link Revoked'),
         ('holiday_created', 'Holiday Created'),
         ('holiday_updated', 'Holiday Updated'),
         ('holiday_deleted', 'Holiday Deleted'),

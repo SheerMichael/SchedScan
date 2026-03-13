@@ -113,6 +113,11 @@ urlpatterns = [
     # User management
     path('admin/users/', views.AdminUserListView.as_view(), name='admin_user_list'),
     path('admin/users/<int:pk>/', views.AdminUserDetailView.as_view(), name='admin_user_detail'),
+    path('admin/users/<int:pk>/activity/', views.AdminUserActivityView.as_view(), name='admin_user_activity'),
+
+    # Parent-child link management
+    path('admin/parent-links/', views.AdminParentLinkListView.as_view(), name='admin_parent_link_list'),
+    path('admin/parent-links/<int:pk>/', views.AdminParentLinkActionView.as_view(), name='admin_parent_link_action'),
 
     # Analytics
     path('admin/analytics/', views.AdminAnalyticsView.as_view(), name='admin_analytics'),

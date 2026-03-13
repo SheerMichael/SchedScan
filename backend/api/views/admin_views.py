@@ -20,6 +20,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from ..models import (
     AdminAuditLog,
+    ClassEnrollment,
     Holiday,
     ParentChildLink,
     Payment,
@@ -71,8 +72,8 @@ class AdminUserSerializer(drf_serializers.ModelSerializer):
         model = User
         fields = [
             "id", "email", "first_name", "last_name", "full_name",
-            "user_type", "student_number", "is_active", "is_staff", "has_premium",
-            "created_at",
+            "user_type", "student_number", "is_active", "is_staff",
+            "is_verified", "has_premium", "created_at",
         ]
         read_only_fields = fields
 
@@ -115,6 +116,39 @@ class AuditLogSerializer(drf_serializers.ModelSerializer):
 
     def get_action_label(self, obj):
         return obj.get_action_display()
+
+
+class AdminParentLinkSerializer(drf_serializers.ModelSerializer):
+    """Read-only serializer for parent-child links."""
+    parent_email = drf_serializers.SerializerMethodField()
+    parent_name = drf_serializers.SerializerMethodField()
+    child_email = drf_serializers.SerializerMethodField()
+    child_name = drf_serializers.SerializerMethodField()
+    child_student_number = drf_serializers.SerializerMethodField()
+
+    class Meta:
+        model = ParentChildLink
+        fields = [
+            "id", "parent", "parent_email", "parent_name",
+            "child", "child_email", "child_name", "child_student_number",
+            "status", "linked_at",
+        ]
+        read_only_fields = fields
+
+    def get_parent_email(self, obj):
+        return obj.parent.email
+
+    def get_parent_name(self, obj):
+        return obj.parent.get_full_name()
+
+    def get_child_email(self, obj):
+        return obj.child.email
+
+    def get_child_name(self, obj):
+        return obj.child.get_full_name()
+
+    def get_child_student_number(self, obj):
+        return obj.child.student_number or ""
 
 
 # ---------------------------------------------------------------------------
@@ -284,53 +318,353 @@ class AdminUserDetailView(APIView):
         if not user:
             return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        # Prevent an admin from deactivating their own account
+        # Prevent an admin from editing their own account via this endpoint
         if user.pk == request.user.pk:
             return Response(
-                {"error": "You cannot change your own active status."},
+                {"error": "You cannot modify your own account from this endpoint."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Only is_active is patchable via this endpoint
-        if "is_active" not in request.data:
-            return Response(
-                {"error": "'is_active' field is required."},
-                status=status.HTTP_400_BAD_REQUEST,
+        ip = _get_client_ip(request)
+        changes_made = []
+
+        # --- is_active ---
+        if "is_active" in request.data:
+            raw = request.data["is_active"]
+            new_active = raw if isinstance(raw, bool) else str(raw).lower() in ("true", "1", "yes")
+            if new_active != user.is_active:
+                user.is_active = new_active
+                action = "user_reactivated" if new_active else "user_deactivated"
+                label = "reactivated" if new_active else "deactivated"
+                _write_audit(
+                    admin=request.user, action=action,
+                    target_type="User", target_id=user.id,
+                    detail=f"User {user.email} {label} by {request.user.email}",
+                    ip=ip,
+                )
+                changes_made.append("is_active")
+
+        # --- is_verified (faculty verification) ---
+        if "is_verified" in request.data:
+            raw = request.data["is_verified"]
+            new_verified = raw if isinstance(raw, bool) else str(raw).lower() in ("true", "1", "yes")
+            if new_verified != user.is_verified:
+                user.is_verified = new_verified
+                action = "faculty_verified" if new_verified else "faculty_unverified"
+                label = "verified" if new_verified else "unverified"
+                _write_audit(
+                    admin=request.user, action=action,
+                    target_type="User", target_id=user.id,
+                    detail=f"User {user.email} marked as {label} by {request.user.email}",
+                    ip=ip,
+                )
+                changes_made.append("is_verified")
+
+        # --- user_type (role change) ---
+        if "user_type" in request.data:
+            new_type = str(request.data["user_type"]).strip().lower()
+            if new_type not in ("student", "faculty", "parent"):
+                return Response(
+                    {"error": "user_type must be 'student', 'faculty', or 'parent'."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if new_type != user.user_type:
+                old_type = user.user_type
+                user.user_type = new_type
+                _write_audit(
+                    admin=request.user, action="user_role_changed",
+                    target_type="User", target_id=user.id,
+                    detail=(
+                        f"User {user.email} role changed from '{old_type}' to '{new_type}' "
+                        f"by {request.user.email}"
+                    ),
+                    ip=ip,
+                )
+                changes_made.append("user_type")
+
+        # --- Profile fields (first_name, last_name, student_number) ---
+        profile_fields = {}
+        for field_name in ("first_name", "last_name", "student_number"):
+            if field_name in request.data:
+                new_val = str(request.data[field_name]).strip()
+                # Validate lengths
+                max_len = User._meta.get_field(field_name).max_length
+                if len(new_val) > max_len:
+                    return Response(
+                        {"error": f"{field_name} must be at most {max_len} characters."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                old_val = getattr(user, field_name) or ""
+                if new_val != old_val:
+                    profile_fields[field_name] = (old_val, new_val)
+                    setattr(user, field_name, new_val)
+                    changes_made.append(field_name)
+
+        if profile_fields:
+            detail_parts = [
+                f"{k}: '{old}' → '{new}'" for k, (old, new) in profile_fields.items()
+            ]
+            _write_audit(
+                admin=request.user, action="user_profile_edited",
+                target_type="User", target_id=user.id,
+                detail=(
+                    f"Profile edited for {user.email} by {request.user.email}: "
+                    + ", ".join(detail_parts)
+                ),
+                ip=ip,
             )
 
-        # Accept both boolean and string representations safely
-        raw = request.data["is_active"]
-        if isinstance(raw, bool):
-            new_active = raw
-        elif isinstance(raw, str):
-            new_active = raw.lower() in ("true", "1", "yes")
-        else:
-            new_active = bool(raw)
-
-        old_active = user.is_active
-
-        if new_active == old_active:
+        if not changes_made:
             return Response(AdminUserSerializer(user).data)
 
-        user.is_active = new_active
-        user.save(update_fields=["is_active"])
-
-        action = "user_reactivated" if new_active else "user_deactivated"
-        detail = (
-            f"User {user.email} {'reactivated' if new_active else 'deactivated'} "
-            f"by {request.user.email}"
+        user.save(update_fields=changes_made + ["updated_at"])
+        logger.info(
+            "Admin %s edited user %s fields: %s",
+            request.user.email, user.email, ", ".join(changes_made),
         )
+        return Response(AdminUserSerializer(user).data)
+
+
+class AdminUserActivityView(APIView):
+    """
+    GET /api/admin/users/<pk>/activity/
+
+    Returns a read-only activity feed for a specific user:
+    - Schedules (count + list with titles)
+    - Class enrollments (as student or faculty)
+    - Parent-child links
+    - Account metadata (created_at, last_login, is_verified)
+    """
+
+    permission_classes = [IsAdminUser]
+
+    def get(self, request, pk):
+        try:
+            user = User.objects.get(pk=pk, is_superuser=False)
+        except User.DoesNotExist:
+            return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Schedules
+        schedules = Schedule.objects.filter(user=user).values(
+            "id", "title", "upload_type", "semester", "school_year",
+            "is_active", "created_at",
+        )
+
+        # Enrollments (as student)
+        student_enrollments = ClassEnrollment.objects.filter(
+            student=user, status="active"
+        ).values("id", "faculty__email", "subject_code", "enrollment_type", "enrolled_at")
+
+        # Enrollments (as faculty)
+        faculty_enrollments = ClassEnrollment.objects.filter(
+            faculty=user, status="active"
+        ).values("id", "student__email", "subject_code", "enrollment_type", "enrolled_at")
+
+        # Parent-child links
+        child_links = ParentChildLink.objects.filter(
+            parent=user
+        ).select_related("child").values(
+            "id", "child__email", "child__first_name", "child__last_name",
+            "status", "linked_at",
+        )
+        parent_links = ParentChildLink.objects.filter(
+            child=user
+        ).select_related("parent").values(
+            "id", "parent__email", "parent__first_name", "parent__last_name",
+            "status", "linked_at",
+        )
+
+        return Response({
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "full_name": user.get_full_name(),
+                "user_type": user.user_type,
+                "student_number": user.student_number,
+                "is_active": user.is_active,
+                "is_verified": user.is_verified,
+                "last_login": user.last_login,
+                "created_at": user.created_at,
+            },
+            "schedules": list(schedules),
+            "student_enrollments": list(student_enrollments),
+            "faculty_enrollments": list(faculty_enrollments),
+            "child_links": list(child_links),
+            "parent_links": list(parent_links),
+        })
+
+
+# ---------------------------------------------------------------------------
+# Parent-Child Link Management
+# ---------------------------------------------------------------------------
+
+class AdminParentLinkListView(APIView):
+    """
+    GET /api/admin/parent-links/
+
+    Lists all parent-child links with search/filter/pagination.
+
+    Query params:
+        - search     : string (parent or child email/name)
+        - status     : active | revoked
+        - page       : int (default 1)
+        - page_size  : int (default 20, max 100)
+    """
+
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        qs = ParentChildLink.objects.select_related("parent", "child").order_by("-linked_at")
+
+        # -- filters --
+        search = request.query_params.get("search", "").strip()
+        if search:
+            qs = qs.filter(
+                Q(parent__email__icontains=search)
+                | Q(parent__first_name__icontains=search)
+                | Q(parent__last_name__icontains=search)
+                | Q(child__email__icontains=search)
+                | Q(child__first_name__icontains=search)
+                | Q(child__last_name__icontains=search)
+                | Q(child__student_number__icontains=search)
+            )
+
+        link_status = request.query_params.get("status", "").strip().lower()
+        if link_status in ("active", "revoked"):
+            qs = qs.filter(status=link_status)
+
+        # -- pagination --
+        try:
+            page = max(1, int(request.query_params.get("page", 1)))
+            page_size = min(100, max(1, int(request.query_params.get("page_size", 20))))
+        except (ValueError, TypeError):
+            page, page_size = 1, 20
+
+        total = qs.count()
+        start = (page - 1) * page_size
+        links = qs[start : start + page_size]
+
+        return Response({
+            "count": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": max(1, -(-total // page_size)),
+            "results": AdminParentLinkSerializer(links, many=True).data,
+        })
+
+
+class AdminParentLinkActionView(APIView):
+    """
+    POST   /api/admin/parent-links/       – create a parent-child link
+    DELETE /api/admin/parent-links/<pk>/   – revoke a parent-child link
+
+    POST body:
+        { "parent_id": int, "student_number": "2022-01191" }
+    """
+
+    permission_classes = [IsAdminUser]
+
+    def post(self, request):
+        parent_id = request.data.get("parent_id")
+        student_number = str(request.data.get("student_number", "")).strip()
+
+        if not parent_id or not student_number:
+            return Response(
+                {"error": "parent_id and student_number are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate parent
+        try:
+            parent = User.objects.get(pk=parent_id, is_superuser=False)
+        except User.DoesNotExist:
+            return Response({"error": "Parent user not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if parent.user_type != "parent":
+            return Response(
+                {"error": f"User {parent.email} is a '{parent.user_type}', not a 'parent'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Find student by student_number
+        try:
+            student = User.objects.get(student_number=student_number, user_type="student")
+        except User.DoesNotExist:
+            return Response(
+                {"error": f"No student found with student number '{student_number}'."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Check for existing active link
+        if ParentChildLink.objects.filter(
+            parent=parent, child=student, status="active"
+        ).exists():
+            return Response(
+                {"error": "An active link already exists between this parent and student."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        link = ParentChildLink.objects.create(
+            parent=parent, child=student, status="active"
+        )
+
         _write_audit(
-            admin=request.user,
-            action=action,
-            target_type="User",
-            target_id=user.id,
-            detail=detail,
+            admin=request.user, action="parent_link_created",
+            target_type="ParentChildLink", target_id=link.id,
+            detail=(
+                f"Admin {request.user.email} linked parent {parent.email} "
+                f"to student {student.email} ({student_number})"
+            ),
             ip=_get_client_ip(request),
         )
 
-        logger.info(detail)
-        return Response(AdminUserSerializer(user).data)
+        logger.info(
+            "Admin %s created parent link: %s → %s",
+            request.user.email, parent.email, student.email,
+        )
+
+        return Response(
+            AdminParentLinkSerializer(link).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    def delete(self, request, pk=None):
+        if pk is None:
+            return Response(
+                {"error": "Link ID is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            link = ParentChildLink.objects.select_related("parent", "child").get(pk=pk)
+        except ParentChildLink.DoesNotExist:
+            return Response({"error": "Link not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if link.status == "revoked":
+            return Response(
+                {"error": "This link is already revoked."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        link.status = "revoked"
+        link.save(update_fields=["status"])
+
+        _write_audit(
+            admin=request.user, action="parent_link_revoked",
+            target_type="ParentChildLink", target_id=link.id,
+            detail=(
+                f"Admin {request.user.email} revoked link between "
+                f"parent {link.parent.email} and student {link.child.email}"
+            ),
+            ip=_get_client_ip(request),
+        )
+
+        logger.info(
+            "Admin %s revoked parent link #%d: %s → %s",
+            request.user.email, link.id, link.parent.email, link.child.email,
+        )
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 # ---------------------------------------------------------------------------

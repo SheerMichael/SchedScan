@@ -13,14 +13,15 @@ class UserAdmin(BaseUserAdmin):
     """
     Custom User admin configuration
     """
-    list_display = ['email', 'first_name', 'last_name', 'is_staff', 'is_active', 'created_at']
-    list_filter = ['is_staff', 'is_active', 'created_at']
-    search_fields = ['email', 'first_name', 'last_name']
+    list_display = ['email', 'first_name', 'last_name', 'user_type', 'is_verified', 'is_staff', 'is_active', 'created_at']
+    list_filter = ['user_type', 'is_verified', 'is_staff', 'is_active', 'created_at']
+    search_fields = ['email', 'first_name', 'last_name', 'student_number']
     ordering = ['-created_at']
     
     fieldsets = (
         (None, {'fields': ('email', 'password')}),
-        (_('Personal info'), {'fields': ('first_name', 'last_name', 'profile_picture')}),
+        (_('Personal info'), {'fields': ('first_name', 'last_name', 'user_type', 'student_number', 'profile_picture')}),
+        (_('Verification'), {'fields': ('is_verified',)}),
         (_('Permissions'), {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
         (_('Important dates'), {'fields': ('last_login', 'created_at', 'updated_at')}),
     )
