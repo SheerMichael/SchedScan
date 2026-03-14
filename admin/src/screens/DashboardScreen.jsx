@@ -94,7 +94,7 @@ export default function DashboardScreen() {
         </div>
 
         {/* Audit log */}
-        <div className="bg-white border-2 border-slate-200 rounded-none p-6 shadow-[4px_4px_0px_0px_rgba(185,28,28,0.1)] hover:shadow-none hover:translate-x-0.5 hover:translate-y-0.5 transition-all">
+        <div className="bg-white border-2 border-slate-200 rounded-none shadow-[4px_4px_0px_0px_rgba(185,28,28,0.1)] hover:shadow-none hover:translate-x-0.5 hover:translate-y-0.5 transition-all">
           <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
             <h2 className="text-sm font-bold uppercase tracking-widest text-slate-700">
               Audit &amp; Recent Activity
@@ -102,7 +102,7 @@ export default function DashboardScreen() {
             {loadingLog && <Loader2 size={16} className="animate-spin text-slate-400" />}
           </div>
 
-          <div className="p-6">
+          <div className="p-6 max-h-96 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
             {logError ? (
               <ErrorBanner message={logError} />
             ) : loadingLog ? (
