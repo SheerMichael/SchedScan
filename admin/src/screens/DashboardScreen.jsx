@@ -5,11 +5,17 @@ import StatCard from '../components/graphs/StatCard';
 import { analyticsApi, auditApi, parseApiError } from '../services/api';
 
 // ---------------------------------------------------------------------------
-// Helper: format large numbers with commas
-// ---------------------------------------------------------------------------
 function fmt(n) {
   if (n === null || n === undefined) return '—';
   return Number(n).toLocaleString();
+}
+
+function fmtPhp(centavos) {
+  if (centavos === null || centavos === undefined) return '—';
+  return '₱' + (centavos / 100).toLocaleString('en-PH', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -61,9 +67,10 @@ export default function DashboardScreen() {
 
       <div className="p-8 max-w-7xl mx-auto">
         {/* Stat cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           {loadingStats ? (
             <>
+              <SkeletonCard />
               <SkeletonCard />
               <SkeletonCard />
             </>
@@ -71,6 +78,7 @@ export default function DashboardScreen() {
             <ErrorBanner message={statsError} />
           ) : (
             <>
+              <StatCard title="Total Revenue" value={fmtPhp(stats?.total_revenue_centavos)} />
               <StatCard title="Total Enrolled Users" value={fmt(stats?.total_users)} />
               <StatCard title="Active User Sessions" value={fmt(stats?.active_users)} />
             </>
@@ -79,7 +87,10 @@ export default function DashboardScreen() {
 
         {/* Sales / scan activity chart */}
         <div className="mb-8">
-          <SalesChart />
+          <SalesChart
+            totalScans={stats?.total_schedules ?? null}
+            loading={loadingStats}
+          />
         </div>
 
         {/* Audit log */}

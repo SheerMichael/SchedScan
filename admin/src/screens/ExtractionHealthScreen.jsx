@@ -92,7 +92,7 @@ function Header() {
     <header className="bg-white border-b border-slate-200 px-4 py-7">
       <div className="max-w-350 mx-auto">
         <h1 className="text-4xl font-black text-slate-800 tracking-tight">
-          OCR <span className="text-primary-800">Health</span>
+          OCR Health <span className="text-primary-800">&amp; Reports</span>
         </h1>
         <p className="text-sm text-slate-400 mt-1 font-semibold tracking-tight">
           Extraction pipeline monitoring &amp; incident management
