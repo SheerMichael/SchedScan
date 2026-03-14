@@ -73,6 +73,7 @@ export default function CalendarControlScreen() {
           id: h.id,
           name: h.name,
           date: h.date,
+          endDate: h.end_date || null,   // ← multi-day end date from API
           type: toDisplayType(h.holiday_type),
         }))
       );
@@ -110,7 +111,8 @@ export default function CalendarControlScreen() {
     try {
       const payload = {
         name: holidayData.name,
-        date: holidayData.date,
+        date: holidayData.date,                         // start date
+        end_date: holidayData.endDate || null,          // optional end date
         holiday_type: toApiType(holidayData.type),
       };
       if (selectedHoliday) {
@@ -207,13 +209,19 @@ export default function CalendarControlScreen() {
   };
 
   // ---- Filtered lists for the current month
+  // Multi-day range holidays are visible when ANY of their days fall in the current month
   const visibleHolidays = useMemo(() => {
     return holidays.filter(h => {
-      const hDate = parseISO(h.date);
-      if (h.type === "Recurring") {
-        return hDate.getMonth() === currentMonth.getMonth();
+      const hStart = parseISO(h.date);
+      const hEnd = h.endDate ? parseISO(h.endDate) : hStart;
+      const monthStart = startOfMonth(currentMonth);
+      const monthEnd = endOfMonth(currentMonth);
+      if (h.type === 'Recurring') {
+        // For recurring, match by month/day of start
+        return hStart.getMonth() === currentMonth.getMonth();
       }
-      return isSameMonth(hDate, currentMonth);
+      // Overlap: holiday range overlaps the current month
+      return hStart <= monthEnd && hEnd >= monthStart;
     });
   }, [currentMonth, holidays]);
 
@@ -319,9 +327,11 @@ export default function CalendarControlScreen() {
                         <tr key={holiday.id} className="hover:bg-primary-50/30 transition-colors group">
                           <td className="px-6 py-5 text-sm font-black text-slate-900 uppercase tracking-tight">{holiday.name}</td>
                           <td className="px-6 py-5 text-[11px] font-bold text-slate-500 uppercase tracking-tighter">
-                            {holiday.type === "Recurring" 
+                            {holiday.type === "Recurring"
                               ? format(parseISO(holiday.date), 'MMMM dd') + " [ANNUAL]"
-                              : format(parseISO(holiday.date), 'MMMM dd, yyyy')
+                              : holiday.endDate
+                                ? `${format(parseISO(holiday.date), 'MMM dd, yyyy')} → ${format(parseISO(holiday.endDate), 'MMM dd, yyyy')}`
+                                : format(parseISO(holiday.date), 'MMMM dd, yyyy')
                             }
                           </td>
                           <td className="px-6 py-5">

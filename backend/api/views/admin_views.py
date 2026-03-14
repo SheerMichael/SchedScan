@@ -89,17 +89,29 @@ class AdminUserSerializer(drf_serializers.ModelSerializer):
 
 class HolidaySerializer(drf_serializers.ModelSerializer):
     created_by_email = drf_serializers.SerializerMethodField(read_only=True)
+    # end_date is optional — null means single-day holiday
+    end_date = drf_serializers.DateField(required=False, allow_null=True, default=None)
 
     class Meta:
         model = Holiday
         fields = [
-            "id", "name", "date", "holiday_type",
+            "id", "name", "date", "end_date", "holiday_type",
             "created_by", "created_by_email", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "created_by", "created_by_email", "created_at", "updated_at"]
 
     def get_created_by_email(self, obj):
         return obj.created_by.email if obj.created_by else None
+
+    def validate(self, attrs):
+        """Ensure end_date is not earlier than start date."""
+        start = attrs.get("date")
+        end = attrs.get("end_date")
+        if start and end and end < start:
+            raise drf_serializers.ValidationError(
+                {"end_date": "End date must be on or after the start date."}
+            )
+        return attrs
 
 
 class AuditLogSerializer(drf_serializers.ModelSerializer):

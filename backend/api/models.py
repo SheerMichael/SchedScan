@@ -942,6 +942,10 @@ class Holiday(models.Model):
     Institution-wide holidays managed by admins via the admin dashboard.
     Recurring holidays repeat every year on the same month/day.
     One-time holidays apply only on the specific date.
+
+    Multi-day ranges: set end_date to make a holiday span multiple consecutive
+    days (e.g. Christmas Break Dec 25-Jan 1). When end_date is null the holiday
+    is treated as a single-day event.
     """
     HOLIDAY_TYPE_CHOICES = [
         ('one_time', 'One-time'),
@@ -953,7 +957,15 @@ class Holiday(models.Model):
         help_text="Name/title of the holiday"
     )
     date = models.DateField(
-        help_text="Date of the holiday (for recurring: only month+day matter)"
+        help_text="Start date of the holiday (for recurring: only month+day matter)"
+    )
+    end_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Optional end date for multi-day holidays (inclusive). "
+            "Null means the holiday is a single day."
+        )
     )
     holiday_type = models.CharField(
         max_length=10,
@@ -977,11 +989,14 @@ class Holiday(models.Model):
         ordering = ['date']
         indexes = [
             models.Index(fields=['date']),
+            models.Index(fields=['end_date']),
             models.Index(fields=['holiday_type']),
         ]
 
     def __str__(self):
         label = "Recurring" if self.holiday_type == 'recurring' else "One-time"
+        if self.end_date:
+            return f"{self.name} ({self.date} \u2192 {self.end_date}) [{label}]"
         return f"{self.name} ({self.date}) [{label}]"
 
 
