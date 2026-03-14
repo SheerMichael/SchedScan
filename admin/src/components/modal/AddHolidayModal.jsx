@@ -1,28 +1,34 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  format, addMonths, subMonths, startOfMonth, endOfMonth, 
-  startOfWeek, endOfWeek, isSameMonth, isSameDay, eachDayOfInterval, parseISO 
-} from 'date-fns';
-import { ChevronLeft, ChevronRight, X, ChevronDown, Calendar as CalendarIcon, Loader2, AlertCircle } from 'lucide-react';
+import { X, ChevronDown, Calendar as CalendarIcon, Loader2, AlertCircle, ArrowRight, CheckSquare } from 'lucide-react';
 
+/**
+ * AddHolidayModal
+ *
+ * Bugs fixed:
+ *  1. CheckSquare and ArrowRight were used but never imported — caused a
+ *     ReferenceError and a blank page whenever the multi-day toggle was clicked.
+ *  2. Date inputs were type="text" (free-form). Changed to type="date" so the
+ *     browser shows a native date-picker, removing the need for manual YYYY-MM-DD
+ *     format guidance.
+ */
 export default function AddHolidayModal({ isOpen, onClose, onSave, initialData, isSaving = false, saveError = null }) {
   const [holidayName, setHolidayName] = useState('');
   const [recurrence, setRecurrence] = useState('Recurring');
   const [timePeriod, setTimePeriod] = useState('All Day');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  const [isRange, setIsRange] = useState(false); // Toggle for range mode
+  const [isRange, setIsRange] = useState(false);
 
   useEffect(() => {
     if (initialData) {
       setHolidayName(initialData.name);
       setRecurrence(initialData.type);
       setTimePeriod(initialData.period || 'All Day');
-      setStartDate(initialData.startDate || initialData.date); 
+      setStartDate(initialData.startDate || initialData.date || '');
       setEndDate(initialData.endDate || '');
       setIsRange(!!initialData.endDate);
     } else {
-      const today = format(new Date(), 'yyyy-MM-dd');
+      const today = new Date().toISOString().slice(0, 10);
       setHolidayName('');
       setRecurrence('Recurring');
       setTimePeriod('All Day');
@@ -36,17 +42,19 @@ export default function AddHolidayModal({ isOpen, onClose, onSave, initialData, 
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    
-    const start = parseISO(startDate);
-    const end = isRange ? parseISO(endDate) : start;
 
-    if (!isValid(start) || (isRange && !isValid(end))) {
-      alert("INVALID COORDINATES. USE YYYY-MM-DD.");
+    if (!startDate) {
+      alert('Please select a start date.');
       return;
     }
 
-    if (isRange && isAfter(start, end)) {
-      alert("CHRONOLOGICAL ERROR: END DATE MUST BE AFTER START DATE.");
+    if (isRange && !endDate) {
+      alert('Please select an end date.');
+      return;
+    }
+
+    if (isRange && endDate < startDate) {
+      alert('End date must be on or after the start date.');
       return;
     }
 
@@ -56,20 +64,20 @@ export default function AddHolidayModal({ isOpen, onClose, onSave, initialData, 
       date: startDate,
       endDate: isRange ? endDate : null,
       type: recurrence,
-      period: timePeriod
+      period: timePeriod,
     });
-    // The parent (CalendarScreen) closes the modal after the async API call completes
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
       <div className="bg-[#fcfcf9] w-full max-w-md rounded-none border-2 border-slate-900 shadow-[12px_12px_0px_0px_rgba(15,23,42,1)] overflow-hidden flex flex-col animate-in fade-in zoom-in duration-150">
-        
+
+        {/* Header */}
         <div className="bg-slate-900 text-white p-6 flex justify-between items-center">
           <div>
             <p className="text-[9px] font-black tracking-[0.3em] text-primary-400 uppercase">Registry Input</p>
             <h2 className="text-xl font-black uppercase tracking-tighter">
-              {initialData ? 'Edit Event Record' : 'New Event Entry'}
+              {initialData ? 'Edit Holiday Record' : 'New Holiday Entry'}
             </h2>
           </div>
           <button onClick={onClose} className="p-2 border-2 border-slate-700 hover:border-white transition-colors">
@@ -78,9 +86,13 @@ export default function AddHolidayModal({ isOpen, onClose, onSave, initialData, 
         </div>
 
         <form onSubmit={handleSubmit} className="p-8 space-y-6">
+
+          {/* Name */}
           <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Event Designation</label>
-            <input 
+            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
+              Event Designation
+            </label>
+            <input
               type="text" required value={holidayName}
               onChange={(e) => setHolidayName(e.target.value)}
               className="w-full px-4 py-4 bg-white border-2 border-slate-900 rounded-none focus:outline-none focus:bg-primary-50/20 transition-all font-bold text-sm uppercase"
@@ -88,6 +100,7 @@ export default function AddHolidayModal({ isOpen, onClose, onSave, initialData, 
             />
           </div>
 
+          {/* Classification + Period */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Classification</label>
@@ -117,55 +130,64 @@ export default function AddHolidayModal({ isOpen, onClose, onSave, initialData, 
             </div>
           </div>
 
-          {/* Range Toggle */}
+          {/* Multi-day Range Toggle */}
           <div className="pt-2">
             <button type="button" onClick={() => setIsRange(!isRange)}
               className="flex items-center gap-3 group select-none"
             >
               <div className={`w-6 h-6 border-2 border-slate-900 flex items-center justify-center transition-all ${isRange ? 'bg-primary-800 border-primary-800' : 'bg-white'}`}>
-                {isRange ? <CheckSquare size={16} className="text-white" /> : <div className="w-full h-full bg-white group-hover:bg-slate-50" />}
+                {isRange
+                  ? <CheckSquare size={16} className="text-white" />
+                  : <div className="w-full h-full bg-white group-hover:bg-slate-50" />
+                }
               </div>
-              <span className="text-[10px] font-black uppercase tracking-widest text-slate-900">Enable Multi-Day Range Registry</span>
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-900">
+                Enable Multi-Day Range Registry
+              </span>
             </button>
           </div>
 
-          {/* Date Entry Area */}
-          <div className={`grid ${isRange ? 'grid-cols-1 sm:grid-cols-[1fr_auto_1fr]' : 'grid-cols-1'} items-center gap-4 transition-all`}>
+          {/* Date fields — type="date" for native date picker */}
+          <div className={`grid ${isRange ? 'grid-cols-1 sm:grid-cols-[1fr_auto_1fr]' : 'grid-cols-1'} items-end gap-4`}>
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
-                {isRange ? 'Start Coordinate' : 'Registry Date'}
+                {isRange ? 'Start Date' : 'Registry Date'}
               </label>
               <div className="relative">
-                <input type="text" required value={startDate} onChange={(e) => setStartDate(e.target.value)}
-                  placeholder="YYYY-MM-DD"
-                  className="w-full px-8 py-4 bg-white border-2 border-slate-900 rounded-none font-bold text-sm tracking-widest focus:outline-none focus:bg-primary-50/20"
+                <input
+                  type="date"
+                  required
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="w-full pl-9 pr-3 py-4 bg-white border-2 border-slate-900 rounded-none font-bold text-sm focus:outline-none focus:bg-primary-50/20 cursor-pointer"
                 />
-                <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
               </div>
             </div>
 
             {isRange && (
-              <div className="flex justify-center pt-6">
+              <div className="flex justify-center pb-3">
                 <ArrowRight size={20} className="text-primary-800" />
               </div>
             )}
 
             {isRange && (
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">End Coordinate</label>
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">End Date</label>
                 <div className="relative">
-                  <input type="text" required={isRange} value={endDate} onChange={(e) => setEndDate(e.target.value)}
-                    placeholder="YYYY-MM-DD"
-                    className="w-full px-8 py-4 bg-white border-2 border-slate-900 rounded-none font-bold text-sm tracking-widest focus:outline-none focus:bg-primary-50/20"
+                  <input
+                    type="date"
+                    required={isRange}
+                    min={startDate}
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="w-full pl-9 pr-3 py-4 bg-white border-2 border-slate-900 rounded-none font-bold text-sm focus:outline-none focus:bg-primary-50/20 cursor-pointer"
                   />
-                  <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                  <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
                 </div>
               </div>
             )}
           </div>
-          <p className="text-[10px] text-slate-500">
-            Format of the dates is strictly YYYY-MM-DD. For example, September 5, 2024 would be entered as 2024-09-05.
-          </p>
 
           {saveError && (
             <div className="flex items-start gap-2 bg-red-50 border-2 border-red-700 px-4 py-3">
@@ -174,8 +196,8 @@ export default function AddHolidayModal({ isOpen, onClose, onSave, initialData, 
             </div>
           )}
 
-          <button 
-            type="submit" 
+          <button
+            type="submit"
             disabled={isSaving}
             className="w-full py-5 bg-slate-900 text-white text-[11px] font-black uppercase tracking-[0.2em] shadow-[6px_6px_0px_0px_rgba(185,28,28,1)] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none transition-all disabled:opacity-60 disabled:cursor-not-allowed disabled:translate-x-0 disabled:translate-y-0 disabled:shadow-[6px_6px_0px_0px_rgba(185,28,28,1)] flex items-center justify-center gap-2"
           >

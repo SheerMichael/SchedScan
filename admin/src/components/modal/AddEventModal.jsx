@@ -109,17 +109,15 @@ export default function AddEventModal({ isOpen, onClose, onSave, initialData, is
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Event Date</label>
             <div className="relative">
-              <input 
-                type="text" required value={eventDate}
+              <input
+                type="date"
+                required
+                value={eventDate}
                 onChange={(e) => setEventDate(e.target.value)}
-                placeholder="YYYY-MM-DD"
-                className="w-full px-8 py-4 bg-white border-2 border-slate-900 rounded-none font-bold text-sm tracking-widest focus:outline-none focus:bg-primary-50/20"
+                className="w-full pl-9 pr-3 py-4 bg-white border-2 border-slate-900 rounded-none font-bold text-sm focus:outline-none focus:bg-primary-50/20 cursor-pointer"
               />
-              <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+              <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
             </div>
-            <p className="text-[10px] text-slate-500">
-              Format: YYYY-MM-DD. Example: 2026-09-05
-            </p>
           </div>
 
           {/* Time fields */}
