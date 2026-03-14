@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, ChevronDown, Calendar as CalendarIcon, Loader2, AlertCircle, ArrowRight, CheckSquare } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 /**
  * AddHolidayModal
@@ -44,17 +45,17 @@ export default function AddHolidayModal({ isOpen, onClose, onSave, initialData, 
     e.preventDefault();
 
     if (!startDate) {
-      alert('Please select a start date.');
+      toast.error('Please select a start date.');
       return;
     }
 
     if (isRange && !endDate) {
-      alert('Please select an end date.');
+      toast.error('Please select an end date.');
       return;
     }
 
     if (isRange && endDate < startDate) {
-      alert('End date must be on or after the start date.');
+      toast.error('End date must be on or after the start date.');
       return;
     }
 

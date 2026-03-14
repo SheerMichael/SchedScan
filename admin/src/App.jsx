@@ -1,4 +1,5 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
+import { Toaster } from "react-hot-toast";
 
 import Sidebar from "./components/sidebar/sidebar";
 import LoginScreen from "./screens/LoginScreen";
@@ -24,6 +25,32 @@ export default function App() {
 
   return (
     <Router basename="/portal">
+      {/* Global toast container — renders toasts from any component in the tree */}
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          duration: 4000,
+          style: {
+            borderRadius: 0,
+            border: '2px solid #0f172a',
+            fontFamily: 'inherit',
+            fontSize: '11px',
+            fontWeight: 700,
+            letterSpacing: '0.05em',
+            textTransform: 'uppercase',
+            boxShadow: '4px 4px 0px 0px rgba(15,23,42,0.15)',
+          },
+          success: {
+            style: { borderColor: '#166534', color: '#166534', background: '#f0fdf4' },
+            iconTheme: { primary: '#166534', secondary: '#f0fdf4' },
+          },
+          error: {
+            style: { borderColor: '#b91c1c', color: '#b91c1c', background: '#fef2f2' },
+            iconTheme: { primary: '#b91c1c', secondary: '#fef2f2' },
+            duration: 6000,
+          },
+        }}
+      />
       <div className="flex h-screen bg-slate-50">
         {isAuthenticated && <Sidebar onLogout={logout} />}
 

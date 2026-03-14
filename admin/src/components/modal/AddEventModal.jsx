@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, ChevronDown, Calendar as CalendarIcon, Loader2, AlertCircle, Clock } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 export default function AddEventModal({ isOpen, onClose, onSave, initialData, isSaving = false, saveError = null }) {
   const [title, setTitle] = useState('');
@@ -40,12 +41,12 @@ export default function AddEventModal({ isOpen, onClose, onSave, initialData, is
     e.preventDefault();
 
     if (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) {
-      alert("INVALID DATE FORMAT. USE YYYY-MM-DD.");
+      toast.error('Invalid date format. Please use the date picker.');
       return;
     }
 
     if (startTime && endTime && startTime >= endTime) {
-      alert("END TIME MUST BE AFTER START TIME.");
+      toast.error('End time must be after start time.');
       return;
     }
 
