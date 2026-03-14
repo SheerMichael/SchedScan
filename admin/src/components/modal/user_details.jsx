@@ -170,7 +170,7 @@ export default function UserDetailsModal({ isOpen, onClose, user, allUsers }) {
                               </span>
                               <p className="text-xs font-black text-slate-900 uppercase">{linkedUser.name}</p>
                             </div>
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">{linkedUser.email}</p>
+                            <p className="text-[10px] font-bold text-slate-400 tracking-tighter">{linkedUser.email}</p>
                           </div>
                           <div className={`w-2 h-2 ${linkedUser.status === 'Active' ? 'bg-emerald-500' : 'bg-slate-300'}`} />
                         </div>

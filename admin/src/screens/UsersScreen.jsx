@@ -222,7 +222,7 @@ export default function UsersScreen() {
                               <p className="font-black text-slate-900 tracking-tight leading-none mb-1">
                                 {(user.first_name + ' ' + user.last_name).toUpperCase()}
                               </p>
-                              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-tighter">{user.email}</p>
+                              <p className="text-[11px] font-bold text-slate-400 tracking-tighter">{user.email}</p>
                             </div>
                           </div>
                         </td>
