@@ -9,7 +9,7 @@ export default function GetPremiumScreen() {
     return (
         <>    
             <View className="px-8 h-full">
-                <View className="flex-row justify-end mb-4">
+                <View className="flex-row justify-end mb-4 mt-4">
                     <TouchableOpacity onPress={() => router.back()}>
                         <X size={26} color="black" />
                     </TouchableOpacity>

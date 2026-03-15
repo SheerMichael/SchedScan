@@ -133,7 +133,7 @@ const UserProfile = () => {
             <ScrollView>
                 <View className="flex-1 px-5">
 
-                    <TouchableOpacity onPress={() => router.back()} className="mb-5 w-4">
+                    <TouchableOpacity onPress={() => router.back()} className="mb-5 pt-4 w-4">
                         <LeftPointingArrow size={30} color="#000000" />
                     </TouchableOpacity>
 
@@ -211,7 +211,7 @@ const UserProfile = () => {
                             </TouchableOpacity> */}
                             <TouchableOpacity className="p-4 border-b border-gray-500/50 flex-row items-center gap-2" onPress={() => router.push('/profile/policy')}>
                                 <FileText />
-                                <Text className="text-base">Privacy Policy & Fair Use</Text>
+                                <Text className="text-base">Privacy Policy, Terms of Service & Fair Use</Text>
                             </TouchableOpacity>
                             <TouchableOpacity className="p-4 border-b border-gray-500/50 flex-row items-center gap-2" onPress={() => router.push('/profile/change_password')}>
                                 <EyeOff />

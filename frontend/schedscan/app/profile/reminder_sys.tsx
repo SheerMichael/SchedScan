@@ -24,7 +24,7 @@ export default function RemindersSettingScreen() {
         <>
             <ScrollView className="flex-1 bg-white px-5">
 
-                <View className="flex-row items-center mb-6">
+                <View className="flex-row items-center mb-6 pt-4">
                     <TouchableOpacity onPress={() => router.back()}>
                         <ArrowLeft size={26} color="black" strokeWidth={2} />
                     </TouchableOpacity>
