@@ -149,6 +149,12 @@ export default function Scanner() {
     try {
       const response = await courseService.uploadCOR(file, uploadType);
 
+      if (!response?.courses || response.courses.length === 0) {
+        throw new Error(
+          'No courses were extracted. Please try again with a clearer image or a valid COR file.'
+        );
+      }
+
       console.log('Upload successful:', response);
 
       // Record the upload timestamp for rate limiting
@@ -173,7 +179,11 @@ export default function Scanner() {
       setIsUploading(false);
       setShowTitleModal(true);
     } catch (error: any) {
-      const errorMessage = error.response?.data?.error || 'Failed to upload file. Please try again.';
+      const errorMessage =
+        error.response?.data?.error ||
+        error.response?.data?.message ||
+        error.message ||
+        'Failed to upload file. Please try again.';
       setUploadError(errorMessage);
       setIsUploading(false);
       setReportModal(true);
@@ -221,7 +231,7 @@ export default function Scanner() {
     setShowFacultyModeModal(false);
     if (success) {
       Alert.alert(
-        'Faculty Mode Activated! 🎉',
+        'Faculty Mode Activated!',
         'You now have access to class management features — generate class codes, assign tasks, and track student progress.',
         [{ text: 'View Faculty Schedules', onPress: () => { resetScanner(); router.push('/Home/Schedules/faculty'); } }]
       );

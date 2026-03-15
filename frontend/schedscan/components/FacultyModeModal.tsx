@@ -68,9 +68,9 @@ export default function FacultyModeModal({
 
           {/* Feature bullets */}
           <View className="bg-orange-50 rounded-xl p-4 mb-6">
-            <FeatureRow icon="📋" text="Generate class codes for your subjects" />
-            <FeatureRow icon="✅" text="Create & track student tasks" />
-            <FeatureRow icon="👥" text="View enrolled students & completion stats" />
+            <FeatureRow text="Generate class codes for your subjects" />
+            <FeatureRow text="Create & track student tasks" />
+            <FeatureRow text="View enrolled students & completion stats" />
           </View>
 
           {/* Actions */}
@@ -117,10 +117,10 @@ export default function FacultyModeModal({
 }
 
 /** Small helper row for the feature list */
-function FeatureRow({ icon, text }: { icon: string; text: string }) {
+function FeatureRow({ text }: { text: string }) {
   return (
     <View className="flex-row items-center mb-2 last:mb-0">
-      <Text className="text-base mr-3">{icon}</Text>
+      <Text className="text-orange-700 text-base mr-3">•</Text>
       <Text className="text-orange-800 text-sm flex-1">{text}</Text>
     </View>
   );

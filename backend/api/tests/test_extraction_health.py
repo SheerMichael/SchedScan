@@ -160,7 +160,10 @@ class UploadExtractionTelemetryViewTestCase(TestCase):
         }
 
         response = self._post_upload()
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.data.get("code"), "NO_COURSES_EXTRACTED")
+        self.assertTrue(response.data.get("retryable"))
+        self.assertEqual(response.data.get("total_courses"), 0)
 
         self.assertEqual(ExtractionLog.objects.count(), 1)
         log = ExtractionLog.objects.first()

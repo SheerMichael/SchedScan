@@ -165,13 +165,19 @@ class BaseCORUploadView(APIView):
                 )
                 return Response(
                     {
-                        "warning": "No courses found in the document",
-                        "message": f"The document was processed but no course information could be extracted. Please check if the document is a valid {self.upload_type.upper()} COR.",
+                        "error": "No courses could be extracted from the document.",
+                        "code": "NO_COURSES_EXTRACTED",
+                        "retryable": True,
+                        "message": (
+                            "Please try again with a clearer image/PDF, ensure the schedule details "
+                            "are visible, and upload a valid "
+                            f"{self.upload_type.upper()} COR document."
+                        ),
                         "courses": [],
                         "total_courses": 0,
                         "extraction_metadata": extraction_metadata
                     },
-                    status=status.HTTP_200_OK
+                    status=status.HTTP_422_UNPROCESSABLE_ENTITY
                 )
             
             # Create Course objects in database
