@@ -144,7 +144,12 @@ export default function Scanner() {
   };
 
   // Upload function to backend
-  const uploadFile = async (file: any, uploadType: 'student' | 'faculty') => {
+  const uploadFile = async (
+    file: any,
+    uploadType: 'student' | 'faculty',
+    options?: { isRetry?: boolean }
+  ) => {
+    const isRetry = options?.isRetry === true;
     setIsUploading(true);
     try {
       const response = await courseService.uploadCOR(file, uploadType);
@@ -158,7 +163,7 @@ export default function Scanner() {
       console.log('Upload successful:', response);
 
       // Record the upload timestamp for rate limiting
-      if (user?.id) {
+      if (!isRetry && user?.id) {
         await scheduleStorageService.recordUpload(user.id);
       }
 
@@ -188,6 +193,21 @@ export default function Scanner() {
       setIsUploading(false);
       setReportModal(true);
     }
+  };
+
+  const retryExtraction = async (source: 'error' | 'save') => {
+    if (!selectedFile || !selectedRole) {
+      Alert.alert('Retry Unavailable', 'No uploaded file found. Please pick a file again.');
+      return;
+    }
+
+    if (source === 'save') {
+      setShowTitleModal(false);
+    }
+
+    setReportModal(false);
+    setUploadError('');
+    await uploadFile(selectedFile, selectedRole, { isRetry: true });
   };
 
   const saveScheduleOnly = async () => {
@@ -259,6 +279,8 @@ export default function Scanner() {
     setUploadedSemester('');
     setUploadedSchoolYear('');
   };
+
+  const canRetryExtraction = Boolean(selectedFile && selectedRole);
 
   const LeftPointingArrow = ({ size = 24, color = '#ffffff' }) => (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
@@ -410,6 +432,15 @@ export default function Scanner() {
             <Text className="text-xl font-bold text-gray-800 mb-1">Save Schedule</Text>
             <Text className="text-sm text-gray-500 mb-4">{uploadedCourses.length} courses extracted</Text>
 
+            <TouchableOpacity
+              className="bg-gray-100 py-2 rounded-xl mb-4"
+              onPress={() => retryExtraction('save')}
+              disabled={isUploading || !canRetryExtraction}
+              style={{ opacity: !canRetryExtraction || isUploading ? 0.5 : 1 }}
+            >
+              <Text className="text-center font-semibold text-gray-700">Retry Extraction</Text>
+            </TouchableOpacity>
+
             <TextInput
               className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 mb-3 text-base"
               placeholder="e.g., 1st Sem 2025"
@@ -529,7 +560,18 @@ export default function Scanner() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                className="flex-1 py-3 rounded-xl bg-[#B88080]"
+                className="flex-1 py-3 rounded-xl bg-gray-100"
+                onPress={() => retryExtraction('error')}
+                disabled={isUploading || !canRetryExtraction}
+                style={{ opacity: !canRetryExtraction || isUploading ? 0.5 : 1 }}
+              >
+                <Text className="text-center font-semibold text-gray-700">Retry Extraction</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View className="mt-3">
+              <TouchableOpacity
+                className="py-3 rounded-xl bg-[#B88080]"
                 onPress={handleSubmit}
                 disabled={!incidentDetails.trim()}
                 style={{ opacity: incidentDetails.trim() ? 1 : 0.4 }}

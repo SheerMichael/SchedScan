@@ -46,9 +46,22 @@ import { useFileDownload } from "../../hooks/useFileDownload";
 // ============================================
 
 interface SubjectInfo {
+  subject_key: string;
   subject_code: string;
+  subject_codes: string[];
+  display_subject_code: string;
   subject_name: string;
 }
+
+const normalizeSubjectCode = (value: string | null | undefined): string => {
+  return (value || "")
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/[‐‑‒–—―]/g, "-")
+    .replace(/\s+/g, "")
+    .trim()
+    .toUpperCase();
+};
 
 // ============================================
 // Component
@@ -114,17 +127,45 @@ export default function FacultyDashboard() {
         setIsLoading(true);
         const schedules = await getFacultySchedules(forceRefresh);
 
-        // Derive unique subjects
-        const subjectMap = new Map<string, string>();
+        // Derive unique subjects (normalize code to consolidate split-day duplicates)
+        const subjectMap = new Map<string, SubjectInfo>();
         schedules.forEach((s) => {
           s.courses.forEach((c) => {
-            if (c.subject_code && !subjectMap.has(c.subject_code)) {
-              subjectMap.set(c.subject_code, c.subject_name || "");
+            const rawSubjectCode = c.subject_code || "";
+            const subjectKey = normalizeSubjectCode(rawSubjectCode);
+            if (!subjectKey) return;
+
+            const existing = subjectMap.get(subjectKey);
+            const rawDisplayCode = rawSubjectCode.trim();
+            const subjectName = (c.subject_name || "").trim();
+
+            if (!existing) {
+              subjectMap.set(subjectKey, {
+                subject_key: subjectKey,
+                subject_code: rawSubjectCode,
+                subject_codes: [rawSubjectCode],
+                display_subject_code: rawDisplayCode || subjectKey,
+                subject_name: subjectName,
+              });
+              return;
+            }
+
+            const hasVariant = existing.subject_codes.includes(rawSubjectCode);
+            if (!hasVariant) {
+              existing.subject_codes.push(rawSubjectCode);
+            }
+
+            if (!existing.subject_name && subjectName) {
+              existing.subject_name = subjectName;
+            }
+
+            if (subjectName && subjectName.length > existing.subject_name.length) {
+              existing.subject_name = subjectName;
             }
           });
         });
-        const subs: SubjectInfo[] = Array.from(subjectMap.entries()).map(
-          ([code, name]) => ({ subject_code: code, subject_name: name })
+        const subs: SubjectInfo[] = Array.from(subjectMap.values()).sort((a, b) =>
+          a.display_subject_code.localeCompare(b.display_subject_code)
         );
         setSubjects(subs);
 
@@ -133,7 +174,10 @@ export default function FacultyDashboard() {
           const allCodes = await getClassCodes(forceRefresh);
           const codeMap: Record<string, ClassCode> = {};
           allCodes.forEach((c) => {
-            codeMap[c.subject_code] = c;
+            const subjectKey = normalizeSubjectCode(c.subject_code);
+            if (subjectKey) {
+              codeMap[subjectKey] = c;
+            }
           });
           setClassCodes(codeMap);
         } catch {
@@ -154,29 +198,29 @@ export default function FacultyDashboard() {
     }, [loadDashboardData])
   );
 
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await loadDashboardData(true);
-    if (selectedSubject) {
-      await loadSubjectDetail(selectedSubject.subject_code, true);
-    }
-    setRefreshing(false);
-  }, [loadDashboardData, selectedSubject]);
-
   // ---- Load subject detail (tasks + students) ----
   const loadSubjectDetail = useCallback(
-    async (subjectCode: string, force = false) => {
+    async (subject: SubjectInfo, force = false) => {
       setIsTasksLoading(true);
       setIsStudentsLoading(true);
       try {
-        const [tasksResp, studentsResp] = await Promise.all([
-          facultyTaskService.getFacultyTasks(subjectCode),
-          facultyTaskService.getEnrolledStudents(subjectCode),
+        const variantCodes = Array.from(new Set(subject.subject_codes)).filter(Boolean);
+
+        const [tasksResponses, studentsResponses] = await Promise.all([
+          Promise.all(variantCodes.map((code) => facultyTaskService.getFacultyTasks(code))),
+          Promise.all(variantCodes.map((code) => facultyTaskService.getEnrolledStudents(code))),
         ]);
-        // API may return paginated { results: [...] } or a plain array
-        const tasksArray = Array.isArray(tasksResp) ? tasksResp : (tasksResp as any).results ?? [];
-        setFacultyTasks(tasksArray);
-        setEnrolledStudents(studentsResp.enrollments || []);
+
+        const mergedTasks = tasksResponses.flatMap((resp) =>
+          Array.isArray(resp) ? resp : (resp as any).results ?? []
+        );
+        const mergedStudents = studentsResponses.flatMap((resp) => resp.enrollments || []);
+
+        const dedupedTasks = Array.from(new Map(mergedTasks.map((task) => [task.id, task])).values());
+        const dedupedStudents = Array.from(new Map(mergedStudents.map((enrollment) => [enrollment.id, enrollment])).values());
+
+        setFacultyTasks(dedupedTasks);
+        setEnrolledStudents(dedupedStudents);
       } catch (err) {
         console.error("Error loading subject detail:", err);
       } finally {
@@ -187,11 +231,20 @@ export default function FacultyDashboard() {
     []
   );
 
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadDashboardData(true);
+    if (selectedSubject) {
+      await loadSubjectDetail(selectedSubject, true);
+    }
+    setRefreshing(false);
+  }, [loadDashboardData, loadSubjectDetail, selectedSubject]);
+
   const openSubjectDetail = useCallback(
     (sub: SubjectInfo) => {
       setSelectedSubject(sub);
       setActiveTab("tasks");
-      loadSubjectDetail(sub.subject_code);
+      loadSubjectDetail(sub);
     },
     [loadSubjectDetail]
   );
@@ -201,7 +254,8 @@ export default function FacultyDashboard() {
     try {
       setGeneratingCodeFor(subjectCode);
       const newCode = await facultyTaskService.generateClassCode(subjectCode);
-      setClassCodes((prev) => ({ ...prev, [subjectCode]: newCode }));
+      const subjectKey = normalizeSubjectCode(newCode.subject_code || subjectCode);
+      setClassCodes((prev) => ({ ...prev, [subjectKey]: newCode }));
       invalidateFacultyDataCache();
       Alert.alert("Class Code Generated", `New code: ${newCode.code}`);
     } catch {
@@ -296,7 +350,7 @@ export default function FacultyDashboard() {
             await facultyTaskService.deleteFacultyTask(task.id);
           } catch {
             Alert.alert("Error", "Failed to delete task.");
-            if (selectedSubject) loadSubjectDetail(selectedSubject.subject_code);
+            if (selectedSubject) loadSubjectDetail(selectedSubject);
           }
         },
       },
@@ -417,10 +471,10 @@ export default function FacultyDashboard() {
           ) : (
             /* Subject cards */
             subjects.map((sub) => {
-              const code = classCodes[sub.subject_code];
+              const code = classCodes[sub.subject_key];
               return (
                 <TouchableOpacity
-                  key={sub.subject_code}
+                  key={sub.subject_key}
                   onPress={() => openSubjectDetail(sub)}
                   className="bg-white rounded-xl mb-3 p-4 border border-gray-200"
                   activeOpacity={0.7}
@@ -428,7 +482,7 @@ export default function FacultyDashboard() {
                   <View className="flex-row items-center justify-between">
                     <View className="flex-1">
                       <Text className="font-bold text-base text-black">
-                        {sub.subject_code}
+                        {sub.display_subject_code}
                       </Text>
                       {sub.subject_name ? (
                         <Text className="text-gray-500 text-sm mt-0.5">
@@ -485,7 +539,7 @@ export default function FacultyDashboard() {
   // RENDER — Subject Detail View
   // ============================================
   const subjectCode = selectedSubject.subject_code;
-  const currentCode = classCodes[subjectCode];
+  const currentCode = classCodes[selectedSubject.subject_key];
 
   return (
     <>
@@ -505,7 +559,7 @@ export default function FacultyDashboard() {
               <LeftArrow size={28} />
             </TouchableOpacity>
             <View className="flex-1">
-              <Text className="text-2xl font-bold">{subjectCode}</Text>
+              <Text className="text-2xl font-bold">{selectedSubject.display_subject_code}</Text>
               {selectedSubject.subject_name ? (
                 <Text className="text-gray-500 text-sm">
                   {selectedSubject.subject_name}

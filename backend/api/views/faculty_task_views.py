@@ -5,6 +5,8 @@ faculty mode activation, and enrollment preview.
 """
 import os
 import mimetypes
+import re
+import unicodedata
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
@@ -30,6 +32,15 @@ from ..utils.timetable_generator import generate_and_save_timetable
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_subject_code(value: str) -> str:
+    """Normalize subject codes for safe cross-variant matching."""
+    normalized = unicodedata.normalize('NFKC', str(value or ''))
+    normalized = re.sub(r'[\u200B-\u200D\uFEFF]', '', normalized)
+    normalized = re.sub(r'[‐‑‒–—―]', '-', normalized)
+    normalized = re.sub(r'\s+', '', normalized)
+    return normalized.strip().upper()
 
 
 # ============================================
@@ -67,36 +78,52 @@ class ClassCodeView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        subject_code = request.data.get('subject_code')
-        if not subject_code:
+        subject_code = str(request.data.get('subject_code', '')).strip()
+        normalized_subject_code = _normalize_subject_code(subject_code)
+        if not normalized_subject_code:
             return Response(
                 {"error": "subject_code is required."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Verify the subject belongs to a faculty schedule, not a student one
-        has_faculty_subject = Course.objects.filter(
-            subject_code=subject_code,
+        # Verify the subject belongs to a faculty schedule, not a student one.
+        # Match by normalized subject code to prevent duplicates caused by spacing/case variations.
+        faculty_subject_codes = Course.objects.filter(
             schedule__user=user,
             schedule__upload_type='faculty',
-        ).exists()
-        if not has_faculty_subject:
+        ).values_list('subject_code', flat=True).distinct()
+
+        matching_subject_codes = [
+            str(code).strip()
+            for code in faculty_subject_codes
+            if _normalize_subject_code(code) == normalized_subject_code
+        ]
+
+        if not matching_subject_codes:
             return Response(
                 {"error": "You can only generate class codes for subjects in your faculty schedule."},
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        # Deactivate any existing active codes for this faculty + subject
-        ClassCode.objects.filter(
+        # Use a stable canonical variant when persisting class codes.
+        canonical_subject_code = sorted(matching_subject_codes, key=lambda x: (len(x), x))[0]
+
+        # Deactivate any existing active codes for the same normalized faculty subject.
+        active_codes = ClassCode.objects.filter(
             faculty=user,
-            subject_code=subject_code,
             is_active=True
-        ).update(is_active=False)
+        )
+        codes_to_deactivate = [
+            code.id for code in active_codes
+            if _normalize_subject_code(code.subject_code) == normalized_subject_code
+        ]
+        if codes_to_deactivate:
+            ClassCode.objects.filter(id__in=codes_to_deactivate).update(is_active=False)
 
         # Generate new code
         code = ClassCode.objects.create(
             faculty=user,
-            subject_code=subject_code,
+            subject_code=canonical_subject_code,
             code=ClassCode.generate_code()
         )
 
@@ -111,10 +138,17 @@ class ClassCodeView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        codes = ClassCode.objects.filter(faculty=user, is_active=True)
-        subject_code = request.query_params.get('subject_code')
+        codes_qs = ClassCode.objects.filter(faculty=user, is_active=True)
+        subject_code = str(request.query_params.get('subject_code', '')).strip()
+
         if subject_code:
-            codes = codes.filter(subject_code=subject_code)
+            normalized_subject_code = _normalize_subject_code(subject_code)
+            codes = [
+                code for code in codes_qs
+                if _normalize_subject_code(code.subject_code) == normalized_subject_code
+            ]
+        else:
+            codes = list(codes_qs)
 
         serializer = ClassCodeSerializer(codes, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)

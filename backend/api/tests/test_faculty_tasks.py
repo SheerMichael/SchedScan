@@ -110,9 +110,34 @@ class ClassCodeViewTests(TestCase):
         self.student_client = APIClient()
         self.student_client.force_authenticate(user=self.student)
 
+        # Faculty schedule subjects required for class-code generation checks
+        self.faculty_schedule = Schedule.objects.create(
+            user=self.faculty,
+            title='Faculty Schedule',
+            upload_type='faculty'
+        )
+        Course.objects.create(
+            user=self.faculty,
+            schedule=self.faculty_schedule,
+            subject_code='ACTINT122-BSCS-2',
+            subject_name='Activity Integration',
+            start_time='8:00AM',
+            end_time='9:00AM',
+            day='M'
+        )
+        Course.objects.create(
+            user=self.faculty,
+            schedule=self.faculty_schedule,
+            subject_code='ACTINT122 - BSCS-2',
+            subject_name='Activity Integration',
+            start_time='8:00AM',
+            end_time='9:00AM',
+            day='T'
+        )
+
     def test_faculty_generate_class_code(self):
         response = self.faculty_client.post('/api/faculty/class-code/', {
-            'subject_code': 'CS101'
+            'subject_code': 'ACTINT122-BSCS-2'
         })
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertIn('code', response.data)
@@ -127,12 +152,36 @@ class ClassCodeViewTests(TestCase):
         self.assertEqual(len(response.data), 2)
 
     def test_faculty_filter_class_codes_by_subject(self):
-        ClassCode.objects.create(faculty=self.faculty, subject_code='CS101', code=ClassCode.generate_code())
+        ClassCode.objects.create(faculty=self.faculty, subject_code='ACTINT122-BSCS-2', code=ClassCode.generate_code())
+        ClassCode.objects.create(faculty=self.faculty, subject_code='ACTINT122 - BSCS-2', code=ClassCode.generate_code())
         ClassCode.objects.create(faculty=self.faculty, subject_code='CS102', code=ClassCode.generate_code())
 
-        response = self.faculty_client.get('/api/faculty/class-code/', {'subject_code': 'CS101'})
+        response = self.faculty_client.get('/api/faculty/class-code/', {'subject_code': 'ACTINT122-BSCS-2'})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 1)
+        self.assertEqual(len(response.data), 2)
+
+    def test_generate_deactivates_variant_codes_for_same_subject(self):
+        old_code = ClassCode.objects.create(
+            faculty=self.faculty,
+            subject_code='ACTINT122 - BSCS-2',
+            code=ClassCode.generate_code(),
+            is_active=True,
+        )
+
+        response = self.faculty_client.post('/api/faculty/class-code/', {
+            'subject_code': 'ACTINT122-BSCS-2'
+        })
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        old_code.refresh_from_db()
+        self.assertFalse(old_code.is_active)
+
+        active_codes = ClassCode.objects.filter(
+            faculty=self.faculty,
+            is_active=True,
+            subject_code__icontains='ACTINT122'
+        )
+        self.assertEqual(active_codes.count(), 1)
 
     def test_student_cannot_generate_class_code(self):
         response = self.student_client.post('/api/faculty/class-code/', {
