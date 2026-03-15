@@ -14,10 +14,26 @@ class UserSerializer(serializers.ModelSerializer):
     """
     Serializer for User model - used for retrieving user data
     """
+    class_reminder_minutes_before = serializers.ChoiceField(
+        choices=[5, 10, 15],
+        required=False,
+        help_text="Minutes before class to send reminder"
+    )
+
     class Meta:
         model = User
-        fields = ['id', 'email', 'first_name', 'last_name', 'user_type', 'student_number', 'profile_picture', 'created_at']
-        read_only_fields = ['id', 'created_at']
+        fields = [
+            'id',
+            'email',
+            'first_name',
+            'last_name',
+            'user_type',
+            'student_number',
+            'profile_picture',
+            'class_reminder_minutes_before',
+            'created_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'email', 'user_type', 'student_number']
 
 
 class RegisterSerializer(serializers.ModelSerializer):

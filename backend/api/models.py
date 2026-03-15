@@ -46,6 +46,11 @@ class User(AbstractUser):
         ('faculty', 'Faculty'),
         ('parent', 'Parent'),
     ]
+    CLASS_REMINDER_MINUTES_CHOICES = [
+        (5, '5 minutes'),
+        (10, '10 minutes'),
+        (15, '15 minutes'),
+    ]
     
     username = None  # Remove username field
     email = models.EmailField(unique=True, max_length=255)
@@ -75,6 +80,11 @@ class User(AbstractUser):
         null=True,
         blank=True,
         help_text="Expo push notification token for this device"
+    )
+    class_reminder_minutes_before = models.PositiveSmallIntegerField(
+        choices=CLASS_REMINDER_MINUTES_CHOICES,
+        default=15,
+        help_text="Preferred reminder lead time before class starts"
     )
     is_verified = models.BooleanField(
         default=False,

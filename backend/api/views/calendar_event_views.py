@@ -296,6 +296,12 @@ class AdminCalendarEventListCreateView(APIView):
         serializer.is_valid(raise_exception=True)
         event = serializer.save(created_by=request.user)
 
+        try:
+            from api.utils.notification_service import notify_users_of_calendar_event
+            notify_users_of_calendar_event(event)
+        except Exception:
+            logger.exception("Failed to fan out calendar event notifications")
+
         _write_audit(
             admin=request.user,
             action="event_created",

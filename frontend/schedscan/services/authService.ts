@@ -24,6 +24,7 @@ export interface User {
   user_type: 'student' | 'faculty' | 'parent';
   student_number: string | null;
   profile_picture: string | null;
+  class_reminder_minutes_before?: 5 | 10 | 15;
   created_at: string;
 }
 

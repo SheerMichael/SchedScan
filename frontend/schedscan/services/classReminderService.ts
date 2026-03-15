@@ -8,7 +8,7 @@
  * How it works:
  * - When the user's active schedule loads, we cancel all previous reminders
  *   and schedule new ones for the next 7 days of classes.
- * - Each class gets a notification 15 minutes before start time.
+ * - Each class gets a notification based on user's selected lead time.
  * - Reminders are rescheduled whenever the active schedule changes.
  * - Uses Expo's local scheduled notifications (not push), so it works
  *   offline and costs nothing.
@@ -18,7 +18,6 @@ import * as Notifications from 'expo-notifications';
 import { Course } from './courseService';
 import { SavedSchedule } from './scheduleStorageService';
 
-const REMINDER_MINUTES_BEFORE = 15;
 const DAYS_AHEAD_TO_SCHEDULE = 7;
 
 // Category identifier for class reminders so we can cancel them selectively
@@ -94,7 +93,10 @@ export const cancelAllClassReminders = async (): Promise<void> => {
  */
 export const scheduleClassReminders = async (
   schedule: SavedSchedule | null,
+  minutesBefore: number = 15,
 ): Promise<number> => {
+  const reminderMinutesBefore = [5, 10, 15].includes(minutesBefore) ? minutesBefore : 15;
+
   // Always clear old reminders first
   await cancelAllClassReminders();
 
@@ -119,11 +121,11 @@ export const scheduleClassReminders = async (
       const parsed = parseTime(course.start_time);
       if (!parsed) continue;
 
-      // Build the reminder trigger time (class start minus REMINDER_MINUTES_BEFORE)
+      // Build the reminder trigger time (class start minus reminderMinutesBefore)
       const classTime = new Date(targetDate);
       classTime.setHours(parsed.hours, parsed.minutes, 0, 0);
 
-      const reminderTime = new Date(classTime.getTime() - REMINDER_MINUTES_BEFORE * 60 * 1000);
+      const reminderTime = new Date(classTime.getTime() - reminderMinutesBefore * 60 * 1000);
 
       // Skip if the reminder time is in the past
       if (reminderTime <= now) continue;
@@ -135,7 +137,7 @@ export const scheduleClassReminders = async (
         await Notifications.scheduleNotificationAsync({
           content: {
             title: label,
-            body: `Starts in ${REMINDER_MINUTES_BEFORE} minutes${locationText}`,
+            body: `Starts in ${reminderMinutesBefore} minutes${locationText}`,
             sound: 'default',
             data: {
               category: CLASS_REMINDER_CATEGORY,
@@ -157,7 +159,7 @@ export const scheduleClassReminders = async (
   }
 
   console.log(
-    `[ClassReminder] Scheduled ${scheduledCount} reminders for the next ${DAYS_AHEAD_TO_SCHEDULE} days`
+    `[ClassReminder] Scheduled ${scheduledCount} reminders for the next ${DAYS_AHEAD_TO_SCHEDULE} days (${reminderMinutesBefore} minutes before class)`
   );
 
   return scheduledCount;

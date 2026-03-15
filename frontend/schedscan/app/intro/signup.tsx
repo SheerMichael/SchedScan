@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StatusBar, Alert, Image, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
-import Svg, { Path, Circle, Rect, G } from 'react-native-svg';
+import Svg, { Path } from 'react-native-svg';
 import { Info, CheckCircle2, AlertCircle } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
 
@@ -25,8 +24,6 @@ type SignUp1Props = {
   setScreen: (screen: Step) => void;
   formData: SignUpData;
   setFormData: React.Dispatch<React.SetStateAction<SignUpData>>;
-  image: string | null;
-  pickImageOption: () => void;
   studentNumberError: string;
   studentNumberValid: boolean;
   onStudentNumberBlur: () => void;
@@ -70,8 +67,6 @@ const SignUp1Screen = ({
   setScreen,
   formData,
   setFormData,
-  image,
-  pickImageOption,
   studentNumberError,
   studentNumberValid,
   onStudentNumberBlur,
@@ -91,10 +86,11 @@ const SignUp1Screen = ({
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 32 }}>
         <View className="mt-10 ml-4 mr-4">
-          <Text className="text-3xl font-bold mb-1 text-primary-900">What's your name?</Text>
+          <Text className="text-3xl font-bold mb-1 text-primary-900">What&apos;s your name?</Text>
           <Text className="text-base font-medium mb-5 text-gray-600">Enter your details below.</Text>
 
-          {/* Profile photo card */}
+          {/* Profile photo upload temporarily disabled */}
+          {/*
           <View className="w-full items-center justify-center rounded-2xl border border-zinc-300 mb-6 bg-primary-200 py-5">
             <Image
               source={image ? { uri: image } : require("../../assets/images/PlaceholderImage.png")}
@@ -104,6 +100,7 @@ const SignUp1Screen = ({
               <Text className="text-white font-bold text-center">Upload Photo</Text>
             </TouchableOpacity>
           </View>
+          */}
 
           {/* Name row */}
           <View className="flex-row gap-3 mb-4">
@@ -252,7 +249,7 @@ const SignUp3Screen = ({
 
       <View className="mt-20 ml-8 mr-8">
         <Text className="text-3xl font-bold mb-2 text-primary-900">Create a password.</Text>
-        <Text className="text-md font-medium mb-4 text-gray-600">Create a password with at least 6 letters or numbers. It should be something others can't guess..</Text>
+        <Text className="text-md font-medium mb-4 text-gray-600">Create a password with at least 6 letters or numbers. It should be something others can&apos;t guess..</Text>
 
         <TextInput
           className="bg-gray-100 rounded-xl p-4 mb-4"
@@ -295,7 +292,6 @@ const SignUp3Screen = ({
 );
 
 const AuthFlow = () => {
-  const [image, setImage] = useState<string | null>(null);
   const [screen, setScreen] = useState<Step>('signup1');
   const [isLoading, setIsLoading] = useState(false);
   const { register } = useAuth();
@@ -319,44 +315,6 @@ const AuthFlow = () => {
       : studentNumberTouched && !formData.student_number
       ? 'Student number is required'
       : '';
-
-  const pickImageOption = () => {
-    Alert.alert("Select Image Source", "Choose an option", [
-      { text: "Camera", onPress: () => openCamera() },
-      { text: "Gallery", onPress: () => openGallery() },
-      { text: "Cancel", style: "cancel" },
-    ]);
-  };
-
-  // 📸 OPEN CAMERA
-  const openCamera = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== "granted") return alert("Camera permission is required!");
-
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [4, 4],
-      quality: 1,
-    });
-
-    if (!result.canceled) setImage(result.assets[0].uri);
-  };
-
-  // 🖼️ OPEN GALLERY
-  const openGallery = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== "granted") return alert("Gallery permission is required!");
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [4, 4],
-      quality: 1,
-    });
-
-    if (!result.canceled) setImage(result.assets[0].uri);
-  };
 
   const handleSignup = async () => {
     // Validation — student number is already gated at step 1, but double-check as a safety net
@@ -407,7 +365,6 @@ const AuthFlow = () => {
         last_name: formData.last_name,
         user_type: formData.user_type,
         student_number: formData.user_type === 'student' ? formData.student_number : undefined,
-        profile_picture: image || undefined,
       });
 
       Alert.alert('Success!', 'Your account has been created successfully!', [
@@ -465,8 +422,6 @@ const AuthFlow = () => {
           setScreen={setScreen}
           formData={formData}
           setFormData={setFormData}
-          image={image}
-          pickImageOption={pickImageOption}
           studentNumberError={studentNumberError}
           studentNumberValid={studentNumberValid}
           onStudentNumberBlur={() => setStudentNumberTouched(true)}

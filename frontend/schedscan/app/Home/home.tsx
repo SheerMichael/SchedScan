@@ -324,7 +324,8 @@ export default function SchedScanApp() {
 
         // Schedule local class reminder notifications for the next 7 days
         // This replaces the server-side cron job — zero cost, works offline
-        scheduleClassReminders(active).catch(err =>
+        const reminderLeadMinutes = user?.class_reminder_minutes_before ?? 15;
+        scheduleClassReminders(active, reminderLeadMinutes).catch(err =>
           console.warn('Failed to schedule class reminders:', err)
         );
 

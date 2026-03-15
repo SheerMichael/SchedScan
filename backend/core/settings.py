@@ -326,6 +326,11 @@ STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY', '')
 STRIPE_PRICE_AMOUNT = 8900  # ₱89.00 in centavos
 STRIPE_CURRENCY = 'php'
 
+# Notification feature flags
+# Local (on-device) class reminders are the default implementation.
+# Keep server-side class reminders disabled unless explicitly enabled.
+ENABLE_SERVER_CLASS_REMINDERS = os.getenv('ENABLE_SERVER_CLASS_REMINDERS', 'False') == 'True'
+
 # ---------------------------------------------------------------------------
 # Production security hardening
 # DigitalOcean App Platform terminates TLS at the load-balancer and forwards

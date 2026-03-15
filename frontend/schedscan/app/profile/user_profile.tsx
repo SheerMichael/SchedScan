@@ -1,10 +1,11 @@
-import React, { useState } from "react";
-import { View, Text, TouchableOpacity, ScrollView, Image, Modal, Alert, TextInput, ActivityIndicator } from 'react-native';
+import React, { useEffect, useState } from "react";
+import { View, Text, TouchableOpacity, ScrollView, Modal, Alert, TextInput, ActivityIndicator } from 'react-native';
 import { router } from "expo-router";
-import Svg, { Path, Circle } from 'react-native-svg';
-import { Gem, ScrollText, BellRing, CalendarDays, FileText, EyeOff, Trash2, Users, X, Copy, GraduationCap } from "lucide-react-native";
+import Svg, { Path } from 'react-native-svg';
+import { BellRing, FileText, EyeOff, Trash2, Users, X, Copy, GraduationCap } from "lucide-react-native";
 import { useAuth } from '../../context/AuthContext';
 import { scheduleStorageService } from '../../services/scheduleStorageService';
+import { scheduleClassReminders } from '../../services/classReminderService';
 import * as ExpoClipboard from 'expo-clipboard';
 import api from '@/services/api';
 
@@ -14,8 +15,10 @@ const UserProfile = () => {
     const [modaldeleteaccount, setModalDeleteAccount] = useState(false);
     // PARENTAL MODAL
     const [modalParentalCode, setModalParentalCode] = useState(false);
-    const { user, logout } = useAuth();
-    const [premiumuser, setPremiumUser] = useState(false);
+    const { user, logout, refreshUser, getActiveSchedule } = useAuth();
+    const [modalReminderLeadTime, setModalReminderLeadTime] = useState(false);
+    const [selectedReminderLeadTime, setSelectedReminderLeadTime] = useState<5 | 10 | 15>(15);
+    const [isSavingReminderLeadTime, setIsSavingReminderLeadTime] = useState(false);
 
     // MOCK PARENTAL CODE
     const parentalCode = "XYZ-123-ABC";
@@ -25,6 +28,15 @@ const UserProfile = () => {
     const [deleteConfirmation, setDeleteConfirmation] = useState('');
     const [deleteError, setDeleteError] = useState('');
     const [isDeleting, setIsDeleting] = useState(false);
+
+    useEffect(() => {
+        const userPreference = user?.class_reminder_minutes_before;
+        if (userPreference === 5 || userPreference === 10 || userPreference === 15) {
+            setSelectedReminderLeadTime(userPreference);
+        } else {
+            setSelectedReminderLeadTime(15);
+        }
+    }, [user?.class_reminder_minutes_before]);
 
     const LeftPointingArrow = ({ size = 24, color = '#ffffff' }) => (
         <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
@@ -109,14 +121,6 @@ const UserProfile = () => {
         }
     };
 
-    const is_premiumuser = () => {
-        if (!premiumuser) {
-            router.push('/profile/premium_pay');
-        } else {
-            console.log("Open Calendar Sync settings...");
-        }
-    }
-
     const handleParentalCodeAccess = () => {
         // TODO: Add premium check back later
         // For now, go directly to ShareParent screen for testing
@@ -126,6 +130,40 @@ const UserProfile = () => {
     const copyToClipboard = async () => {
         await ExpoClipboard.setStringAsync(parentalCode);
         alert("Code copied to clipboard!");
+    };
+
+    const saveReminderLeadTimePreference = async (minutes: 5 | 10 | 15) => {
+        if (![5, 10, 15].includes(minutes)) {
+            Alert.alert('Invalid selection', 'Please choose 5, 10, or 15 minutes.');
+            return;
+        }
+
+        try {
+            setIsSavingReminderLeadTime(true);
+
+            await api.patch('/auth/user/', {
+                class_reminder_minutes_before: minutes,
+            });
+
+            setSelectedReminderLeadTime(minutes);
+            setModalReminderLeadTime(false);
+
+            await refreshUser();
+
+            try {
+                const activeSchedule = await getActiveSchedule(true);
+                await scheduleClassReminders(activeSchedule, minutes);
+            } catch (scheduleError) {
+                console.warn('Reminder preference saved, but local rescheduling failed:', scheduleError);
+            }
+
+            Alert.alert('Reminder updated', `Class reminders will now be sent ${minutes} minutes before class.`);
+        } catch (error) {
+            console.error('Failed to update reminder lead time:', error);
+            Alert.alert('Update failed', 'Could not save reminder setting. Please try again.');
+        } finally {
+            setIsSavingReminderLeadTime(false);
+        }
     };
 
     return (
@@ -140,10 +178,10 @@ const UserProfile = () => {
                     <Text className="text-3xl font-bold mb-4">Profile</Text>
 
                     <View className="bg-primary-700 rounded-2xl w-full h-40 items-center justify-start pl-6 flex flex-row mb-6">
-                        <Image
+                        {/* <Image
                             source={require("../../assets/images/PlaceholderImage.png")}
                             style={{ width: 90, height: 90, borderRadius: 100, marginBottom: 20, margin: 6, marginTop: 6, }}
-                        />
+                        /> */}
                         <View className="flex-1 flex-col ml-2">
                             <Text className="text-white font-bold text-3xl mb-2">
                                 {user?.first_name} {user?.last_name}
@@ -155,14 +193,14 @@ const UserProfile = () => {
                     <Text className="text-xl mb-2">Account</Text>
                     <View className="w-full border border-gray-500/50 rounded-2xl mb-10">
                         <View>
-                            <TouchableOpacity className="p-4 border-b border-gray-500/50 flex-row items-center gap-2" onPress={() => router.push('/profile/my_plans')}>
+                            {/* <TouchableOpacity className="p-4 border-b border-gray-500/50 flex-row items-center gap-2" onPress={() => router.push('/profile/my_plans')}>
                                 <ScrollText />
                                 <Text className="text-base">My plans</Text>
                             </TouchableOpacity>
                             <TouchableOpacity className="p-4 border-b border-gray-500/50 flex-row items-center gap-2" onPress={() => router.push('/profile/premium_pay')}>
                                 <Gem />
                                 <Text className="text-base">Upgrade to Premium</Text>
-                            </TouchableOpacity>
+                            </TouchableOpacity> */}
                             <TouchableOpacity
                                 className={`p-4 flex-row items-center gap-2 ${user?.user_type === 'faculty' ? 'border-b border-gray-500/50' : ''}`}
                                 onPress={handleParentalCodeAccess}>
@@ -198,9 +236,15 @@ const UserProfile = () => {
                     <Text className="text-xl mb-2">Settings</Text>
                     <View className="w-full border border-gray-500/50 rounded-2xl mb-4">
                         <View>
-                            <TouchableOpacity className="p-4 border-b border-gray-500/50 flex-row items-center gap-2" onPress={() => router.push('/profile/reminder_sys')}>
-                                <BellRing />
-                                <Text className="text-base">Reminders</Text>
+                            <TouchableOpacity
+                                className="p-4 border-b border-gray-500/50 flex-row items-center justify-between"
+                                onPress={() => setModalReminderLeadTime(true)}
+                            >
+                                <View className="flex-row items-center gap-2">
+                                    <BellRing />
+                                    <Text className="text-base">Class Reminder Timing</Text>
+                                </View>
+                                <Text className="text-sm text-gray-500">{selectedReminderLeadTime} mins before</Text>
                             </TouchableOpacity>
                             {/* <TouchableOpacity className="p-4 border-b border-gray-500/50 flex-row items-center gap-2" onPress={is_premiumuser}>
                                 <CalendarDays />
@@ -377,6 +421,51 @@ const UserProfile = () => {
                                         </Text>
                                     </TouchableOpacity>
                                 </View>
+                            </View>
+                        </View>
+                    </Modal>
+
+                    <Modal
+                        animationType="fade"
+                        transparent={true}
+                        visible={modalReminderLeadTime}
+                        onRequestClose={() => setModalReminderLeadTime(false)}>
+                        <View className="flex-1 bg-black/50 justify-center items-center">
+                            <View className="bg-white rounded-xl p-6 w-4/5 max-w-sm shadow-lg">
+                                <View className="mb-4 flex-row justify-between items-center">
+                                    <Text className="text-lg font-semibold text-gray-900">Class Reminder Timing</Text>
+                                    <TouchableOpacity onPress={() => setModalReminderLeadTime(false)} disabled={isSavingReminderLeadTime}>
+                                        <X size={24} color="black" strokeWidth={2} />
+                                    </TouchableOpacity>
+                                </View>
+
+                                <Text className="text-sm text-gray-600 mb-4">
+                                    Choose how early you want reminders before each class starts.
+                                </Text>
+
+                                {[5, 10, 15].map((minutes) => {
+                                    const option = minutes as 5 | 10 | 15;
+                                    const isSelected = selectedReminderLeadTime === option;
+                                    return (
+                                        <TouchableOpacity
+                                            key={minutes}
+                                            className="flex-row items-center justify-between py-3"
+                                            disabled={isSavingReminderLeadTime}
+                                            onPress={() => saveReminderLeadTimePreference(option)}
+                                        >
+                                            <Text className="text-base text-gray-900">{minutes} minutes before</Text>
+                                            <View className="w-5 h-5 rounded-full border-2 border-gray-400 items-center justify-center">
+                                                {isSelected && <View className="w-3 h-3 rounded-full bg-black" />}
+                                            </View>
+                                        </TouchableOpacity>
+                                    );
+                                })}
+
+                                {isSavingReminderLeadTime && (
+                                    <View className="pt-2">
+                                        <ActivityIndicator color="#CB2222" />
+                                    </View>
+                                )}
                             </View>
                         </View>
                     </Modal>

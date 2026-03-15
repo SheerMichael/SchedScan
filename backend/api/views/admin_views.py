@@ -843,6 +843,12 @@ class AdminHolidayListCreateView(APIView):
         serializer.is_valid(raise_exception=True)
         holiday = serializer.save(created_by=request.user)
 
+        try:
+            from api.utils.notification_service import notify_users_of_holiday
+            notify_users_of_holiday(holiday)
+        except Exception:
+            logger.exception("Failed to fan out holiday notifications")
+
         _write_audit(
             admin=request.user,
             action="holiday_created",

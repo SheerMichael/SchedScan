@@ -5,11 +5,11 @@ Sends push notifications for classes starting soon.
 Run this command periodically via cron (e.g., every 5 minutes).
 
 Usage:
-    # Send reminders for classes in 15 minutes
+    # Send reminders using each user's saved preference
     python manage.py send_class_reminders
     
-    # Send reminders for classes in 30 minutes
-    python manage.py send_class_reminders --minutes 30
+    # Send reminders for classes in 10 minutes (override)
+    python manage.py send_class_reminders --minutes 10
     
     # Dry run (preview without sending)
     python manage.py send_class_reminders --dry-run
@@ -29,8 +29,9 @@ class Command(BaseCommand):
         parser.add_argument(
             '--minutes',
             type=int,
-            default=15,
-            help='Minutes before class to send reminder (default: 15)'
+            choices=[5, 10, 15],
+            default=None,
+            help='Optional override minutes before class to send reminder (allowed: 5, 10, 15)'
         )
         parser.add_argument(
             '--dry-run',
@@ -43,18 +44,29 @@ class Command(BaseCommand):
         dry_run = options['dry_run']
         
         if dry_run:
-            self.stdout.write(self.style.WARNING(
-                f'[DRY RUN] Checking for classes starting in {minutes} minutes...'
-            ))
+            if minutes is None:
+                self.stdout.write(self.style.WARNING(
+                    '[DRY RUN] Checking for classes using each user\'s saved reminder preference...'
+                ))
+            else:
+                self.stdout.write(self.style.WARNING(
+                    f'[DRY RUN] Checking for classes starting in {minutes} minutes...'
+                ))
         else:
-            self.stdout.write(
-                f'Checking for classes starting in {minutes} minutes...'
-            )
+            if minutes is None:
+                self.stdout.write('Checking for classes using each user\'s saved reminder preference...')
+            else:
+                self.stdout.write(f'Checking for classes starting in {minutes} minutes...')
         
         stats = send_upcoming_class_reminders(
             minutes_before=minutes,
             dry_run=dry_run
         )
+
+        if stats.get('skipped'):
+            self.stdout.write(self.style.WARNING(
+                f"Skipped: {stats.get('skip_reason', 'unknown_reason')}"
+            ))
         
         self.stdout.write(self.style.SUCCESS(
             f"Complete! Checked {stats['checked_users']} users, "

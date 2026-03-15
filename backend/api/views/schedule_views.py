@@ -3,13 +3,143 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth import get_user_model
+from django.db import transaction
+import re
+import unicodedata
 import logging
 
 from ..serializers import ScheduleSerializer, ScheduleListSerializer
-from ..models import Course, Schedule
+from ..models import Course, Schedule, ClassEnrollment, ClassCode, Notification
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
+
+
+def _normalize_subject_code(value: str) -> str:
+    normalized = unicodedata.normalize('NFKC', str(value or ''))
+    normalized = re.sub(r'[\u200B-\u200D\uFEFF]', '', normalized)
+    normalized = re.sub(r'[‐‑‒–—―]', '-', normalized)
+    normalized = re.sub(r'\s+', '', normalized)
+    return normalized.strip().upper()
+
+
+def _reconcile_faculty_subject_detachments(faculty_user, removed_subject_codes):
+    """
+    Reconcile side effects when a faculty schedule loses subjects.
+    - Marks active enrollments as removed if subject is no longer taught in any faculty schedule.
+    - Deactivates active class codes for subjects no longer taught.
+    - Stores in-app notifications for affected students.
+    """
+    normalized_candidates = {
+        _normalize_subject_code(code)
+        for code in removed_subject_codes
+        if _normalize_subject_code(code)
+    }
+    if not normalized_candidates:
+        return {
+            'normalized_removed_subjects': 0,
+            'enrollments_removed': 0,
+            'class_codes_deactivated': 0,
+            'students_notified': 0,
+        }
+
+    remaining_subjects = {
+        _normalize_subject_code(code)
+        for code in Course.objects.filter(
+            schedule__user=faculty_user,
+            schedule__upload_type='faculty',
+        ).values_list('subject_code', flat=True)
+        if _normalize_subject_code(code)
+    }
+
+    normalized_to_remove = normalized_candidates - remaining_subjects
+    if not normalized_to_remove:
+        return {
+            'normalized_removed_subjects': 0,
+            'enrollments_removed': 0,
+            'class_codes_deactivated': 0,
+            'students_notified': 0,
+        }
+
+    active_enrollments = ClassEnrollment.objects.filter(
+        faculty=faculty_user,
+        status='active',
+    ).select_related('student')
+
+    enrollments_to_remove = []
+    student_subjects = {}
+    for enrollment in active_enrollments:
+        normalized_subject = _normalize_subject_code(enrollment.subject_code)
+        if normalized_subject in normalized_to_remove:
+            enrollments_to_remove.append(enrollment.id)
+            student_subjects.setdefault(enrollment.student_id, {
+                'student': enrollment.student,
+                'subjects': set(),
+            })['subjects'].add(enrollment.subject_code)
+
+    enrollments_removed = 0
+    if enrollments_to_remove:
+        enrollments_removed = ClassEnrollment.objects.filter(
+            id__in=enrollments_to_remove,
+            status='active',
+        ).update(status='removed')
+
+    active_codes = ClassCode.objects.filter(
+        faculty=faculty_user,
+        is_active=True,
+    )
+    code_ids_to_deactivate = [
+        code.id for code in active_codes
+        if _normalize_subject_code(code.subject_code) in normalized_to_remove
+    ]
+    class_codes_deactivated = 0
+    if code_ids_to_deactivate:
+        class_codes_deactivated = ClassCode.objects.filter(
+            id__in=code_ids_to_deactivate,
+            is_active=True,
+        ).update(is_active=False)
+
+    notifications = []
+    for student_data in student_subjects.values():
+        subjects = sorted(student_data['subjects'])
+        subject_label = ', '.join(subjects)
+        notifications.append(
+            Notification(
+                user=student_data['student'],
+                notification_type='general',
+                title='Enrollment Updated',
+                message=(
+                    f"Your enrollment for {subject_label} was removed because the class "
+                    f"is no longer available from this faculty schedule."
+                ),
+                data={
+                    'type': 'enrollment_removed',
+                    'faculty_id': faculty_user.id,
+                    'subjects': subjects,
+                },
+            )
+        )
+
+    students_notified = 0
+    if notifications:
+        Notification.objects.bulk_create(notifications, batch_size=1000)
+        students_notified = len(notifications)
+
+    logger.info(
+        "Faculty schedule reconciliation for user %s: removed_subjects=%s enrollments_removed=%s codes_deactivated=%s students_notified=%s",
+        faculty_user.email,
+        len(normalized_to_remove),
+        enrollments_removed,
+        class_codes_deactivated,
+        students_notified,
+    )
+
+    return {
+        'normalized_removed_subjects': len(normalized_to_remove),
+        'enrollments_removed': enrollments_removed,
+        'class_codes_deactivated': class_codes_deactivated,
+        'students_notified': students_notified,
+    }
 
 
 class ScheduleListCreateView(generics.ListCreateAPIView):
@@ -151,6 +281,47 @@ class ScheduleDetailView(generics.RetrieveUpdateDestroyAPIView):
     
     def get_queryset(self):
         return Schedule.objects.filter(user=self.request.user)
+
+    def perform_update(self, serializer):
+        schedule = serializer.instance
+        old_upload_type = schedule.upload_type
+        old_subject_codes = list(schedule.courses.values_list('subject_code', flat=True))
+
+        with transaction.atomic():
+            updated_schedule = serializer.save()
+
+            if old_upload_type == 'faculty':
+                if updated_schedule.upload_type == 'faculty':
+                    new_normalized = {
+                        _normalize_subject_code(code)
+                        for code in updated_schedule.courses.values_list('subject_code', flat=True)
+                        if _normalize_subject_code(code)
+                    }
+                    removed_candidates = [
+                        code for code in old_subject_codes
+                        if _normalize_subject_code(code) not in new_normalized
+                    ]
+                else:
+                    removed_candidates = old_subject_codes
+
+                _reconcile_faculty_subject_detachments(
+                    faculty_user=self.request.user,
+                    removed_subject_codes=removed_candidates,
+                )
+
+    def perform_destroy(self, instance):
+        removed_candidates = []
+        if instance.upload_type == 'faculty':
+            removed_candidates = list(instance.courses.values_list('subject_code', flat=True))
+
+        with transaction.atomic():
+            instance.delete()
+
+            if removed_candidates:
+                _reconcile_faculty_subject_detachments(
+                    faculty_user=self.request.user,
+                    removed_subject_codes=removed_candidates,
+                )
 
 
 class ScheduleSetActiveView(APIView):

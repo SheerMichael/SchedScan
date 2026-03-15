@@ -215,7 +215,7 @@ def parse_time_string(time_str: str) -> Optional[datetime]:
 
 
 def send_upcoming_class_reminders(
-    minutes_before: int = 15,
+    minutes_before: Optional[int] = None,
     dry_run: bool = False
 ) -> Dict[str, Any]:
     """
@@ -223,12 +223,13 @@ def send_upcoming_class_reminders(
     Also creates persistent Notification records in the database.
     
     Args:
-        minutes_before: How many minutes before class to send reminder
+        minutes_before: Optional override for lead time; if omitted, uses each user's preference
         dry_run: If True, don't actually send notifications, just log what would be sent
         
     Returns:
         Dict with stats about notifications sent
     """
+    from django.conf import settings
     from django.contrib.auth import get_user_model
     from api.models import Schedule, Course, Notification
     
@@ -236,7 +237,13 @@ def send_upcoming_class_reminders(
     
     now = datetime.now()
     current_day = get_day_code_from_weekday(now.weekday())
-    reminder_time = now + timedelta(minutes=minutes_before)
+    if minutes_before is not None and minutes_before not in (5, 10, 15):
+        logger.warning(
+            f"Invalid minutes_before={minutes_before}; expected one of 5, 10, 15. Falling back to per-user preference."
+        )
+        minutes_before = None
+
+    reminder_time = now + timedelta(minutes=minutes_before or 15)
     
     logger.info(f"Checking for classes at {reminder_time.strftime('%I:%M %p')} on {current_day}")
     
@@ -246,7 +253,15 @@ def send_upcoming_class_reminders(
         "notifications_stored": 0,
         "errors": 0,
         "dry_run": dry_run,
+        "skipped": False,
+        "skip_reason": None,
     }
+
+    if not getattr(settings, 'ENABLE_SERVER_CLASS_REMINDERS', False):
+        stats["skipped"] = True
+        stats["skip_reason"] = "disabled_by_setting"
+        logger.info("Server-side class reminders are disabled (ENABLE_SERVER_CLASS_REMINDERS=False)")
+        return stats
     
     # Get all users with expo push tokens and active schedules
     users_with_tokens = User.objects.filter(
@@ -271,16 +286,18 @@ def send_upcoming_class_reminders(
         )
         
         for course in courses_today:
+            user_minutes_before = minutes_before or getattr(user, 'class_reminder_minutes_before', 15)
+
             start_time = parse_time_string(course.start_time)
             if not start_time:
                 continue
             
             # Check if class starts within the reminder window
-            # We check if the class starts between (now) and (now + minutes_before + 1)
+            # We check if the class starts between (now) and (now + user_minutes_before + 1)
             time_until_class = (start_time - now).total_seconds() / 60
             
-            # Send notification if class is between (minutes_before-1) and (minutes_before+1) minutes away
-            if minutes_before - 1 <= time_until_class <= minutes_before + 1:
+            # Send notification if class is between (user_minutes_before-1) and (user_minutes_before+1) minutes away
+            if user_minutes_before - 1 <= time_until_class <= user_minutes_before + 1:
                 # Dedup: skip if a class_reminder for this course was already sent today
                 from django.utils import timezone as tz
                 today_start = tz.now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -377,6 +394,7 @@ def notify_students_of_faculty_task(
         subject_code=subject_code,
         schedule__is_active=True,
         schedule__user__user_type='student',
+        schedule__user__is_active=True,
     ).select_related('schedule__user').exclude(
         schedule__user=faculty_user  # Exclude the faculty themselves
     )
@@ -392,6 +410,8 @@ def notify_students_of_faculty_task(
         faculty=faculty_user,
         subject_code=subject_code,
         status='active',
+        student__user_type='student',
+        student__is_active=True,
     ).select_related('student').exclude(
         student=faculty_user
     )
@@ -453,6 +473,127 @@ def notify_students_of_faculty_task(
 
     logger.info(f"Faculty task notification complete: {stats}")
     return stats
+
+
+def _chunked_bulk_create_notifications(notifications: List[Any], batch_size: int = 1000) -> int:
+    """Persist Notification objects in manageable chunks and return created count."""
+    if not notifications:
+        return 0
+
+    from api.models import Notification
+
+    Notification.objects.bulk_create(notifications, batch_size=batch_size)
+    return len(notifications)
+
+
+def notify_users_of_holiday(holiday) -> Dict[str, Any]:
+    """
+    Create in-app notification records for all active non-admin users
+    when a new holiday is created by admin.
+    """
+    from django.contrib.auth import get_user_model
+    from api.models import Notification
+
+    User = get_user_model()
+
+    recipients = User.objects.filter(
+        is_active=True,
+        is_superuser=False,
+    ).exclude(
+        is_staff=True,
+    )
+
+    date_label = holiday.date.isoformat()
+    if holiday.end_date:
+        date_label = f"{holiday.date.isoformat()} to {holiday.end_date.isoformat()}"
+
+    title = f"Holiday: {holiday.name}"
+    body = f"{holiday.name} is scheduled on {date_label}."
+    data_payload = {
+        "type": "holiday",
+        "holiday_id": holiday.id,
+        "holiday_type": holiday.holiday_type,
+        "date": str(holiday.date),
+        "end_date": str(holiday.end_date) if holiday.end_date else None,
+    }
+
+    notifications = [
+        Notification(
+            user=user,
+            notification_type='general',
+            title=title,
+            message=body,
+            data=data_payload,
+        )
+        for user in recipients
+    ]
+
+    stored = _chunked_bulk_create_notifications(notifications)
+    logger.info(
+        f"Holiday notification fan-out complete: holiday_id={holiday.id}, recipients={stored}"
+    )
+    return {
+        "users_notified": stored,
+        "notifications_stored": stored,
+    }
+
+
+def notify_users_of_calendar_event(event) -> Dict[str, Any]:
+    """
+    Create in-app notification records for active non-admin users
+    based on event visibility when a new calendar event is created.
+    """
+    from django.contrib.auth import get_user_model
+    from api.models import Notification
+
+    User = get_user_model()
+
+    recipients = User.objects.filter(
+        is_active=True,
+        is_superuser=False,
+    ).exclude(
+        is_staff=True,
+    )
+
+    if event.visibility == 'student':
+        recipients = recipients.filter(user_type='student')
+    elif event.visibility == 'faculty':
+        recipients = recipients.filter(user_type='faculty')
+
+    date_label = event.date.isoformat()
+    if event.end_date:
+        date_label = f"{event.date.isoformat()} to {event.end_date.isoformat()}"
+
+    title = f"New Event: {event.title}"
+    body = f"{event.title} is scheduled on {date_label}."
+    data_payload = {
+        "type": "calendar_event",
+        "event_id": event.id,
+        "event_type": event.event_type,
+        "visibility": event.visibility,
+        "date": str(event.date),
+        "end_date": str(event.end_date) if event.end_date else None,
+    }
+
+    notifications = [
+        Notification(
+            user=user,
+            notification_type='general',
+            title=title,
+            message=body,
+            data=data_payload,
+        )
+        for user in recipients
+    ]
+
+    stored = _chunked_bulk_create_notifications(notifications)
+    logger.info(
+        f"Calendar event notification fan-out complete: event_id={event.id}, visibility={event.visibility}, recipients={stored}"
+    )
+    return {
+        "users_notified": stored,
+        "notifications_stored": stored,
+    }
 
 
 def notify_remark(
