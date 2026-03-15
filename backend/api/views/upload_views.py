@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth import get_user_model
+from django.db import transaction
 import os
 import tempfile
 import traceback
@@ -24,6 +25,37 @@ class BaseCORUploadView(APIView):
     """
     permission_classes = [IsAuthenticated]
     upload_type = None  # Must be set by subclass ('student' or 'faculty')
+
+    def _write_extraction_log(
+        self,
+        *,
+        user,
+        uploaded_file,
+        extraction_method='none',
+        confidence=0.0,
+        courses_extracted=0,
+        success=False,
+        error_message='',
+        processing_time=0.0,
+        attempts=None,
+    ):
+        try:
+            file_ext = os.path.splitext(uploaded_file.name)[1].lower().lstrip('.')
+            ExtractionLog.objects.create(
+                user=user,
+                file_name=uploaded_file.name,
+                file_type=file_ext,
+                upload_type=self.upload_type,
+                extraction_method=extraction_method,
+                confidence=confidence,
+                courses_extracted=courses_extracted,
+                success=success,
+                error_message=(error_message or '')[:2000],
+                processing_time=processing_time,
+                attempts=attempts or [],
+            )
+        except Exception:
+            logger.exception("Failed to write ExtractionLog")
     
     def post(self, request):
         # Check if file was uploaded
@@ -68,9 +100,6 @@ class BaseCORUploadView(APIView):
             manager = ExtractionManager()
             result = manager.extract_schedule(temp_file_path, self.upload_type)
             
-            # Determine file extension for telemetry
-            _file_ext = os.path.splitext(uploaded_file.name)[1].lower().lstrip('.')
-            
             courses_data = result['courses']
             extracted_student_number = result.get('student_number', '')
             extraction_metadata = {
@@ -95,6 +124,21 @@ class BaseCORUploadView(APIView):
                         f"COR student number '{extracted_student_number}' does not match "
                         f"user student number '{user_student_number}'"
                     )
+                    self._write_extraction_log(
+                        user=request.user,
+                        uploaded_file=uploaded_file,
+                        extraction_method=result['extraction_method'],
+                        confidence=result['confidence'],
+                        courses_extracted=0,
+                        success=False,
+                        error_message=(
+                            "COR verification failed: extracted student number "
+                            f"'{extracted_student_number}' does not match registered "
+                            f"student number '{user_student_number}'."
+                        ),
+                        processing_time=result['processing_time'],
+                        attempts=result.get('attempts', []),
+                    )
                     return Response(
                         {
                             "error": "COR verification failed. The student number in "
@@ -106,6 +150,19 @@ class BaseCORUploadView(APIView):
                     )
             
             if not courses_data:
+                self._write_extraction_log(
+                    user=request.user,
+                    uploaded_file=uploaded_file,
+                    extraction_method=result['extraction_method'],
+                    confidence=result['confidence'],
+                    courses_extracted=0,
+                    success=False,
+                    error_message=(
+                        f"No courses found in extracted {self.upload_type.upper()} COR document."
+                    ),
+                    processing_time=result['processing_time'],
+                    attempts=result.get('attempts', []),
+                )
                 return Response(
                     {
                         "warning": "No courses found in the document",
@@ -119,17 +176,18 @@ class BaseCORUploadView(APIView):
             
             # Create Course objects in database
             created_courses = []
-            for course_dict in courses_data:
-                course = Course.objects.create(
-                    user=request.user,
-                    subject_code=course_dict.get('subject_code', ''),
-                    subject_name=course_dict.get('subject_name', ''),
-                    start_time=course_dict.get('start_time', ''),
-                    end_time=course_dict.get('end_time', ''),
-                    day=course_dict.get('day', ''),
-                    location=course_dict.get('location', '')
-                )
-                created_courses.append(course)
+            with transaction.atomic():
+                for course_dict in courses_data:
+                    course = Course.objects.create(
+                        user=request.user,
+                        subject_code=course_dict.get('subject_code', ''),
+                        subject_name=course_dict.get('subject_name', ''),
+                        start_time=course_dict.get('start_time', ''),
+                        end_time=course_dict.get('end_time', ''),
+                        day=course_dict.get('day', ''),
+                        location=course_dict.get('location', '')
+                    )
+                    created_courses.append(course)
             
             # Serialize created courses
             serializer = CourseSerializer(created_courses, many=True)
@@ -137,21 +195,16 @@ class BaseCORUploadView(APIView):
             logger.info(f"Successfully created {len(created_courses)} courses for user {request.user.id} ({self.upload_type.upper()} COR)")
             
             # Write extraction telemetry (success)
-            try:
-                ExtractionLog.objects.create(
-                    user=request.user,
-                    file_name=uploaded_file.name,
-                    file_type=_file_ext,
-                    upload_type=self.upload_type,
-                    extraction_method=result['extraction_method'],
-                    confidence=result['confidence'],
-                    courses_extracted=len(created_courses),
-                    success=True,
-                    processing_time=result['processing_time'],
-                    attempts=result.get('attempts', []),
-                )
-            except Exception:
-                logger.exception("Failed to write ExtractionLog (success)")
+            self._write_extraction_log(
+                user=request.user,
+                uploaded_file=uploaded_file,
+                extraction_method=result['extraction_method'],
+                confidence=result['confidence'],
+                courses_extracted=len(created_courses),
+                success=True,
+                processing_time=result['processing_time'],
+                attempts=result.get('attempts', []),
+            )
             
             return Response(
                 {
@@ -170,23 +223,17 @@ class BaseCORUploadView(APIView):
             logger.error(f"Error processing {self.upload_type.upper()} COR for user {request.user.id}: {str(e)}")
             
             # Write extraction telemetry (failure)
-            try:
-                _file_ext_err = os.path.splitext(uploaded_file.name)[1].lower().lstrip('.')
-                ExtractionLog.objects.create(
-                    user=request.user,
-                    file_name=uploaded_file.name,
-                    file_type=_file_ext_err,
-                    upload_type=self.upload_type,
-                    extraction_method='none',
-                    confidence=0.0,
-                    courses_extracted=0,
-                    success=False,
-                    error_message=traceback.format_exc()[:2000],
-                    processing_time=0.0,
-                    attempts=[],
-                )
-            except Exception:
-                logger.exception("Failed to write ExtractionLog (failure)")
+            self._write_extraction_log(
+                user=request.user,
+                uploaded_file=uploaded_file,
+                extraction_method='none',
+                confidence=0.0,
+                courses_extracted=0,
+                success=False,
+                error_message=traceback.format_exc(),
+                processing_time=0.0,
+                attempts=[],
+            )
             
             return Response(
                 {

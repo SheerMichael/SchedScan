@@ -14,13 +14,15 @@ Run with: python manage.py test api.tests.test_extraction_health --verbosity=2
 """
 
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.test import TestCase
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from api.models import ExtractionLog, IncidentReport
+from api.models import ExtractionLog, IncidentReport, Course
 
 User = get_user_model()
 
@@ -121,6 +123,126 @@ class SubmitIncidentReportViewTestCase(TestCase):
         self.assertEqual(len(report.description), 500)
 
 
+class UploadExtractionTelemetryViewTestCase(TestCase):
+    """Validate upload-path telemetry and transaction behavior for OCR health."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email="ocr_user@test.com",
+            password="pass1234",
+            first_name="OCR",
+            last_name="User",
+            student_number="2024-0001",
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def _post_upload(self, filename="test_cor.pdf"):
+        upload = SimpleUploadedFile(
+            filename,
+            b"fake-pdf-content",
+            content_type="application/pdf",
+        )
+        return self.client.post("/api/upload-cor/student/", {"file": upload}, format="multipart")
+
+    @patch("api.views.upload_views.ExtractionManager")
+    def test_no_courses_is_logged_as_failed_extraction(self, mock_manager_class):
+        mock_manager = mock_manager_class.return_value
+        mock_manager.extract_schedule.return_value = {
+            "courses": [],
+            "student_number": "2024-0001",
+            "extraction_method": "pdf_text",
+            "confidence": 0.72,
+            "processing_time": 0.21,
+            "attempts": ["pdf_text"],
+            "semester": "1st",
+            "school_year": "2025-2026",
+        }
+
+        response = self._post_upload()
+        self.assertEqual(response.status_code, 200)
+
+        self.assertEqual(ExtractionLog.objects.count(), 1)
+        log = ExtractionLog.objects.first()
+        self.assertFalse(log.success)
+        self.assertEqual(log.courses_extracted, 0)
+        self.assertEqual(log.extraction_method, "pdf_text")
+        self.assertIn("No courses found", log.error_message)
+
+    @patch("api.views.upload_views.ExtractionManager")
+    def test_student_number_mismatch_is_logged_as_failed_extraction(self, mock_manager_class):
+        mock_manager = mock_manager_class.return_value
+        mock_manager.extract_schedule.return_value = {
+            "courses": [{"subject_code": "CS101"}],
+            "student_number": "2024-9999",
+            "extraction_method": "pdf_text",
+            "confidence": 0.88,
+            "processing_time": 0.19,
+            "attempts": ["pdf_text"],
+            "semester": "1st",
+            "school_year": "2025-2026",
+        }
+
+        response = self._post_upload()
+        self.assertEqual(response.status_code, 403)
+
+        self.assertEqual(ExtractionLog.objects.count(), 1)
+        log = ExtractionLog.objects.first()
+        self.assertFalse(log.success)
+        self.assertIn("COR verification failed", log.error_message)
+
+    @patch("api.views.upload_views.ExtractionManager")
+    def test_course_creation_is_atomic_when_mid_loop_failure_occurs(self, mock_manager_class):
+        mock_manager = mock_manager_class.return_value
+        mock_manager.extract_schedule.return_value = {
+            "courses": [
+                {
+                    "subject_code": "CS101",
+                    "subject_name": "Intro to CS",
+                    "start_time": "08:00AM",
+                    "end_time": "09:00AM",
+                    "day": "M",
+                    "location": "R1",
+                },
+                {
+                    "subject_code": "CS102",
+                    "subject_name": "Data Structures",
+                    "start_time": "09:00AM",
+                    "end_time": "10:00AM",
+                    "day": "T",
+                    "location": "R2",
+                },
+            ],
+            "student_number": "2024-0001",
+            "extraction_method": "pdf_text",
+            "confidence": 0.91,
+            "processing_time": 0.31,
+            "attempts": ["pdf_text"],
+            "semester": "1st",
+            "school_year": "2025-2026",
+        }
+
+        original_create = Course.objects.create
+        call_count = {"n": 0}
+
+        def flaky_create(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 2:
+                raise Exception("Simulated DB insert failure")
+            return original_create(*args, **kwargs)
+
+        with patch("api.views.upload_views.Course.objects.create", side_effect=flaky_create):
+            response = self._post_upload()
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(Course.objects.filter(user=self.user).count(), 0)
+
+        self.assertEqual(ExtractionLog.objects.count(), 1)
+        log = ExtractionLog.objects.first()
+        self.assertFalse(log.success)
+        self.assertEqual(log.extraction_method, "none")
+
+
 # ---------------------------------------------------------------------------
 # Admin Endpoint Tests
 # ---------------------------------------------------------------------------
@@ -190,6 +312,12 @@ class AdminExtractionAnalyticsViewTestCase(AdminEndpointMixin, TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data["period_days"], 1)
 
+    def test_days_param_is_clamped_to_max(self):
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.get("/api/admin/extraction/analytics/?days=999")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["period_days"], 365)
+
 
 class AdminExtractionChartViewTestCase(AdminEndpointMixin, TestCase):
     """Test GET /api/admin/extraction/analytics/chart/"""
@@ -205,6 +333,64 @@ class AdminExtractionChartViewTestCase(AdminEndpointMixin, TestCase):
         self.assertIn("label", entry)
         self.assertIn("success", entry)
         self.assertIn("failure", entry)
+
+    def test_days_param_is_clamped_to_max(self):
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.get("/api/admin/extraction/analytics/chart/?days=999")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["days"], 90)
+
+    def test_chart_totals_match_analytics_totals_for_same_period(self):
+        self.client.force_authenticate(user=self.admin)
+
+        now = timezone.now()
+        old = now - timedelta(days=40)
+        in_window_1 = now - timedelta(days=2)
+        in_window_2 = now - timedelta(days=1)
+
+        old_log = ExtractionLog.objects.create(
+            file_name="old_fail.pdf",
+            file_type="pdf",
+            upload_type="student",
+            extraction_method="none",
+            confidence=0.0,
+            courses_extracted=0,
+            success=False,
+        )
+        in_window_success_log = ExtractionLog.objects.create(
+            file_name="in_window_success.pdf",
+            file_type="pdf",
+            upload_type="student",
+            extraction_method="pdf_text",
+            confidence=0.9,
+            courses_extracted=3,
+            success=True,
+        )
+        in_window_fail_log = ExtractionLog.objects.create(
+            file_name="in_window_fail.pdf",
+            file_type="pdf",
+            upload_type="student",
+            extraction_method="none",
+            confidence=0.0,
+            courses_extracted=0,
+            success=False,
+        )
+
+        ExtractionLog.objects.filter(pk=old_log.pk).update(created_at=old)
+        ExtractionLog.objects.filter(pk=in_window_success_log.pk).update(created_at=in_window_1)
+        ExtractionLog.objects.filter(pk=in_window_fail_log.pk).update(created_at=in_window_2)
+
+        analytics = self.client.get("/api/admin/extraction/analytics/?days=7")
+        chart = self.client.get("/api/admin/extraction/analytics/chart/?days=7")
+
+        self.assertEqual(analytics.status_code, 200)
+        self.assertEqual(chart.status_code, 200)
+
+        chart_success = sum(day["success"] for day in chart.data["data"])
+        chart_failure = sum(day["failure"] for day in chart.data["data"])
+
+        self.assertEqual(chart_success, analytics.data["successful"])
+        self.assertEqual(chart_failure, analytics.data["failed"])
 
 
 class AdminFailedExtractionListViewTestCase(AdminEndpointMixin, TestCase):
@@ -298,6 +484,12 @@ class AdminIncidentReportListViewTestCase(AdminEndpointMixin, TestCase):
         self.client.force_authenticate(user=self.admin)
         resp = self.client.get("/api/admin/incidents/?search=OCR")
         self.assertEqual(resp.data["count"], 1)
+
+    def test_invalid_status_filter_is_ignored(self):
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.get("/api/admin/incidents/?status=unknown_status")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["count"], 3)
 
     def test_non_staff_returns_403(self):
         self.client.force_authenticate(user=self.regular_user)

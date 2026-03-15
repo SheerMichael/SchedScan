@@ -5,7 +5,7 @@ All endpoints (except AdminLoginView) require is_staff=True via IsAdminUser perm
 JWT tokens are issued from the existing simplejwt token infrastructure.
 """
 import logging
-from datetime import timedelta, date
+from datetime import timedelta, date, datetime, time
 
 from django.contrib.auth import authenticate, get_user_model
 from django.db.models import Avg, Count, Sum, Q
@@ -983,8 +983,13 @@ class AdminExtractionAnalyticsView(APIView):
         except (ValueError, TypeError):
             days = 30
 
-        cutoff = timezone.now() - timedelta(days=days)
-        qs = ExtractionLog.objects.filter(created_at__gte=cutoff)
+        local_today = timezone.localdate()
+        start_date = local_today - timedelta(days=days - 1)
+        tz = timezone.get_current_timezone()
+        start_dt = timezone.make_aware(datetime.combine(start_date, time.min), tz)
+        end_dt = timezone.make_aware(datetime.combine(local_today + timedelta(days=1), time.min), tz)
+
+        qs = ExtractionLog.objects.filter(created_at__gte=start_dt, created_at__lt=end_dt)
 
         total = qs.count()
         successful = qs.filter(success=True).count()
@@ -1051,28 +1056,24 @@ class AdminExtractionChartView(APIView):
         except (ValueError, TypeError):
             days = 7
 
-        today = timezone.now().date()
-        start = today - timedelta(days=days - 1)
+        local_today = timezone.localdate()
+        start = local_today - timedelta(days=days - 1)
+        tz = timezone.get_current_timezone()
+        start_dt = timezone.make_aware(datetime.combine(start, time.min), tz)
+        end_dt = timezone.make_aware(datetime.combine(local_today + timedelta(days=1), time.min), tz)
 
-        # Success counts per day
-        success_raw = (
-            ExtractionLog.objects.filter(created_at__date__gte=start, success=True)
-            .annotate(day=TruncDate("created_at"))
+        by_day = (
+            ExtractionLog.objects.filter(created_at__gte=start_dt, created_at__lt=end_dt)
+            .annotate(day=TruncDate("created_at", tzinfo=tz))
             .values("day")
-            .annotate(count=Count("id"))
+            .annotate(
+                success_count=Count("id", filter=Q(success=True)),
+                failure_count=Count("id", filter=Q(success=False)),
+            )
             .order_by("day")
         )
-        success_map = {str(r["day"]): r["count"] for r in success_raw}
-
-        # Failure counts per day
-        failure_raw = (
-            ExtractionLog.objects.filter(created_at__date__gte=start, success=False)
-            .annotate(day=TruncDate("created_at"))
-            .values("day")
-            .annotate(count=Count("id"))
-            .order_by("day")
-        )
-        failure_map = {str(r["day"]): r["count"] for r in failure_raw}
+        success_map = {str(r["day"]): r["success_count"] for r in by_day}
+        failure_map = {str(r["day"]): r["failure_count"] for r in by_day}
 
         chart_data = []
         for i in range(days):

@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import {
   AlertCircle, Loader2, Search, Clock, ChevronLeft, ChevronRight,
   ArrowDown, ArrowUp, CheckCircle2, XCircle, FileText, Eye, X,
@@ -112,15 +112,21 @@ function AnalyticsTab({ refreshKey }) {
   const [chartDays, setChartDays] = useState(7);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const requestVersionRef = useRef(0);
 
   useEffect(() => {
+    const requestVersion = requestVersionRef.current + 1;
+    requestVersionRef.current = requestVersion;
+
     setLoading(true);
     setError(null);
+
     Promise.all([
       extractionApi.analytics(days),
       extractionApi.chart(chartDays),
     ])
       .then(([statsRes, chartRes]) => {
+        if (requestVersion !== requestVersionRef.current) return;
         setStats(statsRes.data);
         setChartData(
           chartRes.data.data.map((d) => ({
@@ -131,8 +137,14 @@ function AnalyticsTab({ refreshKey }) {
           }))
         );
       })
-      .catch((err) => setError(parseApiError(err).message))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (requestVersion !== requestVersionRef.current) return;
+        setError(parseApiError(err).message);
+      })
+      .finally(() => {
+        if (requestVersion !== requestVersionRef.current) return;
+        setLoading(false);
+      });
   }, [days, chartDays, refreshKey]);
 
   return (
@@ -260,18 +272,29 @@ function FailedExtractionsTab({ refreshKey }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [previewLog, setPreviewLog] = useState(null);
+  const requestVersionRef = useRef(0);
 
   const fetchLogs = useCallback(() => {
+    const requestVersion = requestVersionRef.current + 1;
+    requestVersionRef.current = requestVersion;
+
     setLoading(true);
     setError(null);
     extractionApi.failed({ search, page, page_size: 15 })
       .then((res) => {
+        if (requestVersion !== requestVersionRef.current) return;
         setLogs(res.data.results);
         setTotal(res.data.count);
         setTotalPages(res.data.total_pages);
       })
-      .catch((err) => setError(parseApiError(err).message))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (requestVersion !== requestVersionRef.current) return;
+        setError(parseApiError(err).message);
+      })
+      .finally(() => {
+        if (requestVersion !== requestVersionRef.current) return;
+        setLoading(false);
+      });
   }, [search, page, refreshKey]);
 
   useEffect(() => { fetchLogs(); }, [fetchLogs]);
@@ -308,7 +331,7 @@ function FailedExtractionsTab({ refreshKey }) {
             <thead>
               <tr className="bg-slate-800 text-white border-b-2 border-primary-900">
                 <th className="px-5 py-4 text-[10px] font-black uppercase tracking-[0.15em]">File</th>
-                <th className="px-5 py-4 text-[10px] font-black uppercase tracking-[0.15em]">Type</th>
+                <th className="px-5 py-4 text-[10px] font-black uppercase tracking-[0.15em]">Upload Type</th>
                 <th className="px-5 py-4 text-[10px] font-black uppercase tracking-[0.15em]">Method</th>
                 <th className="px-5 py-4 text-[10px] font-black uppercase tracking-[0.15em]">Confidence</th>
                 <th className="px-5 py-4 text-[10px] font-black uppercase tracking-[0.15em]">Error</th>
@@ -405,18 +428,29 @@ function IncidentReportsTab({ refreshKey }) {
   const [error, setError] = useState(null);
   const [editReport, setEditReport] = useState(null);
   const [saving, setSaving] = useState(false);
+  const requestVersionRef = useRef(0);
 
   const fetchReports = useCallback(() => {
+    const requestVersion = requestVersionRef.current + 1;
+    requestVersionRef.current = requestVersion;
+
     setLoading(true);
     setError(null);
     incidentsApi.list({ search, status: statusFilter, page, page_size: 15 })
       .then((res) => {
+        if (requestVersion !== requestVersionRef.current) return;
         setReports(res.data.results);
         setTotal(res.data.count);
         setTotalPages(res.data.total_pages);
       })
-      .catch((err) => setError(parseApiError(err).message))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (requestVersion !== requestVersionRef.current) return;
+        setError(parseApiError(err).message);
+      })
+      .finally(() => {
+        if (requestVersion !== requestVersionRef.current) return;
+        setLoading(false);
+      });
   }, [search, statusFilter, page, refreshKey]);
 
   useEffect(() => { fetchReports(); }, [fetchReports]);
