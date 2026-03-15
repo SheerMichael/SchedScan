@@ -34,6 +34,7 @@ export default function SubjectDetails() {
     endTime,         // end_time
     location,        // location
     day,             // day code
+    priorityLevel,   // 'Class' | 'Holiday' | 'Event'
     sourceType,      // 'student' | 'faculty' | 'merged' — schedule source type
   } = useLocalSearchParams();
 
@@ -41,6 +42,15 @@ export default function SubjectDetails() {
   const isFacultyCourse = sourceType === 'faculty';
 
   const subjectCode = Array.isArray(title) ? title[0] : title || '';
+  const normalizedPriorityLevel = (Array.isArray(priorityLevel) ? priorityLevel[0] : priorityLevel || '').toLowerCase();
+  const isNonClassItem = normalizedPriorityLevel === 'holiday' || normalizedPriorityLevel === 'event';
+  const taskLabelSingular = isNonClassItem ? 'Task' : 'Class Task';
+  const taskLabelPlural = isNonClassItem ? 'Tasks' : 'Class Tasks';
+  const addTaskLabel = isNonClassItem ? 'Add Task' : 'Add Class Task';
+  const noTasksLabel = isNonClassItem
+    ? 'No tasks yet. Create one below!'
+    : 'No class tasks yet. Create one below!';
+  const addTaskPlaceholder = isNonClassItem ? 'Enter task...' : 'Enter task for students...';
 
   // ============================================
   // Personal Task State (Student only)
@@ -431,7 +441,7 @@ export default function SubjectDetails() {
 
             {/* Faculty Tasks List */}
             <View className="flex-row justify-between items-center mb-3">
-              <Text className="text-xl font-bold">Class Tasks</Text>
+              <Text className="text-xl font-bold">{taskLabelPlural}</Text>
               {isFacultyLoading && <ActivityIndicator size="small" color="#f97316" />}
             </View>
 
@@ -441,7 +451,7 @@ export default function SubjectDetails() {
                 <Text className="text-gray-500 mt-2">Loading tasks...</Text>
               </View>
             ) : facultyTasks.length === 0 ? (
-              <Text className="text-gray-500 mb-4">No class tasks yet. Create one below!</Text>
+              <Text className="text-gray-500 mb-4">{noTasksLabel}</Text>
             ) : (
               facultyTasks.map((task) => (
                 <TouchableOpacity
@@ -479,12 +489,12 @@ export default function SubjectDetails() {
 
             {/* Add Faculty Task */}
             <View className="mt-4 mb-4">
-              <Text className="font-bold text-lg mb-2">Add Class Task</Text>
+              <Text className="font-bold text-lg mb-2">{addTaskLabel}</Text>
               <View className="bg-white p-3 rounded-xl shadow flex-row items-center">
                 <TextInput
                   value={newFacultyTaskText}
                   onChangeText={setNewFacultyTaskText}
-                  placeholder="Enter task for students..."
+                  placeholder={addTaskPlaceholder}
                   className="flex-1 text-base"
                   editable={!isAddingFacultyTask}
                   onSubmitEditing={handleAddFacultyTask}

@@ -1033,6 +1033,14 @@ class CalendarEvent(models.Model):
     date = models.DateField(
         help_text="Date of the event (for recurring: only month+day matter)"
     )
+    end_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Optional end date for multi-day events (inclusive). "
+            "Null means the event is a single day."
+        ),
+    )
     start_time = models.TimeField(
         null=True,
         blank=True,
@@ -1077,6 +1085,7 @@ class CalendarEvent(models.Model):
         ordering = ['date', 'start_time']
         indexes = [
             models.Index(fields=['date']),
+            models.Index(fields=['end_date']),
             models.Index(fields=['event_type']),
             models.Index(fields=['visibility']),
         ]
@@ -1084,6 +1093,8 @@ class CalendarEvent(models.Model):
     def __str__(self):
         label = "Recurring" if self.event_type == 'recurring' else "One-time"
         vis = self.get_visibility_display()
+        if self.end_date:
+            return f"{self.title} ({self.date} → {self.end_date}) [{label}] [{vis}]"
         return f"{self.title} ({self.date}) [{label}] [{vis}]"
 
 

@@ -4,8 +4,75 @@ export interface Holiday {
   id: number;
   name: string;
   date: string;          // "YYYY-MM-DD"
+  end_date?: string | null;
   holiday_type: 'one_time' | 'recurring';
 }
+
+const parseDateParts = (dateStr: string): [number, number, number] => {
+  const [yearStr, monthStr, dayStr] = dateStr.split('-');
+  return [parseInt(yearStr, 10), parseInt(monthStr, 10), parseInt(dayStr, 10)];
+};
+
+const toDateKey = (year: number, month: number, day: number): string => {
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+};
+
+const addRangeKeysWithinYear = (
+  startDate: Date,
+  endDate: Date,
+  displayYear: number,
+  pushKey: (key: string) => void,
+) => {
+  const cursor = new Date(startDate.getTime());
+  while (cursor <= endDate) {
+    const year = cursor.getFullYear();
+    if (year === displayYear) {
+      pushKey(toDateKey(year, cursor.getMonth() + 1, cursor.getDate()));
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+};
+
+const getHolidayKeysForYear = (holiday: Holiday, displayYear: number): string[] => {
+  const keys: string[] = [];
+
+  const addKey = (key: string) => {
+    if (!keys.includes(key)) keys.push(key);
+  };
+
+  const [, startMonth, startDay] = parseDateParts(holiday.date);
+  const endSource = holiday.end_date ?? holiday.date;
+  const [, endMonth, endDay] = parseDateParts(endSource);
+
+  if (holiday.holiday_type === 'recurring') {
+    const anchorYears = [displayYear - 1, displayYear];
+
+    for (const anchorYear of anchorYears) {
+      const startDate = new Date(anchorYear, startMonth - 1, startDay);
+      const endDate = new Date(anchorYear, endMonth - 1, endDay);
+
+      if (endDate < startDate) {
+        endDate.setFullYear(endDate.getFullYear() + 1);
+      }
+
+      addRangeKeysWithinYear(startDate, endDate, displayYear, addKey);
+    }
+
+    return keys;
+  }
+
+  const [startYear] = parseDateParts(holiday.date);
+  const startDate = new Date(startYear, startMonth - 1, startDay);
+  const endDate = new Date(
+    ...(() => {
+      const [ey, em, ed] = parseDateParts(endSource);
+      return [ey, em - 1, ed] as [number, number, number];
+    })(),
+  );
+
+  addRangeKeysWithinYear(startDate, endDate, displayYear, addKey);
+  return keys;
+};
 
 /**
  * Fetch holidays from the public API.
@@ -41,21 +108,21 @@ export const buildHolidayMap = (
   const map: Record<string, Holiday[]> = {};
 
   for (const h of holidays) {
-    let key: string;
-    if (h.holiday_type === 'recurring') {
-      // Use the display year so recurring holidays show up every year
-      const [, mm, dd] = h.date.split('-');
-      key = `${displayYear}-${mm}-${dd}`;
-    } else {
-      key = h.date;
+    const keys = getHolidayKeysForYear(h, displayYear);
+    for (const key of keys) {
+      if (!map[key]) map[key] = [];
+      map[key].push(h);
     }
-
-    if (!map[key]) map[key] = [];
-    map[key].push(h);
   }
 
   return map;
 };
 
-const holidayService = { getHolidays, buildHolidayMap };
+export const formatHolidayDateRange = (holiday: Holiday): string => {
+  const endDate = holiday.end_date ?? holiday.date;
+  if (holiday.date === endDate) return holiday.date;
+  return `${holiday.date} - ${endDate}`;
+};
+
+const holidayService = { getHolidays, buildHolidayMap, formatHolidayDateRange };
 export default holidayService;

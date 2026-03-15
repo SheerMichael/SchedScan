@@ -19,8 +19,8 @@ import FacultyModeModal from '../../components/FacultyModeModal';
 import JoinClassModal from '../../components/JoinClassModal';
 import notificationService from '../../services/notificationService';
 import { scheduleClassReminders } from '../../services/classReminderService';
-import { getHolidays, buildHolidayMap, Holiday } from '../../services/holidayService';
-import { getCalendarEvents, buildCalendarEventMap, formatEventTime, CalendarEvent } from '../../services/calendarEventService';
+import { getHolidays, buildHolidayMap, formatHolidayDateRange, Holiday } from '../../services/holidayService';
+import { getCalendarEvents, buildCalendarEventMap, formatEventTime, formatCalendarEventDateRange, CalendarEvent } from '../../services/calendarEventService';
 import { getSemesterMonths, getSemesterLabel, getInitialMonth } from '../../utils/semesterUtils';
 
 export default function SchedScanApp() {
@@ -509,7 +509,7 @@ export default function SchedScanApp() {
       result[dateKey] = hols.map(h => ({
         title: h.name,
         subjectName: '',
-        time: 'All Day',
+        time: `${formatHolidayDateRange(h)} • All Day`,
         startTime: '',
         endTime: '',
         location: '',
@@ -527,13 +527,15 @@ export default function SchedScanApp() {
     const result: { [key: string]: ScheduleItem[] } = {};
     for (const [dateKey, evts] of Object.entries(map)) {
       result[dateKey] = evts.map(e => {
-        const timeStr = e.start_time
+        const eventTime = e.start_time
           ? `${formatEventTime(e.start_time)}${e.end_time ? ` - ${formatEventTime(e.end_time)}` : ''}`
           : 'All Day';
+        const dateRange = formatCalendarEventDateRange(e);
+
         return {
           title: e.title,
           subjectName: e.description || '',
-          time: timeStr,
+          time: `${dateRange} • ${eventTime}`,
           startTime: e.start_time || '',
           endTime: e.end_time || '',
           location: e.location || '',
@@ -964,6 +966,7 @@ export default function SchedScanApp() {
                         endTime: item.endTime,
                         location: item.location,
                         day: item.day,
+                        priorityLevel: item.priority_level,
                         sourceType: item.source_type || activeSchedule?.uploadType || '',
                       }
                     });

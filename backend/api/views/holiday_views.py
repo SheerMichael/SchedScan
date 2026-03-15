@@ -5,8 +5,10 @@ These endpoints are accessible to any authenticated user (students, faculty, par
 so their calendars can display admin-created holidays.
 """
 import logging
+from calendar import monthrange
 from datetime import date
 
+from django.db.models import Q
 from rest_framework import status, serializers as drf_serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -22,8 +24,18 @@ class PublicHolidaySerializer(drf_serializers.ModelSerializer):
 
     class Meta:
         model = Holiday
-        fields = ["id", "name", "date", "holiday_type"]
+        fields = ["id", "name", "date", "end_date", "holiday_type"]
         read_only_fields = fields
+
+
+def _recurring_overlaps_month(holiday: Holiday, month: int) -> bool:
+    """Whether a recurring holiday's month/day range includes the given month."""
+    start_month = holiday.date.month
+    end_month = (holiday.end_date or holiday.date).month
+
+    if end_month >= start_month:
+        return start_month <= month <= end_month
+    return month >= start_month or month <= end_month
 
 
 class HolidayListView(APIView):
@@ -68,15 +80,30 @@ class HolidayListView(APIView):
             except (ValueError, TypeError):
                 month = None
 
-        # One-time holidays that fall in the requested year (+ optional month)
-        one_time_qs = Holiday.objects.filter(holiday_type="one_time", date__year=year)
+        # One-time holidays that overlap the requested year/month window.
         if month:
-            one_time_qs = one_time_qs.filter(date__month=month)
+            window_start = date(year, month, 1)
+            window_end = date(year, month, monthrange(year, month)[1])
+        else:
+            window_start = date(year, 1, 1)
+            window_end = date(year, 12, 31)
 
-        # Recurring holidays: match by month only (they repeat every year)
+        one_time_qs = Holiday.objects.filter(
+            holiday_type="one_time",
+            date__lte=window_end,
+        ).filter(
+            Q(end_date__isnull=True, date__gte=window_start)
+            | Q(end_date__gte=window_start)
+        )
+
+        # Recurring holidays: include ranges that overlap the requested month.
         recurring_qs = Holiday.objects.filter(holiday_type="recurring")
         if month:
-            recurring_qs = recurring_qs.filter(date__month=month)
+            recurring_ids = [
+                holiday.id for holiday in recurring_qs
+                if _recurring_overlaps_month(holiday, month)
+            ]
+            recurring_qs = recurring_qs.filter(id__in=recurring_ids)
 
         # Combine and deduplicate (union removes duplicates by default)
         holidays = (one_time_qs | recurring_qs).distinct().order_by("date")

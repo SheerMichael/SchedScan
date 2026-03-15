@@ -235,6 +235,7 @@ const ParentSignupScreen = () => {
                         <TextInput
                             className="border border-gray-300 rounded-lg px-4 py-3"
                             placeholder="First name"
+                            placeholderTextColor="#9CA3AF"
                             value={firstName}
                             onChangeText={setFirstName}
                         />
@@ -244,6 +245,7 @@ const ParentSignupScreen = () => {
                         <TextInput
                             className="border border-gray-300 rounded-lg px-4 py-3"
                             placeholder="Last name"
+                            placeholderTextColor="#9CA3AF"
                             value={lastName}
                             onChangeText={setLastName}
                         />
@@ -255,6 +257,7 @@ const ParentSignupScreen = () => {
                 <TextInput
                     className="border border-gray-300 rounded-lg px-4 py-3 mb-4"
                     placeholder="your.email@example.com"
+                    placeholderTextColor="#9CA3AF"
                     value={email}
                     onChangeText={setEmail}
                     keyboardType="email-address"
@@ -266,6 +269,7 @@ const ParentSignupScreen = () => {
                 <TextInput
                     className="border border-gray-300 rounded-lg px-4 py-3 mb-4"
                     placeholder="Min. 8 characters"
+                    placeholderTextColor="#9CA3AF"
                     value={password}
                     onChangeText={setPassword}
                     secureTextEntry
@@ -276,6 +280,7 @@ const ParentSignupScreen = () => {
                 <TextInput
                     className="border border-gray-300 rounded-lg px-4 py-3 mb-6"
                     placeholder="Confirm password"
+                    placeholderTextColor="#9CA3AF"
                     value={confirmPassword}
                     onChangeText={setConfirmPassword}
                     secureTextEntry

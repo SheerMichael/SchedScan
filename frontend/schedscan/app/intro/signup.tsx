@@ -110,6 +110,7 @@ const SignUp1Screen = ({
             <TextInput
               className="flex-1 bg-gray-50 border border-gray-200 rounded-xl p-4"
               placeholder="First Name"
+              placeholderTextColor="#9CA3AF"
               value={formData.first_name}
               onChangeText={(text) =>
                 setFormData((prev: SignUpData) => ({ ...prev, first_name: text }))
@@ -119,6 +120,7 @@ const SignUp1Screen = ({
             <TextInput
               className="flex-1 bg-gray-50 border border-gray-200 rounded-xl p-4"
               placeholder="Last Name"
+              placeholderTextColor="#9CA3AF"
               value={formData.last_name}
               onChangeText={(text) =>
                 setFormData((prev: SignUpData) => ({ ...prev, last_name: text }))
@@ -148,6 +150,7 @@ const SignUp1Screen = ({
                 : 'border-gray-200'
             }`}
             placeholder="Student Number (e.g., 2022-01191)"
+            placeholderTextColor="#9CA3AF"
             value={formData.student_number}
             onChangeText={(text) =>
               setFormData((prev: SignUpData) => ({ ...prev, student_number: text }))
@@ -211,6 +214,7 @@ const SignUp2Screen = ({
         <TextInput
           className="bg-gray-100 rounded-xl p-4 mb-5"
           placeholder="Email"
+          placeholderTextColor="#9CA3AF"
           keyboardType="email-address"
           value={formData.email}
           onChangeText={(text) =>
@@ -253,6 +257,7 @@ const SignUp3Screen = ({
         <TextInput
           className="bg-gray-100 rounded-xl p-4 mb-4"
           placeholder="Password"
+          placeholderTextColor="#9CA3AF"
           secureTextEntry
           value={formData.password}
           onChangeText={(text) =>
@@ -264,6 +269,7 @@ const SignUp3Screen = ({
         <TextInput
           className="bg-gray-100 rounded-xl p-4 mb-6"
           placeholder="Confirm Password"
+          placeholderTextColor="#9CA3AF"
           secureTextEntry
           value={formData.confirmPassword}
           onChangeText={(text) =>

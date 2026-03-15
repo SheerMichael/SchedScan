@@ -37,6 +37,39 @@ function formatTime(timeStr) {
   return `${h12}:${m} ${ampm}`;
 }
 
+function buildRecurringAnchoredRange(referenceYear, start, end) {
+  const startAnchor = new Date(referenceYear, start.getMonth(), start.getDate());
+  const endAnchor = new Date(referenceYear, end.getMonth(), end.getDate());
+  if (endAnchor < startAnchor) {
+    endAnchor.setFullYear(endAnchor.getFullYear() + 1);
+  }
+  return { startAnchor, endAnchor };
+}
+
+function recurringRangeIncludesDay(day, start, end) {
+  const currentRange = buildRecurringAnchoredRange(day.getFullYear(), start, end);
+  if (day >= currentRange.startAnchor && day <= currentRange.endAnchor) {
+    return true;
+  }
+
+  const previousRange = buildRecurringAnchoredRange(day.getFullYear() - 1, start, end);
+  return day >= previousRange.startAnchor && day <= previousRange.endAnchor;
+}
+
+function recurringRangeOverlapsMonth(monthDate, start, end) {
+  const monthStart = startOfMonth(monthDate);
+  const monthEnd = endOfMonth(monthDate);
+
+  const currentRange = buildRecurringAnchoredRange(monthDate.getFullYear(), start, end);
+  const overlapsCurrent = currentRange.startAnchor <= monthEnd && currentRange.endAnchor >= monthStart;
+  if (overlapsCurrent) {
+    return true;
+  }
+
+  const previousRange = buildRecurringAnchoredRange(monthDate.getFullYear() - 1, start, end);
+  return previousRange.startAnchor <= monthEnd && previousRange.endAnchor >= monthStart;
+}
+
 export default function CalendarControlScreen() {
   // ---- shared state
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -154,6 +187,7 @@ export default function CalendarControlScreen() {
         title: eventData.title,
         description: eventData.description || '',
         date: eventData.date,
+        end_date: eventData.end_date || null,
         start_time: eventData.start_time || null,
         end_time: eventData.end_time || null,
         location: eventData.location || '',
@@ -189,22 +223,49 @@ export default function CalendarControlScreen() {
   // ---- Calendar dot helpers
   const getHolidayForDay = (day) => {
     return holidays.find(h => {
-      const start = parseISO(h.startDate || h.date);
+      const start = parseISO(h.date);
       const end = h.endDate ? parseISO(h.endDate) : start;
       const isWithinRange = (isSameDay(day, start) || isAfter(day, start)) && (isSameDay(day, end) || isBefore(day, end));
-      const isRecurringMatch = day.getMonth() === start.getMonth() && day.getDate() === start.getDate();
-      if (h.type === "Recurring") return isRecurringMatch;
+      if (h.type === "Recurring") return recurringRangeIncludesDay(day, start, end);
       return isWithinRange;
     });
   };
 
   const getEventForDay = (day) => {
     return events.find(e => {
-      const eDate = parseISO(e.date);
+      const start = parseISO(e.date);
+      const end = e.end_date ? parseISO(e.end_date) : start;
       if (e.event_type === 'recurring') {
-        return day.getMonth() === eDate.getMonth() && day.getDate() === eDate.getDate();
+        const startMonth = start.getMonth();
+        const endMonth = end.getMonth();
+
+        const monthInRange = endMonth >= startMonth
+          ? day.getMonth() >= startMonth && day.getMonth() <= endMonth
+          : day.getMonth() >= startMonth || day.getMonth() <= endMonth;
+
+        if (!monthInRange) return false;
+
+        const monthStart = new Date(day.getFullYear(), day.getMonth(), 1);
+        const monthEnd = new Date(day.getFullYear(), day.getMonth() + 1, 0);
+
+        const startAnchor = new Date(day.getFullYear(), start.getMonth(), start.getDate());
+        const endAnchor = new Date(day.getFullYear(), end.getMonth(), end.getDate());
+        if (endAnchor < startAnchor) {
+          endAnchor.setFullYear(endAnchor.getFullYear() + 1);
+        }
+
+        const inCurrentYearRange = day >= startAnchor && day <= endAnchor;
+
+        const prevStartAnchor = new Date(day.getFullYear() - 1, start.getMonth(), start.getDate());
+        const prevEndAnchor = new Date(day.getFullYear() - 1, end.getMonth(), end.getDate());
+        if (prevEndAnchor < prevStartAnchor) {
+          prevEndAnchor.setFullYear(prevEndAnchor.getFullYear() + 1);
+        }
+        const inPrevYearCrossRange = day >= prevStartAnchor && day <= prevEndAnchor;
+
+        return (inCurrentYearRange || inPrevYearCrossRange) && day >= monthStart && day <= monthEnd;
       }
-      return isSameDay(day, eDate);
+      return (isSameDay(day, start) || isAfter(day, start)) && (isSameDay(day, end) || isBefore(day, end));
     });
   };
 
@@ -217,8 +278,7 @@ export default function CalendarControlScreen() {
       const monthStart = startOfMonth(currentMonth);
       const monthEnd = endOfMonth(currentMonth);
       if (h.type === 'Recurring') {
-        // For recurring, match by month/day of start
-        return hStart.getMonth() === currentMonth.getMonth();
+        return recurringRangeOverlapsMonth(currentMonth, hStart, hEnd);
       }
       // Overlap: holiday range overlaps the current month
       return hStart <= monthEnd && hEnd >= monthStart;
@@ -227,11 +287,21 @@ export default function CalendarControlScreen() {
 
   const visibleEvents = useMemo(() => {
     return events.filter(e => {
-      const eDate = parseISO(e.date);
+      const eStart = parseISO(e.date);
+      const eEnd = e.end_date ? parseISO(e.end_date) : eStart;
+      const monthStart = startOfMonth(currentMonth);
+      const monthEnd = endOfMonth(currentMonth);
+
       if (e.event_type === 'recurring') {
-        return eDate.getMonth() === currentMonth.getMonth();
+        const startMonth = eStart.getMonth();
+        const endMonth = eEnd.getMonth();
+        if (endMonth >= startMonth) {
+          return currentMonth.getMonth() >= startMonth && currentMonth.getMonth() <= endMonth;
+        }
+        return currentMonth.getMonth() >= startMonth || currentMonth.getMonth() <= endMonth;
       }
-      return isSameMonth(eDate, currentMonth);
+
+      return eStart <= monthEnd && eEnd >= monthStart;
     });
   }, [currentMonth, events]);
 
@@ -328,7 +398,9 @@ export default function CalendarControlScreen() {
                           <td className="px-6 py-5 text-sm font-black text-slate-900 uppercase tracking-tight">{holiday.name}</td>
                           <td className="px-6 py-5 text-[11px] font-bold text-slate-500 uppercase tracking-tighter">
                             {holiday.type === "Recurring"
-                              ? format(parseISO(holiday.date), 'MMMM dd') + " [ANNUAL]"
+                              ? holiday.endDate
+                                ? `${format(parseISO(holiday.date), 'MMM dd')} → ${format(parseISO(holiday.endDate), 'MMM dd')} [ANNUAL]`
+                                : format(parseISO(holiday.date), 'MMMM dd') + " [ANNUAL]"
                               : holiday.endDate
                                 ? `${format(parseISO(holiday.date), 'MMM dd, yyyy')} → ${format(parseISO(holiday.endDate), 'MMM dd, yyyy')}`
                                 : format(parseISO(holiday.date), 'MMMM dd, yyyy')
@@ -406,8 +478,12 @@ export default function CalendarControlScreen() {
                           <td className="px-6 py-5 text-[11px] font-bold text-slate-500 uppercase tracking-tighter">
                             <div>
                               {event.event_type === 'recurring'
-                                ? format(parseISO(event.date), 'MMMM dd') + " [ANNUAL]"
-                                : format(parseISO(event.date), 'MMMM dd, yyyy')
+                                ? event.end_date
+                                  ? `${format(parseISO(event.date), 'MMM dd')} → ${format(parseISO(event.end_date), 'MMM dd')} [ANNUAL]`
+                                  : format(parseISO(event.date), 'MMMM dd') + " [ANNUAL]"
+                                : event.end_date
+                                  ? `${format(parseISO(event.date), 'MMM dd, yyyy')} → ${format(parseISO(event.end_date), 'MMM dd, yyyy')}`
+                                  : format(parseISO(event.date), 'MMMM dd, yyyy')
                               }
                             </div>
                             {event.start_time && (

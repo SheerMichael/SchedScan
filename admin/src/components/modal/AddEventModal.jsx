@@ -6,6 +6,7 @@ export default function AddEventModal({ isOpen, onClose, onSave, initialData, is
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [eventDate, setEventDate] = useState('');
+  const [eventEndDate, setEventEndDate] = useState('');
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [location, setLocation] = useState('');
@@ -17,6 +18,7 @@ export default function AddEventModal({ isOpen, onClose, onSave, initialData, is
       setTitle(initialData.title || '');
       setDescription(initialData.description || '');
       setEventDate(initialData.date || '');
+      setEventEndDate(initialData.end_date || '');
       setStartTime(initialData.start_time || '');
       setEndTime(initialData.end_time || '');
       setLocation(initialData.location || '');
@@ -27,6 +29,7 @@ export default function AddEventModal({ isOpen, onClose, onSave, initialData, is
       setTitle('');
       setDescription('');
       setEventDate(today);
+      setEventEndDate('');
       setStartTime('');
       setEndTime('');
       setLocation('');
@@ -45,6 +48,16 @@ export default function AddEventModal({ isOpen, onClose, onSave, initialData, is
       return;
     }
 
+    if (eventEndDate && !/^\d{4}-\d{2}-\d{2}$/.test(eventEndDate)) {
+      toast.error('Invalid end date format. Please use the date picker.');
+      return;
+    }
+
+    if (eventEndDate && eventEndDate < eventDate) {
+      toast.error('End date must be on or after the start date.');
+      return;
+    }
+
     if (startTime && endTime && startTime >= endTime) {
       toast.error('End time must be after start time.');
       return;
@@ -55,6 +68,7 @@ export default function AddEventModal({ isOpen, onClose, onSave, initialData, is
       title,
       description,
       date: eventDate,
+      end_date: eventEndDate || null,
       start_time: startTime || null,
       end_time: endTime || null,
       location,
@@ -106,18 +120,34 @@ export default function AddEventModal({ isOpen, onClose, onSave, initialData, is
             />
           </div>
 
-          {/* Date */}
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Event Date</label>
-            <div className="relative">
-              <input
-                type="date"
-                required
-                value={eventDate}
-                onChange={(e) => setEventDate(e.target.value)}
-                className="w-full pl-9 pr-3 py-4 bg-white border-2 border-slate-900 rounded-none font-bold text-sm focus:outline-none focus:bg-primary-50/20 cursor-pointer"
-              />
-              <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+          {/* Date range */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Start Date</label>
+              <div className="relative">
+                <input
+                  type="date"
+                  required
+                  value={eventDate}
+                  onChange={(e) => setEventDate(e.target.value)}
+                  className="w-full pl-9 pr-3 py-4 bg-white border-2 border-slate-900 rounded-none font-bold text-sm focus:outline-none focus:bg-primary-50/20 cursor-pointer"
+                />
+                <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">End Date (Optional)</label>
+              <div className="relative">
+                <input
+                  type="date"
+                  value={eventEndDate}
+                  min={eventDate || undefined}
+                  onChange={(e) => setEventEndDate(e.target.value)}
+                  className="w-full pl-9 pr-3 py-4 bg-white border-2 border-slate-900 rounded-none font-bold text-sm focus:outline-none focus:bg-primary-50/20 cursor-pointer"
+                />
+                <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
             </div>
           </div>
 
