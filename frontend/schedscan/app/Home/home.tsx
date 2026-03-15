@@ -967,7 +967,10 @@ export default function SchedScanApp() {
                         location: item.location,
                         day: item.day,
                         priorityLevel: item.priority_level,
-                        sourceType: item.source_type || activeSchedule?.uploadType || '',
+                        sourceType:
+                          item.priority_level === 'Class'
+                            ? (item.source_type || activeSchedule?.uploadType || '')
+                            : '',
                       }
                     });
                   }}

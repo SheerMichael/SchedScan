@@ -38,12 +38,12 @@ export default function SubjectDetails() {
     sourceType,      // 'student' | 'faculty' | 'merged' — schedule source type
   } = useLocalSearchParams();
 
-  // Determine if this course is from a faculty-extracted schedule
-  const isFacultyCourse = sourceType === 'faculty';
-
   const subjectCode = Array.isArray(title) ? title[0] : title || '';
   const normalizedPriorityLevel = (Array.isArray(priorityLevel) ? priorityLevel[0] : priorityLevel || '').toLowerCase();
+  const normalizedSourceType = (Array.isArray(sourceType) ? sourceType[0] : sourceType || '').toLowerCase();
+  const isClassItem = normalizedPriorityLevel !== 'holiday' && normalizedPriorityLevel !== 'event';
   const isNonClassItem = normalizedPriorityLevel === 'holiday' || normalizedPriorityLevel === 'event';
+  const isFacultyCourse = isClassItem && normalizedSourceType === 'faculty';
   const taskLabelSingular = isNonClassItem ? 'Task' : 'Class Task';
   const taskLabelPlural = isNonClassItem ? 'Tasks' : 'Class Tasks';
   const addTaskLabel = isNonClassItem ? 'Add Task' : 'Add Class Task';
