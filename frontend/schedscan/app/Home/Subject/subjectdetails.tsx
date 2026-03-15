@@ -80,6 +80,7 @@ export default function SubjectDetails() {
   // ============================================
   const [isEnrolled, setIsEnrolled] = useState(false);
   const [showJoinClassModal, setShowJoinClassModal] = useState(false);
+  const canShowJoinClassCode = isStudent && isClassItem && !isEnrolled && !isFacultyCourse;
 
   // ============================================
   // Student Remarks State (Student only)
@@ -597,7 +598,7 @@ export default function SubjectDetails() {
                     </View>
                   </View>
                 ))
-              ) : !isEnrolled && !isFacultyCourse ? (
+              ) : canShowJoinClassCode ? (
                 /* Join Class Code — opens the verification modal */
                 <View className="bg-gray-50 p-4 rounded-xl border border-gray-200">
                   <Text className="text-gray-600 text-sm mb-3">

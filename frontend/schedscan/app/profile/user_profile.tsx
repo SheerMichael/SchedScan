@@ -218,18 +218,6 @@ const UserProfile = () => {
                                     </View>
                                 </TouchableOpacity>
                             )}
-                            {premiumuser && (
-                                <TouchableOpacity
-                                    className="p-4 flex-row items-center gap-2"
-                                    onPress={() =>
-                                        router.push({
-                                            pathname: '../intro/signup',
-                                            params: { isParent: 'true' }
-                                        })}>
-                                    <Users />
-                                    <Text className="text-base">Create Parent Account</Text>
-                                </TouchableOpacity>
-                            )}
                         </View>
                     </View>
 

@@ -694,6 +694,21 @@ export default function SchedScanApp() {
     selectDay(new Date().getDate());
   }, [])
 
+  const classItemsToday = daySchedule.filter(item => item.priority_level === 'Class');
+  const classesTodayCount = classItemsToday.length;
+  const teachingTodayCount =
+    activeSchedule?.uploadType === 'faculty'
+      ? classesTodayCount
+      : activeSchedule?.uploadType === 'merged'
+        ? classItemsToday.filter(item => item.source_type === 'faculty').length
+        : 0;
+  const attendingTodayCount =
+    activeSchedule?.uploadType === 'student'
+      ? classesTodayCount
+      : activeSchedule?.uploadType === 'merged'
+        ? classItemsToday.filter(item => item.source_type === 'student').length
+        : 0;
+
   return (
     <>
       <View className="w-full h-14 bg-white border-b-2 border-gray-200 justify-between items-center flex-row">
@@ -771,33 +786,21 @@ export default function SchedScanApp() {
           {/* Classes Today */}
           <View className="flex-1 bg-white rounded-xl p-4 items-center border border-red-200 mx-1">
             <Classes_Today size={24} />
-            <Text className="text-3xl font-bold text-primary-600">{daySchedule.length}</Text>
+            <Text className="text-3xl font-bold text-primary-600">{classesTodayCount}</Text>
             <Text className="text-sm text-gray-500">Classes Today</Text>
           </View>
 
           {/* Teaching - shows count for faculty schedules or faculty courses in merged */}
           <View className="flex-1 bg-white rounded-xl p-4 items-center border border-orange-200 mx-1">
             <Teaching size={24} />
-            <Text className="text-3xl font-bold text-orange-500">
-              {activeSchedule?.uploadType === 'faculty'
-                ? daySchedule.length
-                : activeSchedule?.uploadType === 'merged'
-                  ? daySchedule.filter(item => item.source_type === 'faculty').length
-                  : 0}
-            </Text>
+            <Text className="text-3xl font-bold text-orange-500">{teachingTodayCount}</Text>
             <Text className="text-sm text-gray-500">Teaching</Text>
           </View>
 
           {/* Attending - shows count for student schedules or student courses in merged */}
           <View className="flex-1 bg-white rounded-xl p-4 items-center border border-red-200 mx-1">
             <Attending size={24} />
-            <Text className="text-3xl font-bold text-red-600">
-              {activeSchedule?.uploadType === 'student'
-                ? daySchedule.length
-                : activeSchedule?.uploadType === 'merged'
-                  ? daySchedule.filter(item => item.source_type === 'student').length
-                  : 0}
-            </Text>
+            <Text className="text-3xl font-bold text-red-600">{attendingTodayCount}</Text>
             <Text className="text-sm text-gray-500">Attending</Text>
           </View>
         </View>
