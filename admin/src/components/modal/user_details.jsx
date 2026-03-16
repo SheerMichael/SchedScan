@@ -58,6 +58,27 @@ export default function UserDetailsModal({ isOpen, onClose, user, loading = fals
       }));
   }, [user?.role, linkedAccounts]);
 
+  const groupedSchedule = useMemo(() => {
+    if (!user?.schedule?.length) return [];
+
+    const grouped = user.schedule.reduce((acc, item) => {
+      const subjectCode = item.subject_code || "UNASSIGNED";
+      if (!acc[subjectCode]) {
+        acc[subjectCode] = [];
+      }
+      acc[subjectCode].push(item);
+      return acc;
+    }, {});
+
+    return Object.keys(grouped)
+      .sort((a, b) => a.localeCompare(b))
+      .map((subjectCode) => ({
+        subjectCode,
+        isActive: activeClass?.subject_code === subjectCode,
+        meetings: grouped[subjectCode],
+      }));
+  }, [user?.schedule, activeClass]);
+
   if (!isOpen) return null;
 
   return (
@@ -138,22 +159,28 @@ export default function UserDetailsModal({ isOpen, onClose, user, loading = fals
                         {error}
                       </div>
                     ) : viewMode === "schedule" ? (
-                      user.schedule?.length ? (
-                        user.schedule.map((item, idx) => (
-                          <div key={idx} className={`p-4 border-2 rounded-none transition-all ${
-                            activeClass?.subject_code === item.subject_code &&
-                            activeClass?.day === item.day &&
-                            activeClass?.start_time === item.start_time
+                      groupedSchedule.length ? (
+                        groupedSchedule.map((subject, idx) => (
+                          <div key={`${subject.subjectCode}-${idx}`} className={`p-4 border-2 rounded-none transition-all ${
+                            subject.isActive
                               ? "border-primary-800 bg-primary-50/30 shadow-[4px_4px_0px_0px_rgba(185,28,28,0.1)]"
                               : "border-slate-200 bg-white"
                           }`}>
                             <div className="flex justify-between items-center mb-2">
-                              <span className="text-sm font-black text-slate-900">{item.subject_code}</span>
-                              <span className="text-[10px] font-black bg-slate-900 text-white px-2 py-0.5">{item.location || 'TBA'}</span>
+                              <span className="text-sm font-black text-slate-900">{subject.subjectCode}</span>
+                              <span className="text-[10px] font-black bg-slate-900 text-white px-2 py-0.5">
+                                {subject.meetings.length} Slot{subject.meetings.length > 1 ? 's' : ''}
+                              </span>
                             </div>
-                            <div className="flex items-center gap-4 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                              <span className="flex items-center gap-1"><Clock size={12}/> {item.start_time}-{item.end_time}</span>
-                              <span className="flex items-center gap-1"><Calendar size={12}/> {item.day || 'TBA'}</span>
+
+                            <div className="space-y-2">
+                              {subject.meetings.map((item, itemIdx) => (
+                                <div key={`${subject.subjectCode}-${item.day}-${item.start_time}-${itemIdx}`} className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                                  <span className="flex items-center gap-1"><Clock size={12}/> {item.start_time}-{item.end_time}</span>
+                                  <span className="flex items-center gap-1"><Calendar size={12}/> {item.day || 'TBA'}</span>
+                                  <span className="text-[10px] font-black bg-slate-900 text-white px-2 py-0.5">{item.location || 'TBA'}</span>
+                                </div>
+                              ))}
                             </div>
                           </div>
                         ))
