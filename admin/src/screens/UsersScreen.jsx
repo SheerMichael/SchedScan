@@ -46,6 +46,9 @@ export default function UsersScreen() {
 
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [detailsUser, setDetailsUser] = useState(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsError, setDetailsError] = useState(null);
+  const detailsRequestSeq = useRef(0);
 
   // -----------------------------------------------------------------------
   // Fetch users whenever filters / page change
@@ -104,6 +107,84 @@ export default function UsersScreen() {
       setDeactivateError(parseApiError(err).message);
     } finally {
       setDeactivating(false);
+    }
+  };
+
+  const openDetailsModal = async (user) => {
+    const requestId = ++detailsRequestSeq.current;
+
+    const baseUser = {
+      ...user,
+      name: `${user.first_name} ${user.last_name}`.trim() || user.full_name,
+      role: capitalize(user.user_type),
+      status: user.is_active ? 'Active' : 'Inactive',
+      joinDate: new Date(user.created_at).toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric',
+      }),
+      schedule: [],
+      linked_students: [],
+      linked_parents: [],
+      enrolled_students: [],
+    };
+
+    setDetailsUser(baseUser);
+    setDetailsError(null);
+    setDetailsLoading(true);
+    setIsDetailsOpen(true);
+
+    try {
+      const { data } = await usersApi.getActivity(user.id);
+
+      if (requestId !== detailsRequestSeq.current) return;
+
+      const schedule = data.current_schedule_courses || [];
+
+      const linkedStudents = (data.child_links || []).map((link) => ({
+        id: link.child_id,
+        first_name: link.child__first_name,
+        last_name: link.child__last_name,
+        name: `${link.child__first_name || ''} ${link.child__last_name || ''}`.trim(),
+        email: link.child__email,
+        student_number: link.child__student_number,
+        role: 'Student',
+        status: 'Active',
+      }));
+
+      const linkedParents = (data.parent_links || []).map((link) => ({
+        id: link.parent_id,
+        first_name: link.parent__first_name,
+        last_name: link.parent__last_name,
+        name: `${link.parent__first_name || ''} ${link.parent__last_name || ''}`.trim(),
+        email: link.parent__email,
+        role: 'Parent',
+        status: 'Active',
+      }));
+
+      const enrolledStudents = (data.faculty_enrollments || []).map((enrollment) => ({
+        id: enrollment.student_id,
+        first_name: enrollment.student__first_name,
+        last_name: enrollment.student__last_name,
+        name: `${enrollment.student__first_name || ''} ${enrollment.student__last_name || ''}`.trim(),
+        email: enrollment.student__email,
+        role: 'Student',
+        status: 'Active',
+        subject_code: enrollment.subject_code,
+      }));
+
+      setDetailsUser((prev) => ({
+        ...prev,
+        schedule,
+        linked_students: linkedStudents,
+        linked_parents: linkedParents,
+        enrolled_students: enrolledStudents,
+      }));
+    } catch (err) {
+      if (requestId !== detailsRequestSeq.current) return;
+      setDetailsError(parseApiError(err).message);
+    } finally {
+      if (requestId === detailsRequestSeq.current) {
+        setDetailsLoading(false);
+      }
     }
   };
 
@@ -199,18 +280,7 @@ export default function UsersScreen() {
                     return (
                       <tr
                         key={user.id}
-                        onClick={() => {
-                          setDetailsUser({
-                            ...user,
-                            name: `${user.first_name} ${user.last_name}`.trim() || user.full_name,
-                            role: capitalize(user.user_type),
-                            status: user.is_active ? 'Active' : 'Inactive',
-                            joinDate: new Date(user.created_at).toLocaleDateString('en-US', {
-                              month: 'short', day: 'numeric', year: 'numeric',
-                            }),
-                          });
-                          setIsDetailsOpen(true);
-                        }}
+                        onClick={() => openDetailsModal(user)}
                         className="hover:bg-primary-50/30 transition-colors cursor-pointer group"
                       >
                         <td className="px-6 py-5">
@@ -327,10 +397,17 @@ export default function UsersScreen() {
 
       {/* User details modal */}
       <UserDetailsModal
+        key={detailsUser?.id || 'no-user'}
         isOpen={isDetailsOpen}
-        onClose={() => setIsDetailsOpen(false)}
+        onClose={() => {
+          detailsRequestSeq.current += 1;
+          setIsDetailsOpen(false);
+          setDetailsLoading(false);
+          setDetailsError(null);
+        }}
         user={detailsUser}
-        allUsers={users}
+        loading={detailsLoading}
+        error={detailsError}
       />
     </div>
   );

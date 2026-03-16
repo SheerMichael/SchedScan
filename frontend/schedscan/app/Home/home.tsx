@@ -751,7 +751,7 @@ export default function SchedScanApp() {
       {/* Offline Banner */}
       {isOffline && (
         <View className="bg-amber-500 px-4 py-2 flex-row items-center justify-center">
-          <Text className="text-white text-sm font-semibold">⚡ You're offline — changes will sync when reconnected</Text>
+          <Text className="text-white text-sm font-semibold">⚡ You&apos;re offline — changes will sync when reconnected</Text>
         </View>
       )}
 
@@ -819,10 +819,10 @@ export default function SchedScanApp() {
           </View>
         )}
 
-        {/* Filter Buttons */}
+        {/*
+        Filter Buttons
         <View className="flex-row justify-evenly mt-3 px-4">
 
-          {/* All Schedules */}
           <TouchableOpacity onPress={() => setSelectedFilter('all')} className={`px-4 py-2 rounded-full border w-1/3 items-center
               ${selectedFilter === 'all' ? 'bg-primary-500 border-primary-400' : 'bg-white border-primary-400'}`}>
             <Text className={`text-xs font-semibold ${selectedFilter === 'all' ? 'text-white' : 'text-red-600'}`}>
@@ -830,24 +830,23 @@ export default function SchedScanApp() {
             </Text>
           </TouchableOpacity>
 
-          {/* Teaching Only */}
           <TouchableOpacity onPress={() => setSelectedFilter('teaching')} className={`px-4 py-2 rounded-full border w-1/3 items-center mx-1
               ${selectedFilter === 'teaching' ? 'bg-primary-500 border-primary-400' : 'bg-white border-primary-400'}`}>
-            <Text className={`text-xs font-semibold 
+            <Text className={`text-xs font-semibold
               ${selectedFilter === 'teaching' ? 'text-white' : 'text-red-600'}`}>
               Teaching Only
             </Text>
           </TouchableOpacity>
 
-          {/* Attending */}
           <TouchableOpacity onPress={() => setSelectedFilter('attending')} className={`px-4 py-2 rounded-full border w-1/3 items-center
               ${selectedFilter === 'attending' ? 'bg-primary-500 border-primary-400' : 'bg-white border-primary-400'}`}>
-            <Text className={`text-xs font-semibold 
+            <Text className={`text-xs font-semibold
               ${selectedFilter === 'attending' ? 'text-white' : 'text-red-600'}`}>
               Attending Class
             </Text>
           </TouchableOpacity>
         </View>
+        */}
 
         {/* Join a Class Button (Students & Faculty) */}
         {(user?.user_type === 'student' || user?.user_type === 'faculty') && (
@@ -944,7 +943,7 @@ export default function SchedScanApp() {
 
         {/* Daily Schedule */}
         <View className="px-4 mt-4 mb-20">
-          <Text className="text-lg font-bold mb-2">Today's Schedule</Text>
+          <Text className="text-lg font-bold mb-2">Today&apos;s Schedule</Text>
 
           {isLoadingCourses ? (
             <View className="py-8 items-center">

@@ -8,19 +8,20 @@ import { usePushNotification } from "../../usePushNotification";
 import { useFocusEffect } from '@react-navigation/native';
 import notificationService, { NotificationItem as NotifType } from '../../services/notificationService';
 
-const notificationscreen = () => {
+const NotificationScreen = () => {
     const [notifications, setNotifications] = useState<(NotifType & { isDismissed?: boolean })[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [unreadCount, setUnreadCount] = useState(0);
+    const [isClearingAll, setIsClearingAll] = useState(false);
 
-    const { notification, expoPushToken } = usePushNotification();
+    const { notification } = usePushNotification();
 
     // Fetch notifications from backend
     const fetchNotifications = async (showLoader = true) => {
         try {
             if (showLoader) setIsLoading(true);
-            const data = await notificationService.getNotifications(1, 50);
+            const data = await notificationService.getNotifications(1, 50, false);
             setNotifications(data.notifications.map(n => ({ ...n, isDismissed: false })));
             setUnreadCount(data.unread_count);
         } catch (error) {
@@ -87,6 +88,12 @@ const notificationscreen = () => {
     };
 
     const handleClearAll = async () => {
+        if (isClearingAll || notifications.length === 0) return;
+
+        const previousNotifications = notifications;
+        const previousUnreadCount = unreadCount;
+
+        setIsClearingAll(true);
         setNotifications(prev =>
             prev.map(notif => ({ ...notif, isDismissed: true, is_read: true }))
         );
@@ -96,6 +103,10 @@ const notificationscreen = () => {
             await notificationService.markAllNotificationsRead();
         } catch (error) {
             console.error('Failed to mark all as read:', error);
+            setNotifications(previousNotifications);
+            setUnreadCount(previousUnreadCount);
+        } finally {
+            setIsClearingAll(false);
         }
     };
 
@@ -127,10 +138,11 @@ const notificationscreen = () => {
 
                 <View className="pr-4 flex items-center justify-center">
                     <TouchableOpacity 
-                        className="bg-orange-600 p-2 pr-4 pl-4 rounded-full"
+                        className={`p-2 pr-4 pl-4 rounded-full ${isClearingAll || visibleNotifications.length === 0 ? 'bg-orange-300' : 'bg-orange-600'}`}
                         onPress={handleClearAll}
+                        disabled={isClearingAll || visibleNotifications.length === 0}
                     >
-                        <Text className="text-white">Clear</Text>
+                        <Text className="text-white">{isClearingAll ? 'Clearing...' : 'Clear'}</Text>
                     </TouchableOpacity>
                 </View>
             </View>
@@ -161,11 +173,11 @@ const notificationscreen = () => {
             ) : 
                 <View className='flex-1 justify-center items-center'>
                     <Text>No notifications!</Text>
-                    <Text>You're all caught up</Text>
+                    <Text>You&apos;re all caught up</Text>
                 </View>
             }
         </GestureHandlerRootView>
     );
 };
 
-export default notificationscreen;
+export default NotificationScreen;

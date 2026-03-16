@@ -21,6 +21,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from ..models import (
     AdminAuditLog,
     ClassEnrollment,
+    Course,
     ExtractionLog,
     Holiday,
     IncidentReport,
@@ -445,6 +446,7 @@ class AdminUserActivityView(APIView):
 
     Returns a read-only activity feed for a specific user:
     - Schedules (count + list with titles)
+    - Current schedule courses (for student/faculty)
     - Class enrollments (as student or faculty)
     - Parent-child links
     - Account metadata (created_at, last_login, is_verified)
@@ -464,27 +466,79 @@ class AdminUserActivityView(APIView):
             "is_active", "created_at",
         )
 
+        # Current schedule + courses
+        current_schedule = Schedule.objects.filter(user=user, is_active=True).first()
+        if current_schedule is None:
+            current_schedule = Schedule.objects.filter(user=user).order_by("-updated_at").first()
+
+        current_schedule_data = None
+        current_schedule_courses = []
+        if current_schedule:
+            current_schedule_data = {
+                "id": current_schedule.id,
+                "title": current_schedule.title,
+                "upload_type": current_schedule.upload_type,
+                "semester": current_schedule.semester,
+                "school_year": current_schedule.school_year,
+                "is_active": current_schedule.is_active,
+                "created_at": current_schedule.created_at,
+            }
+            current_schedule_courses = list(
+                Course.objects.filter(schedule=current_schedule)
+                .values(
+                    "id",
+                    "subject_code",
+                    "subject_name",
+                    "start_time",
+                    "end_time",
+                    "day",
+                    "location",
+                    "source_type",
+                )
+                .order_by("day", "start_time", "subject_code")
+            )
+
         # Enrollments (as student)
         student_enrollments = ClassEnrollment.objects.filter(
             student=user, status="active"
-        ).values("id", "faculty__email", "subject_code", "enrollment_type", "enrolled_at")
+        ).values(
+            "id",
+            "faculty_id",
+            "faculty__email",
+            "faculty__first_name",
+            "faculty__last_name",
+            "subject_code",
+            "enrollment_type",
+            "enrolled_at",
+        )
 
         # Enrollments (as faculty)
         faculty_enrollments = ClassEnrollment.objects.filter(
             faculty=user, status="active"
-        ).values("id", "student__email", "subject_code", "enrollment_type", "enrolled_at")
+        ).values(
+            "id",
+            "student_id",
+            "student__email",
+            "student__first_name",
+            "student__last_name",
+            "subject_code",
+            "enrollment_type",
+            "enrolled_at",
+        )
 
         # Parent-child links
         child_links = ParentChildLink.objects.filter(
-            parent=user
+            parent=user,
+            status="active",
         ).select_related("child").values(
-            "id", "child__email", "child__first_name", "child__last_name",
+            "id", "child_id", "child__email", "child__first_name", "child__last_name", "child__student_number",
             "status", "linked_at",
         )
         parent_links = ParentChildLink.objects.filter(
-            child=user
+            child=user,
+            status="active",
         ).select_related("parent").values(
-            "id", "parent__email", "parent__first_name", "parent__last_name",
+            "id", "parent_id", "parent__email", "parent__first_name", "parent__last_name",
             "status", "linked_at",
         )
 
@@ -501,6 +555,8 @@ class AdminUserActivityView(APIView):
                 "created_at": user.created_at,
             },
             "schedules": list(schedules),
+            "current_schedule": current_schedule_data,
+            "current_schedule_courses": current_schedule_courses,
             "student_enrollments": list(student_enrollments),
             "faculty_enrollments": list(faculty_enrollments),
             "child_links": list(child_links),

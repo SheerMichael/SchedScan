@@ -261,6 +261,9 @@ export const usersApi = {
   /** Single user detail. */
   get: (id) => apiClient.get(`/admin/users/${id}/`),
 
+  /** User activity/relationship detail for admin modal. */
+  getActivity: (id) => apiClient.get(`/admin/users/${id}/activity/`),
+
   /**
    * Toggle active status.
    * @param {number} id
