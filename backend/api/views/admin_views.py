@@ -361,6 +361,11 @@ class AdminUserDetailView(APIView):
 
         # --- is_verified (faculty verification) ---
         if "is_verified" in request.data:
+            if user.user_type != "faculty":
+                return Response(
+                    {"error": "Only faculty accounts can be verification-toggled."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             raw = request.data["is_verified"]
             new_verified = raw if isinstance(raw, bool) else str(raw).lower() in ("true", "1", "yes")
             if new_verified != user.is_verified:

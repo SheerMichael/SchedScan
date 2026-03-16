@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Search, Shield, ChevronLeft, ChevronRight, UserMinus, Power, Loader2, AlertCircle, CheckCircle2, XCircle } from 'lucide-react';
+import toast from 'react-hot-toast';
 import DeactivateUserModal from '../components/modal/DeactivateUserModal';
+import VerifyFacultyModal from '../components/modal/VerifyFacultyModal';
 import UserDetailsModal from '../components/modal/user_details';
 import { usersApi, parseApiError } from '../services/api';
 
@@ -44,7 +46,11 @@ export default function UsersScreen() {
   const [deactivating, setDeactivating] = useState(false);
   const [deactivateError, setDeactivateError] = useState(null);
   const [verifyingUserId, setVerifyingUserId] = useState(null);
-  const [pendingVerifyAction, setPendingVerifyAction] = useState(null);
+  const [verifyModalState, setVerifyModalState] = useState({
+    isOpen: false,
+    user: null,
+    nextVerified: false,
+  });
 
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [detailsUser, setDetailsUser] = useState(null);
@@ -114,22 +120,28 @@ export default function UsersScreen() {
 
   const handleVerifyToggle = (user) => {
     if (!user || user.user_type !== 'faculty') return;
-    setPendingVerifyAction({
-      userId: user.id,
+    setVerifyModalState({
+      isOpen: true,
+      user,
       nextVerified: !user.is_verified,
     });
   };
 
-  const cancelVerifyToggle = () => {
-    setPendingVerifyAction(null);
+  const closeVerifyModal = () => {
+    if (verifyingUserId) return;
+    setVerifyModalState({
+      isOpen: false,
+      user: null,
+      nextVerified: false,
+    });
   };
 
   const confirmVerifyToggle = async (user) => {
     if (
       !user ||
       user.user_type !== 'faculty' ||
-      !pendingVerifyAction ||
-      pendingVerifyAction.userId !== user.id
+      !verifyModalState.user ||
+      verifyModalState.user.id !== user.id
     ) {
       return;
     }
@@ -138,13 +150,24 @@ export default function UsersScreen() {
     setError(null);
 
     try {
-      await usersApi.setVerified(user.id, pendingVerifyAction.nextVerified);
+      await usersApi.setVerified(user.id, verifyModalState.nextVerified);
       setUsers((prev) =>
         prev.map((u) =>
-          u.id === user.id ? { ...u, is_verified: pendingVerifyAction.nextVerified } : u
+          u.id === user.id ? { ...u, is_verified: verifyModalState.nextVerified } : u
         )
       );
-      setPendingVerifyAction(null);
+
+      toast.success(
+        verifyModalState.nextVerified
+          ? 'Faculty account verified successfully.'
+          : 'Faculty account marked as unverified.'
+      );
+
+      setVerifyModalState({
+        isOpen: false,
+        user: null,
+        nextVerified: false,
+      });
     } catch (err) {
       setError(parseApiError(err).message);
     } finally {
@@ -318,8 +341,6 @@ export default function UsersScreen() {
                     const joinDate = new Date(user.created_at).toLocaleDateString('en-US', {
                       month: 'short', day: 'numeric', year: 'numeric',
                     });
-                    const isPendingVerify = pendingVerifyAction?.userId === user.id;
-                    const verifyActionLabel = pendingVerifyAction?.nextVerified ? 'Verify' : 'Unverify';
 
                     return (
                       <tr
@@ -368,47 +389,20 @@ export default function UsersScreen() {
                         <td className="px-6 py-5 text-right">
                           <div className="inline-flex items-center gap-2">
                             {user.user_type === 'faculty' && (
-                              isPendingVerify ? (
-                                <>
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); confirmVerifyToggle(user); }}
-                                    disabled={verifyingUserId === user.id}
-                                    className={`px-3 py-2 border-2 text-[10px] font-black uppercase tracking-widest transition-all ${
-                                      verifyingUserId === user.id
-                                        ? 'border-slate-100 text-slate-200 cursor-not-allowed'
-                                        : 'border-emerald-600 text-emerald-700 hover:bg-emerald-50'
-                                    }`}
-                                  >
-                                    {verifyingUserId === user.id ? <Loader2 size={14} className="animate-spin" /> : `Confirm ${verifyActionLabel}`}
-                                  </button>
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); cancelVerifyToggle(); }}
-                                    disabled={verifyingUserId === user.id}
-                                    className={`px-3 py-2 border-2 text-[10px] font-black uppercase tracking-widest transition-all ${
-                                      verifyingUserId === user.id
-                                        ? 'border-slate-100 text-slate-200 cursor-not-allowed'
-                                        : 'border-slate-300 text-slate-500 hover:bg-slate-50'
-                                    }`}
-                                  >
-                                    Cancel
-                                  </button>
-                                </>
-                              ) : (
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); handleVerifyToggle(user); }}
-                                  disabled={verifyingUserId === user.id}
-                                  title={user.is_verified ? 'Mark faculty as unverified' : 'Verify faculty'}
-                                  className={`p-2 border-2 transition-all ${
-                                    verifyingUserId === user.id
-                                      ? 'border-slate-100 text-slate-200 cursor-not-allowed'
-                                      : user.is_verified
-                                        ? 'border-emerald-600 text-emerald-600 hover:bg-emerald-50'
-                                        : 'border-amber-500 text-amber-600 hover:bg-amber-50'
-                                  }`}
-                                >
-                                  {user.is_verified ? <CheckCircle2 size={16} /> : <XCircle size={16} />}
-                                </button>
-                              )
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleVerifyToggle(user); }}
+                                disabled={verifyingUserId === user.id}
+                                title={user.is_verified ? 'Mark faculty as unverified' : 'Verify faculty'}
+                                className={`p-2 border-2 transition-all ${
+                                  verifyingUserId === user.id
+                                    ? 'border-slate-100 text-slate-200 cursor-not-allowed'
+                                    : user.is_verified
+                                      ? 'border-emerald-600 text-emerald-600 hover:bg-emerald-50'
+                                      : 'border-amber-500 text-amber-600 hover:bg-amber-50'
+                                }`}
+                              >
+                                {user.is_verified ? <CheckCircle2 size={16} /> : <XCircle size={16} />}
+                              </button>
                             )}
 
                             <button
@@ -483,6 +477,15 @@ export default function UsersScreen() {
         currentStatus={targetUser?.is_active ? 'Active' : 'Inactive'}
         isLoading={deactivating}
         errorMsg={deactivateError}
+      />
+
+      <VerifyFacultyModal
+        isOpen={verifyModalState.isOpen}
+        onClose={closeVerifyModal}
+        onConfirm={() => verifyModalState.user && confirmVerifyToggle(verifyModalState.user)}
+        userName={verifyModalState.user ? `${verifyModalState.user.first_name} ${verifyModalState.user.last_name}` : ''}
+        nextVerified={verifyModalState.nextVerified}
+        isLoading={Boolean(verifyingUserId)}
       />
 
       {/* User details modal */}

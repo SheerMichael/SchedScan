@@ -4,6 +4,7 @@ import Checkbox from "expo-checkbox";
 import { useState, useEffect, useCallback } from "react";
 import Svg, { Path } from 'react-native-svg';
 import { useLocalSearchParams, router } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 import { taskService, Task } from "../../../services/taskService";
 import { useAuth } from "../../../context/AuthContext";
 import {
@@ -21,7 +22,7 @@ import JoinClassModal from "../../../components/JoinClassModal";
 import { useFileDownload } from "../../../hooks/useFileDownload";
 
 export default function SubjectDetails() {
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const isFaculty = user?.user_type === 'faculty';
   const isFacultyVerified = user?.is_verified !== false;
   const isStudent = user?.user_type === 'student';
@@ -143,6 +144,30 @@ export default function SubjectDetails() {
       setIsFacultyLoading(false);
     }
   }, [subjectCode, isFaculty, isStudent]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let isMounted = true;
+
+      const run = async () => {
+        try {
+          await refreshUser();
+        } catch (error) {
+          console.warn('Failed to refresh user on subject details focus:', error);
+        }
+
+        if (isMounted) {
+          await loadAllData();
+        }
+      };
+
+      run();
+
+      return () => {
+        isMounted = false;
+      };
+    }, [refreshUser, loadAllData])
+  );
 
   // ============================================
   // Personal Task Handlers

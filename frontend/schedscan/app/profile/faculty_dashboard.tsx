@@ -67,6 +67,7 @@ const normalizeSubjectCode = (value: string | null | undefined): string => {
 export default function FacultyDashboard() {
   const {
     user,
+    refreshUser,
     getFacultySchedules,
     getClassCodes,
     invalidateFacultyDataCache,
@@ -192,8 +193,26 @@ export default function FacultyDashboard() {
 
   useFocusEffect(
     useCallback(() => {
-      loadDashboardData(false);
-    }, [loadDashboardData])
+      let isMounted = true;
+
+      const run = async () => {
+        try {
+          await refreshUser();
+        } catch (error) {
+          console.warn("Failed to refresh user before loading faculty dashboard:", error);
+        }
+
+        if (isMounted) {
+          await loadDashboardData(false);
+        }
+      };
+
+      run();
+
+      return () => {
+        isMounted = false;
+      };
+    }, [refreshUser, loadDashboardData])
   );
 
   // ---- Load subject detail (tasks + students) ----
