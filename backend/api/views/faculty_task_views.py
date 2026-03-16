@@ -78,6 +78,12 @@ class ClassCodeView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
 
+        if not user.is_verified:
+            return Response(
+                {"error": "Your faculty account is pending admin verification. Class code generation is disabled until verification is approved."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         subject_code = str(request.data.get('subject_code', '')).strip()
         normalized_subject_code = _normalize_subject_code(subject_code)
         if not normalized_subject_code:
@@ -240,6 +246,7 @@ class FacultyModeCheckView(APIView):
             "has_faculty_schedule": faculty_count > 0,
             "faculty_schedule_count": faculty_count,
             "user_type": user.user_type,
+            "is_verified": user.is_verified,
         }, status=status.HTTP_200_OK)
 
 

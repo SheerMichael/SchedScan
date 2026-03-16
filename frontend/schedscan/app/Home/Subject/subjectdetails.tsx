@@ -23,6 +23,7 @@ import { useFileDownload } from "../../../hooks/useFileDownload";
 export default function SubjectDetails() {
   const { user } = useAuth();
   const isFaculty = user?.user_type === 'faculty';
+  const isFacultyVerified = user?.is_verified !== false;
   const isStudent = user?.user_type === 'student';
 
   // Receive all course data from navigation params
@@ -252,14 +253,23 @@ export default function SubjectDetails() {
   // Class Code Handlers (Faculty side)
   // ============================================
   const handleGenerateClassCode = async () => {
+    if (!isFacultyVerified) {
+      Alert.alert(
+        'Verification Required',
+        'Your faculty account is pending admin verification. Class code generation is disabled until verification is approved.'
+      );
+      return;
+    }
+
     try {
       setIsGeneratingCode(true);
       const newCode = await facultyTaskService.generateClassCode(subjectCode);
       setClassCode(newCode);
       Alert.alert('Class Code Generated', `Your new class code is: ${newCode.code}`);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error generating code:', error);
-      Alert.alert('Error', 'Failed to generate class code.');
+      const message = error?.response?.data?.error || 'Failed to generate class code.';
+      Alert.alert('Error', message);
     } finally {
       setIsGeneratingCode(false);
     }
@@ -397,6 +407,13 @@ export default function SubjectDetails() {
             {/* Class Code Section — only for faculty-extracted subjects */}
             {isFacultyCourse && <View className="bg-orange-50 p-4 rounded-xl mb-4 border border-orange-200">
               <Text className="text-lg font-bold text-orange-800 mb-2">Class Code</Text>
+              {!isFacultyVerified && (
+                <View className="bg-red-100 border border-red-200 rounded-lg p-3 mb-3">
+                  <Text className="text-red-700 text-xs font-semibold">
+                    Pending Verification: class code generation is disabled until an admin verifies your faculty account.
+                  </Text>
+                </View>
+              )}
               {classCode ? (
                 <View className="flex-row items-center justify-between">
                   <View className="bg-white px-4 py-3 rounded-lg flex-1 mr-3">
@@ -413,11 +430,11 @@ export default function SubjectDetails() {
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={handleGenerateClassCode}
-                      disabled={isGeneratingCode}
+                      disabled={isGeneratingCode || !isFacultyVerified}
                       className="bg-orange-200 px-4 py-2 rounded-lg"
                     >
-                      <Text className="text-orange-700 font-semibold text-sm">
-                        {isGeneratingCode ? '...' : 'New'}
+                      <Text className={`font-semibold text-sm ${isFacultyVerified ? 'text-orange-700' : 'text-gray-500'}`}>
+                        {isGeneratingCode ? '...' : isFacultyVerified ? 'New' : 'Locked'}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -425,13 +442,13 @@ export default function SubjectDetails() {
               ) : (
                 <TouchableOpacity
                   onPress={handleGenerateClassCode}
-                  disabled={isGeneratingCode}
-                  className="bg-orange-500 py-3 rounded-lg items-center"
+                  disabled={isGeneratingCode || !isFacultyVerified}
+                  className={`py-3 rounded-lg items-center ${isFacultyVerified ? 'bg-orange-500' : 'bg-gray-400'}`}
                 >
                   {isGeneratingCode ? (
                     <ActivityIndicator size="small" color="#ffffff" />
                   ) : (
-                    <Text className="text-white font-bold">Generate Class Code</Text>
+                    <Text className="text-white font-bold">{isFacultyVerified ? 'Generate Class Code' : 'Verification Required'}</Text>
                   )}
                 </TouchableOpacity>
               )}

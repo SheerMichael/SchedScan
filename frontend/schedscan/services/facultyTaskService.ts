@@ -80,6 +80,7 @@ export interface FacultyModeStatus {
     has_faculty_schedule: boolean;
     faculty_schedule_count: number;
     user_type: string;
+    is_verified: boolean;
 }
 
 /** Subject detail from class code preview */

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -19,14 +19,11 @@ import {
   ChevronRight,
   Copy,
   UserMinus,
-  Plus,
   Trash2,
   Users,
   BookOpen,
   ClipboardList,
   X,
-  BarChart3,
-  RefreshCw,
   Paperclip,
   FileText,
   Download,
@@ -74,6 +71,7 @@ export default function FacultyDashboard() {
     getClassCodes,
     invalidateFacultyDataCache,
   } = useAuth();
+  const isFacultyVerified = user?.is_verified !== false;
 
   // ---- State ----
   const [isLoading, setIsLoading] = useState(true);
@@ -251,6 +249,14 @@ export default function FacultyDashboard() {
 
   // ---- Class code actions ----
   const handleGenerateClassCode = async (subjectCode: string) => {
+    if (!isFacultyVerified) {
+      Alert.alert(
+        "Verification Required",
+        "Your faculty account is pending admin verification. Class code generation is disabled until verification is approved."
+      );
+      return;
+    }
+
     try {
       setGeneratingCodeFor(subjectCode);
       const newCode = await facultyTaskService.generateClassCode(subjectCode);
@@ -258,8 +264,9 @@ export default function FacultyDashboard() {
       setClassCodes((prev) => ({ ...prev, [subjectKey]: newCode }));
       invalidateFacultyDataCache();
       Alert.alert("Class Code Generated", `New code: ${newCode.code}`);
-    } catch {
-      Alert.alert("Error", "Failed to generate class code.");
+    } catch (error: any) {
+      const message = error?.response?.data?.error || "Failed to generate class code.";
+      Alert.alert("Error", message);
     } finally {
       setGeneratingCodeFor(null);
     }
@@ -439,6 +446,13 @@ export default function FacultyDashboard() {
               Manage your subjects, class codes, tasks, and students all in one
               place.
             </Text>
+            {!isFacultyVerified && (
+              <View className="mt-3 bg-red-500/80 rounded-lg px-3 py-2">
+                <Text className="text-white text-xs font-semibold">
+                  Pending Verification: Class code generation is disabled until an admin verifies your faculty account.
+                </Text>
+              </View>
+            )}
             <View className="flex-row mt-3 gap-4">
               <View className="bg-white/20 rounded-xl px-4 py-2 items-center">
                 <Text className="text-white font-bold text-xl">
@@ -508,14 +522,14 @@ export default function FacultyDashboard() {
                           onPress={() =>
                             handleGenerateClassCode(sub.subject_code)
                           }
-                          disabled={generatingCodeFor === sub.subject_code}
+                          disabled={generatingCodeFor === sub.subject_code || !isFacultyVerified}
                           className="mt-2"
                         >
                           {generatingCodeFor === sub.subject_code ? (
                             <ActivityIndicator size="small" color="#f97316" />
                           ) : (
-                            <Text className="text-orange-500 text-xs font-semibold">
-                              + Generate Class Code
+                            <Text className={`text-xs font-semibold ${isFacultyVerified ? 'text-orange-500' : 'text-gray-400'}`}>
+                              {isFacultyVerified ? '+ Generate Class Code' : 'Verification Required'}
                             </Text>
                           )}
                         </TouchableOpacity>
@@ -591,11 +605,11 @@ export default function FacultyDashboard() {
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => handleGenerateClassCode(subjectCode)}
-                    disabled={generatingCodeFor === subjectCode}
+                    disabled={generatingCodeFor === subjectCode || !isFacultyVerified}
                     className="bg-orange-200 px-4 py-2 rounded-lg"
                   >
-                    <Text className="text-orange-700 font-semibold text-sm">
-                      {generatingCodeFor === subjectCode ? "..." : "New"}
+                    <Text className={`font-semibold text-sm ${isFacultyVerified ? 'text-orange-700' : 'text-gray-500'}`}>
+                      {generatingCodeFor === subjectCode ? "..." : isFacultyVerified ? "New" : "Locked"}
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -603,14 +617,14 @@ export default function FacultyDashboard() {
             ) : (
               <TouchableOpacity
                 onPress={() => handleGenerateClassCode(subjectCode)}
-                disabled={generatingCodeFor === subjectCode}
-                className="bg-orange-500 py-3 rounded-lg items-center"
+                disabled={generatingCodeFor === subjectCode || !isFacultyVerified}
+                className={`py-3 rounded-lg items-center ${isFacultyVerified ? 'bg-orange-500' : 'bg-gray-400'}`}
               >
                 {generatingCodeFor === subjectCode ? (
                   <ActivityIndicator size="small" color="#fff" />
                 ) : (
                   <Text className="text-white font-bold">
-                    Generate Class Code
+                    {isFacultyVerified ? 'Generate Class Code' : 'Verification Required'}
                   </Text>
                 )}
               </TouchableOpacity>

@@ -208,15 +208,27 @@ const UserProfile = () => {
                                 <Text className="text-base">Share with Parent</Text>
                             </TouchableOpacity>
                             {user?.user_type === 'faculty' && (
-                                <TouchableOpacity
-                                    className="p-4 flex-row items-center gap-2"
-                                    onPress={() => router.push('/profile/faculty_dashboard')}>
-                                    <GraduationCap color="#f97316" />
-                                    <Text className="text-base">Faculty Dashboard</Text>
-                                    <View className="bg-orange-400 rounded-full p-1 px-2 ml-auto">
-                                        <Text className="text-white font-semibold text-xs">FACULTY</Text>
+                                <View>
+                                    <TouchableOpacity
+                                        className="p-4 flex-row items-center gap-2"
+                                        onPress={() => router.push('/profile/faculty_dashboard')}>
+                                        <GraduationCap color="#f97316" />
+                                        <Text className="text-base">Faculty Dashboard</Text>
+                                        <View className="bg-orange-400 rounded-full p-1 px-2 ml-auto">
+                                            <Text className="text-white font-semibold text-xs">FACULTY</Text>
+                                        </View>
+                                    </TouchableOpacity>
+
+                                    <View className="px-4 pb-4">
+                                        <View className={`rounded-lg px-3 py-2 ${user?.is_verified ? 'bg-emerald-100' : 'bg-amber-100'}`}>
+                                            <Text className={`text-xs font-semibold ${user?.is_verified ? 'text-emerald-700' : 'text-amber-700'}`}>
+                                                {user?.is_verified
+                                                    ? 'Faculty Account Verified'
+                                                    : 'Faculty Account Pending Verification (admin approval required for class code generation)'}
+                                            </Text>
+                                        </View>
                                     </View>
-                                </TouchableOpacity>
+                                </View>
                             )}
                         </View>
                     </View>

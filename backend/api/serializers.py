@@ -28,6 +28,7 @@ class UserSerializer(serializers.ModelSerializer):
             'first_name',
             'last_name',
             'user_type',
+            'is_verified',
             'student_number',
             'profile_picture',
             'class_reminder_minutes_before',

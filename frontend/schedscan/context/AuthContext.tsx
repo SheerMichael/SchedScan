@@ -6,6 +6,7 @@ import { usePushNotification } from '../usePushNotification';
 import { offlineService } from '../services/offlineService';
 import { taskService } from '../services/taskService';
 import { cancelAllClassReminders } from '../services/classReminderService';
+import * as SecureStore from 'expo-secure-store';
 
 // Cache TTL for active schedule (30 seconds)
 const SCHEDULE_CACHE_TTL_MS = 30 * 1000;
@@ -85,6 +86,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (isAuth) {
         const storedUser = await authService.getStoredUser();
         setUser(storedUser);
+
+        // Refresh user from backend so server-side flags (e.g. is_verified)
+        // are reflected even if local storage is stale.
+        try {
+          const freshUser = await authService.getCurrentUser();
+          setUser(freshUser);
+        } catch (refreshErr) {
+          console.warn('Using stored user; failed to refresh current profile:', refreshErr);
+        }
 
         // Migrate/clear legacy schedules for this user
         if (storedUser?.id) {
@@ -352,12 +362,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const activateFacultyMode = useCallback(async (): Promise<boolean> => {
     if (!user?.id) return false;
     try {
-      const result = await facultyTaskService.activateFacultyMode();
+      await facultyTaskService.activateFacultyMode();
       // Update local user state with the new user_type
       const updatedUser = { ...user, user_type: 'faculty' as const };
       setUser(updatedUser);
-      // Persist to SecureStore
-      const SecureStore = require('expo-secure-store');
       await SecureStore.setItemAsync('user', JSON.stringify(updatedUser));
       // Clear faculty mode pending flag
       setHasPendingFacultyUnlock(false);

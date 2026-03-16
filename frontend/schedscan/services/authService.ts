@@ -22,6 +22,7 @@ export interface User {
   first_name: string;
   last_name: string;
   user_type: 'student' | 'faculty' | 'parent';
+  is_verified: boolean;
   student_number: string | null;
   profile_picture: string | null;
   class_reminder_minutes_before?: 5 | 10 | 15;
@@ -150,7 +151,7 @@ export const authService = {
     try {
       const token = await SecureStore.getItemAsync('access_token');
       return !!token;
-    } catch (error) {
+    } catch {
       return false;
     }
   },
@@ -162,7 +163,7 @@ export const authService = {
     try {
       const userString = await SecureStore.getItemAsync('user');
       return userString ? JSON.parse(userString) : null;
-    } catch (error) {
+    } catch {
       return null;
     }
   },
