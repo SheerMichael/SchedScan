@@ -271,6 +271,31 @@ export const usersApi = {
    */
   setActive: (id, isActive) =>
     apiClient.patch(`/admin/users/${id}/`, { is_active: isActive }),
+
+  /** Toggle faculty verification status. */
+  setVerified: (id, isVerified) =>
+    apiClient.patch(`/admin/users/${id}/`, { is_verified: isVerified }),
+};
+
+// ---------------------------------------------------------------------------
+// Parent-Student Link Management
+// ---------------------------------------------------------------------------
+
+export const parentLinksApi = {
+  /**
+   * Paginated parent-student links.
+   * params: { search, status, page, page_size }
+   */
+  list: (params = {}) => apiClient.get("/admin/parent-links/", { params }),
+
+  /**
+   * Create a link between a parent and student.
+   * @param {{ parent_id: number, student_number: string }} data
+   */
+  create: (data) => apiClient.post("/admin/parent-links/", data),
+
+  /** Revoke an existing link by id. */
+  revoke: (id) => apiClient.delete(`/admin/parent-links/${id}/`),
 };
 
 // ---------------------------------------------------------------------------

@@ -8,6 +8,7 @@ import AnalyticsScreen from "./screens/AnalyticsScreen";
 import UsersScreen from "./screens/UsersScreen";
 import CalendarScreen from "./screens/CalendarScreen";
 import ExtractionHealthScreen from "./screens/ExtractionHealthScreen";
+import ParentLinksScreen from "./screens/ParentLinksScreen";
 import { useAuth } from "./context/AuthContext";
 
 /** Redirects to /login when the user is not authenticated. */
@@ -65,6 +66,7 @@ export default function App() {
             <Route path="/analytics" element={<ProtectedRoute><AnalyticsScreen /></ProtectedRoute>} />
             <Route path="/calendar" element={<ProtectedRoute><CalendarScreen /></ProtectedRoute>} />
             <Route path="/users" element={<ProtectedRoute><UsersScreen /></ProtectedRoute>} />
+            <Route path="/parent-links" element={<ProtectedRoute><ParentLinksScreen /></ProtectedRoute>} />
             <Route path="/extraction-health" element={<ProtectedRoute><ExtractionHealthScreen /></ProtectedRoute>} />
 
             {/* Catch-all */}

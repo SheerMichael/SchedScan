@@ -570,7 +570,8 @@ class AdminUserActivityView(APIView):
 
 class AdminParentLinkListView(APIView):
     """
-    GET /api/admin/parent-links/
+    GET  /api/admin/parent-links/
+    POST /api/admin/parent-links/
 
     Lists all parent-child links with search/filter/pagination.
 
@@ -621,18 +622,6 @@ class AdminParentLinkListView(APIView):
             "total_pages": max(1, -(-total // page_size)),
             "results": AdminParentLinkSerializer(links, many=True).data,
         })
-
-
-class AdminParentLinkActionView(APIView):
-    """
-    POST   /api/admin/parent-links/       – create a parent-child link
-    DELETE /api/admin/parent-links/<pk>/   – revoke a parent-child link
-
-    POST body:
-        { "parent_id": int, "student_number": "2022-01191" }
-    """
-
-    permission_classes = [IsAdminUser]
 
     def post(self, request):
         parent_id = request.data.get("parent_id")
@@ -697,6 +686,14 @@ class AdminParentLinkActionView(APIView):
             AdminParentLinkSerializer(link).data,
             status=status.HTTP_201_CREATED,
         )
+
+
+class AdminParentLinkActionView(APIView):
+    """
+    DELETE /api/admin/parent-links/<pk>/   – revoke a parent-child link
+    """
+
+    permission_classes = [IsAdminUser]
 
     def delete(self, request, pk=None):
         if pk is None:

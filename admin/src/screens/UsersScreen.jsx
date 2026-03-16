@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Search, Shield, ChevronLeft, ChevronRight, UserMinus, Power, Loader2, AlertCircle } from 'lucide-react';
+import { Search, Shield, ChevronLeft, ChevronRight, UserMinus, Power, Loader2, AlertCircle, CheckCircle2, XCircle } from 'lucide-react';
 import DeactivateUserModal from '../components/modal/DeactivateUserModal';
 import UserDetailsModal from '../components/modal/user_details';
 import { usersApi, parseApiError } from '../services/api';
@@ -43,6 +43,7 @@ export default function UsersScreen() {
   const [targetUser, setTargetUser] = useState(null);
   const [deactivating, setDeactivating] = useState(false);
   const [deactivateError, setDeactivateError] = useState(null);
+  const [verifyingUserId, setVerifyingUserId] = useState(null);
 
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [detailsUser, setDetailsUser] = useState(null);
@@ -107,6 +108,25 @@ export default function UsersScreen() {
       setDeactivateError(parseApiError(err).message);
     } finally {
       setDeactivating(false);
+    }
+  };
+
+  const handleVerifyToggle = async (user) => {
+    if (!user || user.user_type !== 'faculty') return;
+    setVerifyingUserId(user.id);
+    setError(null);
+
+    try {
+      await usersApi.setVerified(user.id, !user.is_verified);
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.id === user.id ? { ...u, is_verified: !u.is_verified } : u
+        )
+      );
+    } catch (err) {
+      setError(parseApiError(err).message);
+    } finally {
+      setVerifyingUserId(null);
     }
   };
 
@@ -322,16 +342,41 @@ export default function UsersScreen() {
                           </span>
                         </td>
                         <td className="px-6 py-5 text-right">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); openDeactivateModal(user); }}
-                            className={`p-2 border-2 transition-all ${
-                              user.is_active
-                                ? 'border-slate-200 text-slate-300 hover:border-primary-700 hover:text-primary-700 hover:bg-primary-50'
-                                : 'border-emerald-600 text-emerald-600 hover:bg-emerald-50'
-                            }`}
-                          >
-                            {user.is_active ? <UserMinus size={16} /> : <Power size={16} />}
-                          </button>
+                          <div className="inline-flex items-center gap-2">
+                            {user.user_type === 'faculty' && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleVerifyToggle(user); }}
+                                disabled={verifyingUserId === user.id}
+                                title={user.is_verified ? 'Mark faculty as unverified' : 'Verify faculty'}
+                                className={`p-2 border-2 transition-all ${
+                                  verifyingUserId === user.id
+                                    ? 'border-slate-100 text-slate-200 cursor-not-allowed'
+                                    : user.is_verified
+                                      ? 'border-emerald-600 text-emerald-600 hover:bg-emerald-50'
+                                      : 'border-amber-500 text-amber-600 hover:bg-amber-50'
+                                }`}
+                              >
+                                {verifyingUserId === user.id ? (
+                                  <Loader2 size={16} className="animate-spin" />
+                                ) : user.is_verified ? (
+                                  <CheckCircle2 size={16} />
+                                ) : (
+                                  <XCircle size={16} />
+                                )}
+                              </button>
+                            )}
+
+                            <button
+                              onClick={(e) => { e.stopPropagation(); openDeactivateModal(user); }}
+                              className={`p-2 border-2 transition-all ${
+                                user.is_active
+                                  ? 'border-slate-200 text-slate-300 hover:border-primary-700 hover:text-primary-700 hover:bg-primary-50'
+                                  : 'border-emerald-600 text-emerald-600 hover:bg-emerald-50'
+                              }`}
+                            >
+                              {user.is_active ? <UserMinus size={16} /> : <Power size={16} />}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
