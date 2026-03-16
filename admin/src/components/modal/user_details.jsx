@@ -82,11 +82,13 @@ export default function UserDetailsModal({ isOpen, onClose, user, loading = fals
                 <div className="w-24 h-24 border-2 border-slate-900 bg-white flex items-center justify-center text-slate-900 text-4xl font-black shadow-[4px_4px_0px_0px_rgba(15,23,42,1)]">
                   {user.name?.charAt(0) || '?'}
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-2 min-w-0">
                    <div className="inline-block bg-primary-800 text-white px-2 py-0.5 text-[10px] font-black uppercase tracking-widest">
                     {user.role}
                   </div>
-                  <h3 className="text-3xl font-black text-slate-900 tracking-tighter uppercase leading-none">{user.name}</h3>
+                  <h3 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tighter uppercase leading-none wrap-break-word">
+                    {user.name}
+                  </h3>
                   <p className={`text-[10px] font-black uppercase tracking-widest ${activeClass ? 'text-emerald-600' : 'text-slate-400'}`}>
                     ● {classSession}
                   </p>
@@ -94,7 +96,7 @@ export default function UserDetailsModal({ isOpen, onClose, user, loading = fals
               </div>
 
               {/* Data Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 border-y-2 border-slate-100 py-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-y-2 border-slate-100 py-6">
                 <DetailItem label="Official Email" value={user.email} />
                 {user.student_number && <DetailItem label="Student Number" value={user.student_number} />}
                 <DetailItem label="Registry Status" value={user.status} color={user.status === 'Active' ? 'text-emerald-600' : 'text-slate-400'} />
@@ -229,9 +231,9 @@ export default function UserDetailsModal({ isOpen, onClose, user, loading = fals
 
 function DetailItem({ label, value, color = "text-slate-900" }) {
   return (
-    <div>
+    <div className="min-w-0">
       <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">{label}</p>
-      <p className={`text-xs font-black uppercase leading-tight ${color}`}>{value}</p>
+      <p className={`text-xs font-black leading-tight break-all ${color}`}>{value || '—'}</p>
     </div>
   );
 }
