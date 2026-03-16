@@ -147,26 +147,10 @@ export default function SubjectDetails() {
 
   useFocusEffect(
     useCallback(() => {
-      let isMounted = true;
-
-      const run = async () => {
-        try {
-          await refreshUser();
-        } catch (error) {
-          console.warn('Failed to refresh user on subject details focus:', error);
-        }
-
-        if (isMounted) {
-          await loadAllData();
-        }
-      };
-
-      run();
-
-      return () => {
-        isMounted = false;
-      };
-    }, [refreshUser, loadAllData])
+      refreshUser().catch((error) => {
+        console.warn('Failed to refresh user on subject details focus:', error);
+      });
+    }, [refreshUser])
   );
 
   // ============================================

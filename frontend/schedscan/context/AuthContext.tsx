@@ -183,14 +183,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const refreshUser = async () => {
+  const refreshUser = useCallback(async () => {
     try {
       const currentUser = await authService.getCurrentUser();
       setUser(currentUser);
     } catch (error) {
       console.error('Failed to refresh user:', error);
     }
-  };
+  }, []);
 
   /**
    * Manually trigger push notification token registration.
