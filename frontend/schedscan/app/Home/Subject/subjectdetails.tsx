@@ -46,6 +46,7 @@ export default function SubjectDetails() {
   const isClassItem = normalizedPriorityLevel !== 'holiday' && normalizedPriorityLevel !== 'event';
   const isNonClassItem = normalizedPriorityLevel === 'holiday' || normalizedPriorityLevel === 'event';
   const isFacultyCourse = isClassItem && normalizedSourceType === 'faculty';
+  const shouldUseFacultyTaskFlow = isFaculty && isClassItem;
   const taskLabelSingular = isNonClassItem ? 'Task' : 'Class Task';
   const taskLabelPlural = isNonClassItem ? 'Tasks' : 'Class Tasks';
   const addTaskLabel = isNonClassItem ? 'Add Task' : 'Add Class Task';
@@ -108,7 +109,7 @@ export default function SubjectDetails() {
     setIsFacultyLoading(true);
 
     try {
-      if (isFaculty) {
+      if (shouldUseFacultyTaskFlow) {
         // Faculty: load their tasks + class code
         const [tasksData, codes] = await Promise.all([
           facultyTaskService.getFacultyTasks(subjectCode),
@@ -143,7 +144,7 @@ export default function SubjectDetails() {
       setIsLoading(false);
       setIsFacultyLoading(false);
     }
-  }, [subjectCode, isFaculty, isStudent]);
+  }, [subjectCode, shouldUseFacultyTaskFlow, isStudent]);
 
   useFocusEffect(
     useCallback(() => {
@@ -411,7 +412,7 @@ export default function SubjectDetails() {
         {/* ============================================ */}
         {/* FACULTY VIEW: Class Code + Faculty Tasks     */}
         {/* ============================================ */}
-        {isFaculty && (
+        {shouldUseFacultyTaskFlow && (
           <>
             {/* Class Code Section — only for faculty-extracted subjects */}
             {isFacultyCourse && <View className="bg-orange-50 p-4 rounded-xl mb-4 border border-orange-200">
@@ -698,7 +699,7 @@ export default function SubjectDetails() {
         {/* ============================================ */}
         {/* PERSONAL TASKS (Student & other user types)  */}
         {/* ============================================ */}
-        {!isFaculty && (
+        {(!isFaculty || isNonClassItem) && (
           <>
             {/* Only show header for non-student (students already have it above) */}
             {!isStudent && (
