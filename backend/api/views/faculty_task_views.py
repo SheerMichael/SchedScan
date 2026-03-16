@@ -285,6 +285,12 @@ class ClassCodePreviewView(APIView):
     def post(self, request):
         user = request.user
 
+        if user.user_type not in ('student', 'faculty'):
+            return Response(
+                {"error": "Only students and faculty can preview class codes."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         code_str = request.data.get('code', '').strip().upper()
         if not code_str:
             return Response(
@@ -301,6 +307,13 @@ class ClassCodePreviewView(APIView):
             return Response(
                 {"error": "Invalid or expired class code."},
                 status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Prevent faculty from previewing/enrolling in their own class
+        if user == class_code.faculty:
+            return Response(
+                {"error": "You cannot enroll in your own class."},
+                status=status.HTTP_400_BAD_REQUEST
             )
 
         # Get the faculty's course details for this subject

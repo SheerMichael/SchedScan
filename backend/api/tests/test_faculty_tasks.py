@@ -581,6 +581,12 @@ class FacultyEnrollmentTests(TestCase):
         self.faculty1_client.force_authenticate(user=self.faculty1)
         self.faculty2_client = APIClient()
         self.faculty2_client.force_authenticate(user=self.faculty2)
+        self.parent = User.objects.create_user(
+            email='parent@test.com', password='testpass123',
+            first_name='Parent', last_name='User', user_type='parent'
+        )
+        self.parent_client = APIClient()
+        self.parent_client.force_authenticate(user=self.parent)
 
     def test_faculty_can_enroll_with_class_code(self):
         response = self.faculty1_client.post('/api/student/enroll/', {
@@ -607,6 +613,28 @@ class FacultyEnrollmentTests(TestCase):
         response = self.faculty1_client.get('/api/student/enrollments/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data), 1)
+
+    def test_faculty_can_preview_other_faculty_class_code(self):
+        response = self.faculty1_client.post('/api/student/enroll/preview/', {
+            'code': self.code.code
+        })
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['subject_code'], 'MATH201')
+        self.assertEqual(response.data['faculty_email'], self.faculty2.email)
+
+    def test_faculty_cannot_preview_own_class_code(self):
+        response = self.faculty2_client.post('/api/student/enroll/preview/', {
+            'code': self.code.code
+        })
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('own class', response.data['error'])
+
+    def test_parent_cannot_preview_class_code(self):
+        response = self.parent_client.post('/api/student/enroll/preview/', {
+            'code': self.code.code
+        })
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn('Only students and faculty', response.data['error'])
 
     def test_faculty_can_unenroll(self):
         enrollment = ClassEnrollment.objects.create(
