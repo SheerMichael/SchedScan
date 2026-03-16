@@ -121,7 +121,7 @@ export default function AnalyticsScreen() {
         )}
 
         {/* ── Stat Cards ─────────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-10">
           <StatCard
             title="Total Revenue"
             value={summaryLoading ? '…' : fmtPhp(summary?.total_revenue_centavos)}
@@ -137,6 +137,10 @@ export default function AnalyticsScreen() {
           <StatCard
             title="# of Parents Linked"
             value={summaryLoading ? '…' : fmt(summary?.linked_parents)}
+          />
+          <StatCard
+            title="Pending Payments"
+            value={summaryLoading ? '…' : fmt(summary?.pending_payments)}
           />
         </div>
 

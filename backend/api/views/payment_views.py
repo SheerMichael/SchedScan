@@ -18,6 +18,34 @@ logger = logging.getLogger(__name__)
 SESSION_ID_PATTERN = re.compile(r'^cs_(test|live)_[A-Za-z0-9]+$')
 
 
+def _finalize_payment_from_session(payment, session):
+    """
+    Finalize local payment state from a Stripe checkout session object.
+    Returns one of: completed, failed, pending.
+    """
+    if session.payment_status == 'paid':
+        from django.utils import timezone
+
+        with transaction.atomic():
+            locked_payment = Payment.objects.select_for_update().get(id=payment.id)
+            if locked_payment.status != 'completed':
+                locked_payment.status = 'completed'
+                locked_payment.completed_at = timezone.now()
+                locked_payment.stripe_payment_intent_id = session.payment_intent
+                locked_payment.save(
+                    update_fields=['status', 'completed_at', 'stripe_payment_intent_id']
+                )
+        return 'completed'
+
+    if session.status == 'expired':
+        if payment.status != 'failed':
+            payment.status = 'failed'
+            payment.save(update_fields=['status'])
+        return 'failed'
+
+    return 'pending'
+
+
 class PaymentRateThrottle(UserRateThrottle):
     """Limit checkout session creation to prevent abuse."""
     rate = '10/hour'
@@ -228,30 +256,10 @@ class CheckPaymentStatusView(APIView):
 
         try:
             session = stripe_client.checkout.sessions.retrieve(session_id)
-
-            if session.payment_status == 'paid':
-                # Use select_for_update to prevent race condition on double-completion
-                with transaction.atomic():
-                    payment = Payment.objects.select_for_update().get(
-                        id=payment.id
-                    )
-                    if payment.status == 'completed':
-                        return Response({"status": "completed"})
-
-                    from django.utils import timezone
-                    payment.status = 'completed'
-                    payment.completed_at = timezone.now()
-                    payment.stripe_payment_intent_id = session.payment_intent
-                    payment.save(update_fields=['status', 'completed_at', 'stripe_payment_intent_id'])
-
+            local_status = _finalize_payment_from_session(payment, session)
+            if local_status == 'completed':
                 logger.info(f"Payment {payment.id} completed for parent {request.user.id}")
-                return Response({"status": "completed"})
-            elif session.status == 'expired':
-                payment.status = 'failed'
-                payment.save(update_fields=['status'])
-                return Response({"status": "failed"})
-            else:
-                return Response({"status": "pending"})
+            return Response({"status": local_status})
 
         except stripe.StripeError as e:
             logger.error(f"Stripe error checking payment status: {e}")
@@ -277,6 +285,28 @@ class PaymentSuccessView(APIView):
 
     def get(self, request):
         from django.http import HttpResponse
+
+        session_id = request.query_params.get('session_id', '').strip()
+
+        # Finalize the payment server-side so payment state is persisted even
+        # when the mobile app does not poll /payment/status/ after browser flow.
+        if session_id and SESSION_ID_PATTERN.match(session_id) and settings.STRIPE_SECRET_KEY:
+            payment = Payment.objects.filter(stripe_checkout_session_id=session_id).first()
+            if payment and payment.status != 'completed':
+                try:
+                    stripe_client = stripe.StripeClient(
+                        settings.STRIPE_SECRET_KEY,
+                        http_client=stripe.RequestsClient(timeout=30),
+                    )
+                    session = stripe_client.checkout.sessions.retrieve(session_id)
+                    _finalize_payment_from_session(payment, session)
+                except Exception as e:
+                    logger.warning(
+                        "Payment success redirect could not finalize session %s: %s",
+                        session_id,
+                        e,
+                    )
+
         html = """
         <!DOCTYPE html>
         <html>
@@ -289,14 +319,12 @@ class PaymentSuccessView(APIView):
             .card { background: white; padding: 2rem; border-radius: 1rem;
                     text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);
                     max-width: 400px; }
-            .check { font-size: 3rem; margin-bottom: 1rem; }
             h1 { color: #059669; margin: 0 0 0.5rem; }
             p { color: #6b7280; }
         </style>
         </head>
         <body>
             <div class="card">
-                <div class="check">✅</div>
                 <h1>Payment Successful!</h1>
                 <p>You can now return to the SchedScan app and add your child.</p>
             </div>
@@ -304,6 +332,51 @@ class PaymentSuccessView(APIView):
         </html>
         """
         return HttpResponse(html)
+
+
+class StripeWebhookView(APIView):
+    """
+    POST /api/payment/webhook/
+    Stripe webhook receiver for authoritative payment state updates.
+    """
+
+    permission_classes = []
+
+    def post(self, request):
+        if not settings.STRIPE_WEBHOOK_SECRET:
+            logger.error("Stripe webhook secret not configured")
+            return Response({"error": "Webhook is not configured"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        payload = request.body
+        sig_header = request.META.get('HTTP_STRIPE_SIGNATURE', '')
+
+        try:
+            event = stripe.Webhook.construct_event(
+                payload=payload,
+                sig_header=sig_header,
+                secret=settings.STRIPE_WEBHOOK_SECRET,
+            )
+        except (ValueError, stripe.error.SignatureVerificationError) as e:
+            logger.warning("Invalid Stripe webhook payload/signature: %s", e)
+            return Response({"error": "Invalid webhook signature"}, status=status.HTTP_400_BAD_REQUEST)
+
+        event_type = event.get('type', '')
+        session = event.get('data', {}).get('object', {})
+        session_id = session.get('id', '')
+
+        if event_type.startswith('checkout.session.') and session_id:
+            payment = Payment.objects.filter(stripe_checkout_session_id=session_id).first()
+            if payment:
+                from types import SimpleNamespace
+
+                session_proxy = SimpleNamespace(
+                    payment_status=session.get('payment_status'),
+                    status=session.get('status'),
+                    payment_intent=session.get('payment_intent'),
+                )
+                _finalize_payment_from_session(payment, session_proxy)
+
+        return Response({"received": True}, status=status.HTTP_200_OK)
 
 
 class PaymentCancelledView(APIView):

@@ -111,6 +111,7 @@ from .payment_views import (
     CheckPaymentStatusView,
     PaymentSuccessView,
     PaymentCancelledView,
+    StripeWebhookView,
 )
 
 # Public holiday views

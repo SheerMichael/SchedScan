@@ -702,6 +702,9 @@ class AdminAnalyticsView(APIView):
         "total_schedules": int,
         "premium_parents": int,
         "linked_parents": int,
+        "completed_payments": int,
+        "pending_payments": int,
+        "failed_payments": int,
         "reporting_period": "last_7_days"
     }
     """
@@ -724,6 +727,12 @@ class AdminAnalyticsView(APIView):
             total=Sum("amount")
         )
         total_centavos = revenue_data["total"] or 0
+
+        payment_status_counts = dict(
+            Payment.objects.values("status")
+            .annotate(n=Count("id"))
+            .values_list("status", "n")
+        )
 
         # Downloads = number of schedule objects ever uploaded
         total_schedules = Schedule.objects.count()
@@ -754,6 +763,9 @@ class AdminAnalyticsView(APIView):
                 "total_schedules": total_schedules,
                 "premium_parents": premium_parents,
                 "linked_parents": linked_parents,
+                "completed_payments": payment_status_counts.get("completed", 0),
+                "pending_payments": payment_status_counts.get("pending", 0),
+                "failed_payments": payment_status_counts.get("failed", 0),
                 "reporting_period": "all_time",
             }
         )

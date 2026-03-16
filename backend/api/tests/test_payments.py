@@ -214,3 +214,116 @@ class PaymentStatusTests(PaymentTestBase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['status'], 'pending')
+
+
+class PaymentSuccessRedirectTests(PaymentTestBase):
+    """Test the /api/payment/success/ endpoint finalizes payment server-side."""
+
+    @patch('api.views.payment_views.stripe.StripeClient')
+    def test_success_redirect_marks_payment_completed(self, MockStripeClient):
+        payment = Payment.objects.create(
+            parent=self.parent,
+            stripe_checkout_session_id='cs_test_success123',
+            amount=8900,
+            status='pending',
+            child_slot_number=2,
+        )
+
+        mock_session = MagicMock()
+        mock_session.payment_status = 'paid'
+        mock_session.payment_intent = 'pi_success_123'
+        mock_client_instance = MockStripeClient.return_value
+        mock_client_instance.checkout.sessions.retrieve.return_value = mock_session
+
+        with self.settings(STRIPE_SECRET_KEY='sk_test_fake'):
+            response = self.client.get('/api/payment/success/?session_id=cs_test_success123')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, 'completed')
+        self.assertIsNotNone(payment.completed_at)
+        self.assertEqual(payment.stripe_payment_intent_id, 'pi_success_123')
+
+    @patch('api.views.payment_views.stripe.StripeClient')
+    def test_success_redirect_without_session_id_keeps_payment_pending(self, MockStripeClient):
+        payment = Payment.objects.create(
+            parent=self.parent,
+            stripe_checkout_session_id='cs_test_no_change',
+            amount=8900,
+            status='pending',
+            child_slot_number=2,
+        )
+
+        with self.settings(STRIPE_SECRET_KEY='sk_test_fake'):
+            response = self.client.get('/api/payment/success/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        MockStripeClient.assert_not_called()
+
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, 'pending')
+
+
+class PaymentWebhookTests(PaymentTestBase):
+    """Test the /api/payment/webhook/ endpoint with Stripe signature validation."""
+
+    @patch('api.views.payment_views.stripe.Webhook.construct_event')
+    def test_webhook_marks_payment_completed(self, mock_construct_event):
+        payment = Payment.objects.create(
+            parent=self.parent,
+            stripe_checkout_session_id='cs_test_webhook_paid',
+            amount=8900,
+            status='pending',
+            child_slot_number=2,
+        )
+
+        mock_construct_event.return_value = {
+            'type': 'checkout.session.completed',
+            'data': {
+                'object': {
+                    'id': 'cs_test_webhook_paid',
+                    'payment_status': 'paid',
+                    'status': 'complete',
+                    'payment_intent': 'pi_webhook_123',
+                }
+            }
+        }
+
+        with self.settings(STRIPE_WEBHOOK_SECRET='whsec_test_secret'):
+            response = self.client.post(
+                '/api/payment/webhook/',
+                data='{}',
+                content_type='application/json',
+                HTTP_STRIPE_SIGNATURE='t=test,v1=sig',
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, 'completed')
+        self.assertEqual(payment.stripe_payment_intent_id, 'pi_webhook_123')
+
+    @patch('api.views.payment_views.stripe.Webhook.construct_event')
+    def test_webhook_rejects_invalid_signature(self, mock_construct_event):
+        mock_construct_event.side_effect = ValueError('Invalid payload')
+
+        with self.settings(STRIPE_WEBHOOK_SECRET='whsec_test_secret'):
+            response = self.client.post(
+                '/api/payment/webhook/',
+                data='{}',
+                content_type='application/json',
+                HTTP_STRIPE_SIGNATURE='bad_signature',
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_webhook_not_configured(self):
+        with self.settings(STRIPE_WEBHOOK_SECRET=''):
+            response = self.client.post(
+                '/api/payment/webhook/',
+                data='{}',
+                content_type='application/json',
+                HTTP_STRIPE_SIGNATURE='t=test,v1=sig',
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)

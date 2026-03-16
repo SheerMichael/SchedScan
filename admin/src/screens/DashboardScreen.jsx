@@ -67,9 +67,10 @@ export default function DashboardScreen() {
 
       <div className="p-8 max-w-7xl mx-auto">
         {/* Stat cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           {loadingStats ? (
             <>
+              <SkeletonCard />
               <SkeletonCard />
               <SkeletonCard />
               <SkeletonCard />
@@ -81,6 +82,7 @@ export default function DashboardScreen() {
               <StatCard title="Total Revenue" value={fmtPhp(stats?.total_revenue_centavos)} />
               <StatCard title="Total Enrolled Users" value={fmt(stats?.total_users)} />
               <StatCard title="Active User Sessions" value={fmt(stats?.active_users)} />
+              <StatCard title="Completed Payments" value={fmt(stats?.completed_payments)} />
             </>
           )}
         </div>

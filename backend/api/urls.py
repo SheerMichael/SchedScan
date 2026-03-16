@@ -102,6 +102,7 @@ urlpatterns = [
     path('payment/can-add-child/', views.CanAddChildView.as_view(), name='can_add_child'),
     path('payment/create-checkout-session/', views.CreateCheckoutSessionView.as_view(), name='create_checkout_session'),
     path('payment/status/', views.CheckPaymentStatusView.as_view(), name='check_payment_status'),
+    path('payment/webhook/', views.StripeWebhookView.as_view(), name='stripe_webhook'),
     path('payment/success/', views.PaymentSuccessView.as_view(), name='payment_success'),
     path('payment/cancelled/', views.PaymentCancelledView.as_view(), name='payment_cancelled'),
 
