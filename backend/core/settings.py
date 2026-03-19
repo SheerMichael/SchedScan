@@ -332,6 +332,27 @@ STRIPE_CURRENCY = 'php'
 # Keep server-side class reminders disabled unless explicitly enabled.
 ENABLE_SERVER_CLASS_REMINDERS = os.getenv('ENABLE_SERVER_CLASS_REMINDERS', 'False') == 'True'
 
+# Extraction pipeline flags (Phase 1)
+EXTRACTION_V2_ENABLED = os.getenv('EXTRACTION_V2_ENABLED', 'True') == 'True'
+EXTRACTION_LLM_NORMALIZATION_ENABLED = os.getenv('EXTRACTION_LLM_NORMALIZATION_ENABLED', 'False') == 'True'
+EXTRACTION_ACCEPT_THRESHOLD = float(os.getenv('EXTRACTION_ACCEPT_THRESHOLD', '0.85'))
+EXTRACTION_RETRY_THRESHOLD = float(os.getenv('EXTRACTION_RETRY_THRESHOLD', '0.60'))
+EXTRACTION_STRICT_OWNERSHIP_MODE = os.getenv('EXTRACTION_STRICT_OWNERSHIP_MODE', 'False') == 'True'
+EXTRACTION_ASYNC_FALLBACK_ENABLED = os.getenv('EXTRACTION_ASYNC_FALLBACK_ENABLED', 'False') == 'True'
+EXTRACTION_SCHEMA_VERSION = os.getenv('EXTRACTION_SCHEMA_VERSION', 'v1')
+EXTRACTION_SCORE_VERSION = os.getenv('EXTRACTION_SCORE_VERSION', 'v1')
+EXTRACTION_LLM_MODEL_NAME = os.getenv('EXTRACTION_LLM_MODEL_NAME', '')
+EXTRACTION_LLM_TIMEOUT_SECONDS = int(os.getenv('EXTRACTION_LLM_TIMEOUT_SECONDS', '12'))
+
+# Optional override for parser priors used by composite confidence scoring.
+EXTRACTION_PARSER_RELIABILITY_PRIOR = {
+    'pdf_text': float(os.getenv('EXTRACTION_PRIOR_PDF_TEXT', '0.92')),
+    'ocr': float(os.getenv('EXTRACTION_PRIOR_OCR', '0.74')),
+    'ocr_fallback': float(os.getenv('EXTRACTION_PRIOR_OCR_FALLBACK', '0.68')),
+    'pdf_text_only': float(os.getenv('EXTRACTION_PRIOR_PDF_TEXT_ONLY', '0.60')),
+    'none': 0.0,
+}
+
 # ---------------------------------------------------------------------------
 # Production security hardening
 # DigitalOcean App Platform terminates TLS at the load-balancer and forwards

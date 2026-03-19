@@ -4,13 +4,19 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.db import IntegrityError
+from django.conf import settings
+from django.utils import timezone
 import os
 import tempfile
 import traceback
 import logging
+import re
+import hashlib
+from uuid import uuid4
 
 from ..serializers import CourseSerializer
-from ..models import Course, ExtractionLog, IncidentReport
+from ..models import Course, ExtractionLog, IncidentReport, ExtractionRequest
 from ..permissions import IsAdminUser
 from ..utils.extraction_manager import ExtractionManager
 
@@ -26,6 +32,45 @@ class BaseCORUploadView(APIView):
     permission_classes = [IsAuthenticated]
     upload_type = None  # Must be set by subclass ('student' or 'faculty')
 
+    _student_number_pattern = re.compile(r"\b(\d{4})-(\d)(\d{1,5})(\d)\b")
+    _email_pattern = re.compile(r"\b([A-Za-z0-9._%+-])([A-Za-z0-9._%+-]*)([A-Za-z0-9._%+-])@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b")
+
+    def _redact_text(self, value: str) -> str:
+        text = (value or "")
+
+        def _mask_student_number(match):
+            year, first, middle, last = match.groups()
+            return f"{year}-{first}{'*' * len(middle)}{last}"
+
+        def _mask_email(match):
+            first, middle, last, domain = match.groups()
+            return f"{first}{'*' * len(middle)}{last}@{domain}"
+
+        text = self._student_number_pattern.sub(_mask_student_number, text)
+        text = self._email_pattern.sub(_mask_email, text)
+        return text
+
+    def _build_raw_text_preview(self, uploaded_file, extraction_result: dict) -> str:
+        raw_text = extraction_result.get('raw_text', '')
+        if not raw_text:
+            # Fallback preview from extracted fields if raw source text is unavailable.
+            course_lines = []
+            for course in extraction_result.get('courses', [])[:10]:
+                line = " | ".join([
+                    str(course.get('subject_code', '')).strip(),
+                    str(course.get('day', '')).strip(),
+                    str(course.get('start_time', '')).strip(),
+                    str(course.get('end_time', '')).strip(),
+                    str(course.get('location', '')).strip(),
+                ])
+                course_lines.append(line)
+            raw_text = "\n".join(course_lines)
+
+        extension = os.path.splitext(os.path.basename(getattr(uploaded_file, 'name', '')))[1].lower()
+        file_name = f"uploaded{extension}" if extension else "uploaded_file"
+        preview = f"file={file_name}\n{raw_text}" if raw_text else file_name
+        return self._redact_text(preview)[:2000]
+
     def _write_extraction_log(
         self,
         *,
@@ -38,6 +83,14 @@ class BaseCORUploadView(APIView):
         error_message='',
         processing_time=0.0,
         attempts=None,
+        failure_category='none',
+        validator_errors=None,
+        score_breakdown=None,
+        template_family='',
+        review_required=False,
+        llm_used=False,
+        llm_parse_success=False,
+        raw_text_preview='',
     ):
         try:
             file_ext = os.path.splitext(uploaded_file.name)[1].lower().lstrip('.')
@@ -51,11 +104,101 @@ class BaseCORUploadView(APIView):
                 courses_extracted=courses_extracted,
                 success=success,
                 error_message=(error_message or '')[:2000],
+                raw_text_preview=(raw_text_preview or '')[:2000],
                 processing_time=processing_time,
                 attempts=attempts or [],
+                failure_category=failure_category,
+                validator_errors=validator_errors or [],
+                score_breakdown=score_breakdown or {},
+                template_family=template_family,
+                review_required=review_required,
+                llm_used=llm_used,
+                llm_parse_success=llm_parse_success,
             )
         except Exception:
             logger.exception("Failed to write ExtractionLog")
+
+    def _build_idempotency_context(self, request, user, file_hash: str) -> dict:
+        request_id = str(
+            request.headers.get('X-Request-ID')
+            or request.data.get('request_id')
+            or uuid4()
+        )
+        provided_key = str(
+            request.headers.get('Idempotency-Key')
+            or request.data.get('idempotency_key')
+            or ''
+        ).strip()
+        if provided_key:
+            idempotency_key = provided_key[:128]
+        else:
+            minute_bucket = timezone.now().strftime('%Y%m%d%H%M')
+            idempotency_key = hashlib.sha256(
+                f"{user.id}:{file_hash}:{self.upload_type}:{minute_bucket}".encode('utf-8')
+            ).hexdigest()
+
+        return {
+            'request_id': request_id,
+            'idempotency_key': idempotency_key,
+            'extraction_run_id': str(uuid4()),
+            'schema_version': str(getattr(settings, 'EXTRACTION_SCHEMA_VERSION', 'v1')),
+            'file_hash': file_hash,
+        }
+
+    def _find_finalized_request(self, *, user, idempotency_key: str):
+        return ExtractionRequest.objects.filter(
+            user=user,
+            idempotency_key=idempotency_key,
+            is_finalized=True,
+        ).first()
+
+    def _get_or_create_locked_request_run(self, *, user, context: dict):
+        try:
+            run, _ = ExtractionRequest.objects.select_for_update().get_or_create(
+                user=user,
+                idempotency_key=context['idempotency_key'],
+                defaults={
+                    'request_id': context['request_id'],
+                    'extraction_run_id': context['extraction_run_id'],
+                    'schema_version': context['schema_version'],
+                    'upload_type': self.upload_type,
+                    'file_hash': context['file_hash'],
+                },
+            )
+            return run
+        except IntegrityError:
+            # Another request won the unique-key race; lock existing row.
+            return ExtractionRequest.objects.select_for_update().get(
+                user=user,
+                idempotency_key=context['idempotency_key'],
+            )
+
+    def _finalize_idempotent_response(
+        self,
+        *,
+        user,
+        context: dict,
+        payload: dict,
+        status_code: int,
+    ):
+        with transaction.atomic():
+            run = self._get_or_create_locked_request_run(user=user, context=context)
+
+            if run.is_finalized and run.response_status and isinstance(run.response_payload, dict):
+                return run.response_payload, run.response_status, True
+
+            run.request_id = context['request_id']
+            run.extraction_run_id = context['extraction_run_id']
+            run.schema_version = context['schema_version']
+            run.upload_type = self.upload_type
+            run.file_hash = context['file_hash']
+            run.response_payload = payload
+            run.response_status = status_code
+            run.is_finalized = True
+            run.status = 'succeeded' if 200 <= status_code < 300 else 'failed'
+            run.save()
+
+        return payload, status_code, False
     
     def post(self, request):
         # Check if file was uploaded
@@ -80,6 +223,7 @@ class BaseCORUploadView(APIView):
             )
         
         temp_file_path = None
+        idempotency_context = None
         
         try:
             # Save uploaded file to a local temporary file
@@ -90,9 +234,28 @@ class BaseCORUploadView(APIView):
                 suffix=file_extension,
                 prefix=f"cor_{self.upload_type}_{request.user.id}_",
             ) as tmp:
+                file_hash_builder = hashlib.sha256()
                 for chunk in uploaded_file.chunks():
                     tmp.write(chunk)
+                    file_hash_builder.update(chunk)
                 temp_file_path = tmp.name
+            file_hash = file_hash_builder.hexdigest()
+            idempotency_context = self._build_idempotency_context(request, request.user, file_hash)
+
+            existing_run = self._find_finalized_request(
+                user=request.user,
+                idempotency_key=idempotency_context['idempotency_key'],
+            )
+            if existing_run and existing_run.response_status and isinstance(existing_run.response_payload, dict):
+                replay_payload = dict(existing_run.response_payload)
+                replay_payload['idempotency'] = {
+                    'request_id': existing_run.request_id,
+                    'idempotency_key': existing_run.idempotency_key,
+                    'extraction_run_id': existing_run.extraction_run_id,
+                    'schema_version': existing_run.schema_version,
+                    'hit': True,
+                }
+                return Response(replay_payload, status=existing_run.response_status)
             
             logger.info(f"Processing {self.upload_type.upper()} COR for user {request.user.id}: {uploaded_file.name}")
             
@@ -109,13 +272,86 @@ class BaseCORUploadView(APIView):
                 'attempts': result.get('attempts', []),
                 'semester': result.get('semester', ''),
                 'school_year': result.get('school_year', ''),
+                'failure_category': result.get('failure_category', 'none'),
+                'validator_errors': result.get('validator_errors', []),
+                'score_breakdown': result.get('score_breakdown', {}),
+                'request_id': idempotency_context['request_id'],
+                'idempotency_key': idempotency_context['idempotency_key'],
+                'extraction_run_id': idempotency_context['extraction_run_id'],
+                'schema_version': idempotency_context['schema_version'],
             }
+            redacted_preview = self._build_raw_text_preview(uploaded_file, result)
             
             logger.info(f"Extraction completed using {result['extraction_method']} method "
                        f"(confidence: {result['confidence']}, time: {result['processing_time']}s)")
             
             # Verify COR ownership: check that the student number in the COR
             # matches the student number the user registered with
+            if self.upload_type == 'student' and not extracted_student_number:
+                stronger_fallback_result = manager.extract_schedule(
+                    temp_file_path,
+                    self.upload_type,
+                    force_ocr_fallback=True,
+                )
+                extracted_student_number = stronger_fallback_result.get('student_number', '')
+                if extracted_student_number:
+                    result = stronger_fallback_result
+                    courses_data = result['courses']
+                    extraction_metadata.update({
+                        'method': result['extraction_method'],
+                        'confidence': result['confidence'],
+                        'processing_time_seconds': result['processing_time'],
+                        'attempts': result.get('attempts', []),
+                        'semester': result.get('semester', ''),
+                        'school_year': result.get('school_year', ''),
+                        'failure_category': result.get('failure_category', 'none'),
+                        'validator_errors': result.get('validator_errors', []),
+                        'score_breakdown': result.get('score_breakdown', {}),
+                    })
+                    redacted_preview = self._build_raw_text_preview(uploaded_file, result)
+
+            strict_ownership_mode = bool(getattr(settings, 'EXTRACTION_STRICT_OWNERSHIP_MODE', False))
+            if self.upload_type == 'student' and not extracted_student_number:
+                missing_status = status.HTTP_403_FORBIDDEN if strict_ownership_mode else status.HTTP_422_UNPROCESSABLE_ENTITY
+                self._write_extraction_log(
+                    user=request.user,
+                    uploaded_file=uploaded_file,
+                    extraction_method=result['extraction_method'],
+                    confidence=result['confidence'],
+                    courses_extracted=0,
+                    success=False,
+                    error_message='Student number missing from extraction after stronger fallback pass.',
+                    processing_time=result['processing_time'],
+                    attempts=result.get('attempts', []),
+                    failure_category='metadata_mismatch',
+                    validator_errors=result.get('validator_errors', []),
+                    score_breakdown=result.get('score_breakdown', {}),
+                    review_required=True,
+                    llm_used=result.get('llm_used', False),
+                    llm_parse_success=result.get('llm_parse_success', False),
+                    raw_text_preview=redacted_preview,
+                )
+                payload = {
+                    "error": "Unable to verify COR ownership because student number could not be extracted.",
+                    "code": "STUDENT_NUMBER_MISSING",
+                    "retryable": True,
+                    "message": "Please upload a clearer COR with visible header details including your student number.",
+                    "courses": [],
+                    "total_courses": 0,
+                    "extraction_metadata": extraction_metadata,
+                }
+                payload, final_status, replayed = self._finalize_idempotent_response(
+                    user=request.user,
+                    context=idempotency_context,
+                    payload=payload,
+                    status_code=missing_status,
+                )
+                payload['idempotency'] = {
+                    **{k: idempotency_context[k] for k in ('request_id', 'idempotency_key', 'extraction_run_id', 'schema_version')},
+                    'hit': replayed,
+                }
+                return Response(payload, status=final_status)
+
             if self.upload_type == 'student' and extracted_student_number:
                 user_student_number = getattr(request.user, 'student_number', None)
                 if user_student_number and extracted_student_number != user_student_number:
@@ -138,16 +374,71 @@ class BaseCORUploadView(APIView):
                         ),
                         processing_time=result['processing_time'],
                         attempts=result.get('attempts', []),
+                        failure_category='metadata_mismatch',
+                        validator_errors=result.get('validator_errors', []),
+                        score_breakdown=result.get('score_breakdown', {}),
+                        review_required=True,
+                        llm_used=result.get('llm_used', False),
+                        llm_parse_success=result.get('llm_parse_success', False),
+                        raw_text_preview=redacted_preview,
                     )
-                    return Response(
-                        {
-                            "error": "COR verification failed. The student number in "
-                                     "this COR does not match your registered student "
-                                     f"number ({user_student_number}). "
-                                     "Please upload your own COR.",
-                        },
-                        status=status.HTTP_403_FORBIDDEN
+                    payload = {
+                        "error": "COR verification failed. The student number in "
+                                 "this COR does not match your registered student "
+                                 f"number ({user_student_number}). "
+                                 "Please upload your own COR.",
+                    }
+                    payload, final_status, replayed = self._finalize_idempotent_response(
+                        user=request.user,
+                        context=idempotency_context,
+                        payload=payload,
+                        status_code=status.HTTP_403_FORBIDDEN,
                     )
+                    payload['idempotency'] = {
+                        **{k: idempotency_context[k] for k in ('request_id', 'idempotency_key', 'extraction_run_id', 'schema_version')},
+                        'hit': replayed,
+                    }
+                    return Response(payload, status=final_status)
+
+            if result.get('failure_category', 'none') != 'none':
+                self._write_extraction_log(
+                    user=request.user,
+                    uploaded_file=uploaded_file,
+                    extraction_method=result['extraction_method'],
+                    confidence=result['confidence'],
+                    courses_extracted=0,
+                    success=False,
+                    error_message='Extraction rejected by validation/scoring gate.',
+                    processing_time=result['processing_time'],
+                    attempts=result.get('attempts', []),
+                    failure_category=result.get('failure_category', 'low_confidence'),
+                    validator_errors=result.get('validator_errors', []),
+                    score_breakdown=result.get('score_breakdown', {}),
+                    review_required=True,
+                    llm_used=result.get('llm_used', False),
+                    llm_parse_success=result.get('llm_parse_success', False),
+                    raw_text_preview=redacted_preview,
+                )
+                payload = {
+                    "error": "Extraction did not meet quality requirements.",
+                    "code": "EXTRACTION_VALIDATION_FAILED",
+                    "retryable": True,
+                    "message": "Please re-upload a clearer document. Parsed output failed validation or confidence checks.",
+                    "courses": [],
+                    "total_courses": 0,
+                    "extraction_metadata": extraction_metadata,
+                }
+                payload, final_status, replayed = self._finalize_idempotent_response(
+                    user=request.user,
+                    context=idempotency_context,
+                    payload=payload,
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                )
+                payload['idempotency'] = {
+                    **{k: idempotency_context[k] for k in ('request_id', 'idempotency_key', 'extraction_run_id', 'schema_version')},
+                    'hit': replayed,
+                }
+                return Response(payload, status=final_status)
             
             if not courses_data:
                 self._write_extraction_log(
@@ -162,27 +453,58 @@ class BaseCORUploadView(APIView):
                     ),
                     processing_time=result['processing_time'],
                     attempts=result.get('attempts', []),
+                    failure_category=result.get('failure_category', 'no_text'),
+                    validator_errors=result.get('validator_errors', []),
+                    score_breakdown=result.get('score_breakdown', {}),
+                    review_required=True,
+                    llm_used=result.get('llm_used', False),
+                    llm_parse_success=result.get('llm_parse_success', False),
+                    raw_text_preview=redacted_preview,
                 )
-                return Response(
-                    {
-                        "error": "No courses could be extracted from the document.",
-                        "code": "NO_COURSES_EXTRACTED",
-                        "retryable": True,
-                        "message": (
-                            "Please try again with a clearer image/PDF, ensure the schedule details "
-                            "are visible, and upload a valid "
-                            f"{self.upload_type.upper()} COR document."
-                        ),
-                        "courses": [],
-                        "total_courses": 0,
-                        "extraction_metadata": extraction_metadata
-                    },
-                    status=status.HTTP_422_UNPROCESSABLE_ENTITY
+                payload = {
+                    "error": "No courses could be extracted from the document.",
+                    "code": "NO_COURSES_EXTRACTED",
+                    "retryable": True,
+                    "message": (
+                        "Please try again with a clearer image/PDF, ensure the schedule details "
+                        "are visible, and upload a valid "
+                        f"{self.upload_type.upper()} COR document."
+                    ),
+                    "courses": [],
+                    "total_courses": 0,
+                    "extraction_metadata": extraction_metadata
+                }
+                payload, final_status, replayed = self._finalize_idempotent_response(
+                    user=request.user,
+                    context=idempotency_context,
+                    payload=payload,
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 )
+                payload['idempotency'] = {
+                    **{k: idempotency_context[k] for k in ('request_id', 'idempotency_key', 'extraction_run_id', 'schema_version')},
+                    'hit': replayed,
+                }
+                return Response(payload, status=final_status)
             
-            # Create Course objects in database
+            # Dedupe + course writes are committed in one transaction.
             created_courses = []
             with transaction.atomic():
+                run = self._get_or_create_locked_request_run(
+                    user=request.user,
+                    context=idempotency_context,
+                )
+
+                if run.is_finalized and run.response_status and isinstance(run.response_payload, dict):
+                    replay_payload = dict(run.response_payload)
+                    replay_payload['idempotency'] = {
+                        'request_id': run.request_id,
+                        'idempotency_key': run.idempotency_key,
+                        'extraction_run_id': run.extraction_run_id,
+                        'schema_version': run.schema_version,
+                        'hit': True,
+                    }
+                    return Response(replay_payload, status=run.response_status)
+
                 for course_dict in courses_data:
                     course = Course.objects.create(
                         user=request.user,
@@ -194,9 +516,32 @@ class BaseCORUploadView(APIView):
                         location=course_dict.get('location', '')
                     )
                     created_courses.append(course)
-            
-            # Serialize created courses
-            serializer = CourseSerializer(created_courses, many=True)
+
+                serializer = CourseSerializer(created_courses, many=True)
+                success_payload = {
+                    "message": f"Successfully processed {self.upload_type.upper()} COR and created {len(created_courses)} courses",
+                    "courses": serializer.data,
+                    "total_courses": len(created_courses),
+                    "upload_type": self.upload_type,
+                    "semester": extraction_metadata.get('semester', ''),
+                    "school_year": extraction_metadata.get('school_year', ''),
+                    "extraction_metadata": extraction_metadata,
+                    "idempotency": {
+                        **{k: idempotency_context[k] for k in ('request_id', 'idempotency_key', 'extraction_run_id', 'schema_version')},
+                        'hit': False,
+                    },
+                }
+
+                run.request_id = idempotency_context['request_id']
+                run.extraction_run_id = idempotency_context['extraction_run_id']
+                run.schema_version = idempotency_context['schema_version']
+                run.upload_type = self.upload_type
+                run.file_hash = idempotency_context['file_hash']
+                run.response_payload = success_payload
+                run.response_status = status.HTTP_201_CREATED
+                run.is_finalized = True
+                run.status = 'succeeded'
+                run.save()
             
             logger.info(f"Successfully created {len(created_courses)} courses for user {request.user.id} ({self.upload_type.upper()} COR)")
             
@@ -210,20 +555,15 @@ class BaseCORUploadView(APIView):
                 success=True,
                 processing_time=result['processing_time'],
                 attempts=result.get('attempts', []),
+                failure_category='none',
+                validator_errors=result.get('validator_errors', []),
+                score_breakdown=result.get('score_breakdown', {}),
+                llm_used=result.get('llm_used', False),
+                llm_parse_success=result.get('llm_parse_success', False),
+                raw_text_preview=redacted_preview,
             )
             
-            return Response(
-                {
-                    "message": f"Successfully processed {self.upload_type.upper()} COR and created {len(created_courses)} courses",
-                    "courses": serializer.data,
-                    "total_courses": len(created_courses),
-                    "upload_type": self.upload_type,
-                    "semester": extraction_metadata.get('semester', ''),
-                    "school_year": extraction_metadata.get('school_year', ''),
-                    "extraction_metadata": extraction_metadata
-                },
-                status=status.HTTP_201_CREATED
-            )
+            return Response(success_payload, status=status.HTTP_201_CREATED)
         
         except Exception as e:
             logger.error(f"Error processing {self.upload_type.upper()} COR for user {request.user.id}: {str(e)}")
@@ -239,14 +579,26 @@ class BaseCORUploadView(APIView):
                 error_message=traceback.format_exc(),
                 processing_time=0.0,
                 attempts=[],
+                failure_category='system_error',
             )
             
-            return Response(
-                {
-                    "error": "Failed to process the document. Please try again or use a different file.",
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            payload = {
+                "error": "Failed to process the document. Please try again or use a different file.",
+            }
+            if idempotency_context:
+                payload, final_status, replayed = self._finalize_idempotent_response(
+                    user=request.user,
+                    context=idempotency_context,
+                    payload=payload,
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+                payload['idempotency'] = {
+                    **{k: idempotency_context[k] for k in ('request_id', 'idempotency_key', 'extraction_run_id', 'schema_version')},
+                    'hit': replayed,
+                }
+                return Response(payload, status=final_status)
+
+            return Response(payload, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
         finally:
             # Clean up temporary file

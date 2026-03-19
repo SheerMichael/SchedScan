@@ -10,6 +10,7 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from unittest.mock import Mock, patch, MagicMock
 import os
+from rest_framework.test import APIClient
 
 from api.utils.pdf_extractor import (
     StudentPDFExtractor,
@@ -305,15 +306,17 @@ class ExtractionViewIntegrationTestCase(TestCase):
     
     def setUp(self):
         """Create test user and authenticate"""
+        self.client = APIClient()
         self.user = User.objects.create_user(
             email='test@example.com',
             password='testpass123',
             first_name='Test',
-            last_name='User'
+            last_name='User',
+            student_number='2022-01191',
         )
-        self.client.force_login(self.user)
+        self.client.force_authenticate(user=self.user)
     
-    @patch('api.views.ExtractionManager')
+    @patch('api.views.upload_views.ExtractionManager')
     def test_upload_student_cor_with_pdf_extraction(self, mock_manager_class):
         """Test student COR upload uses extraction manager"""
         # Mock extraction manager
@@ -332,7 +335,17 @@ class ExtractionViewIntegrationTestCase(TestCase):
             'extraction_method': 'pdf_text',
             'confidence': 0.95,
             'processing_time': 0.3,
-            'attempts': ['pdf_text']
+            'attempts': ['pdf_text'],
+            'student_number': '2022-01191',
+            'failure_category': 'none',
+            'validator_errors': [],
+            'score_breakdown': {
+                'completeness': 1.0,
+                'validity': 1.0,
+                'consistency': 1.0,
+                'parser_reliability': 0.95,
+                'agreement': 1.0,
+            },
         }
         mock_manager_class.return_value = mock_manager
         
@@ -353,6 +366,65 @@ class ExtractionViewIntegrationTestCase(TestCase):
         self.assertIn('extraction_metadata', response.data)
         self.assertEqual(response.data['extraction_metadata']['method'], 'pdf_text')
         self.assertEqual(response.data['extraction_metadata']['confidence'], 0.95)
+        self.assertIn('message', response.data)
+        self.assertIn('courses', response.data)
+        self.assertIn('total_courses', response.data)
+        self.assertIn('upload_type', response.data)
+        self.assertIn('semester', response.data)
+        self.assertIn('school_year', response.data)
+        self.assertIn('idempotency', response.data)
+
+        metadata = response.data['extraction_metadata']
+        self.assertIn('failure_category', metadata)
+        self.assertIn('validator_errors', metadata)
+        self.assertIn('score_breakdown', metadata)
+        self.assertIn('request_id', metadata)
+        self.assertIn('idempotency_key', metadata)
+        self.assertIn('extraction_run_id', metadata)
+        self.assertIn('schema_version', metadata)
+
+    @patch('api.views.upload_views.ExtractionManager')
+    def test_retry_response_preserves_legacy_keys_with_enhanced_metadata(self, mock_manager_class):
+        mock_manager = Mock()
+        mock_manager.extract_schedule.return_value = {
+            'courses': [],
+            'extraction_method': 'pdf_text',
+            'confidence': 0.55,
+            'processing_time': 0.35,
+            'attempts': ['pdf_text', 'ocr_fallback'],
+            'student_number': '2022-01191',
+            'failure_category': 'low_confidence',
+            'validator_errors': ['Course[0] invalid day token: TUES'],
+            'score_breakdown': {
+                'completeness': 0.4,
+                'validity': 0.5,
+                'consistency': 0.5,
+                'parser_reliability': 0.68,
+                'agreement': 0.7,
+            },
+        }
+        mock_manager_class.return_value = mock_manager
+
+        pdf_file = SimpleUploadedFile(
+            'test_cor.pdf',
+            b'fake pdf content',
+            content_type='application/pdf'
+        )
+        response = self.client.post(
+            '/api/upload-cor/student/',
+            {'file': pdf_file},
+            format='multipart'
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn('courses', response.data)
+        self.assertIn('total_courses', response.data)
+        self.assertIn('extraction_metadata', response.data)
+
+        metadata = response.data['extraction_metadata']
+        self.assertEqual(metadata['failure_category'], 'low_confidence')
+        self.assertIn('validator_errors', metadata)
+        self.assertIn('score_breakdown', metadata)
 
 
 class PerformanceTestCase(TestCase):

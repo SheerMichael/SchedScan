@@ -13,7 +13,16 @@ import os
 import time
 import logging
 from typing import Dict, List
+from django.conf import settings
 from .pdf_extractor import get_pdf_extractor, calculate_quality_score
+from .extraction import (
+    normalize_candidates,
+    score_candidates,
+    StagedExtractionOrchestrator,
+    validate_candidates,
+)
+from .extraction.fallbacks import should_use_fallback
+from .extraction.llm_normalizer import normalize_with_llm
 
 # Try to import OCR module - uses pytesseract (lightweight)
 try:
@@ -55,8 +64,56 @@ class ExtractionManager:
             self.quality_threshold = self.PDF_QUALITY_THRESHOLD
         
         logger.info(f"ExtractionManager initialized with quality threshold: {self.quality_threshold}")
+
+    def _accept_threshold(self) -> float:
+        return float(getattr(settings, 'EXTRACTION_ACCEPT_THRESHOLD', 0.85))
+
+    def _retry_threshold(self) -> float:
+        return float(getattr(settings, 'EXTRACTION_RETRY_THRESHOLD', 0.60))
+
+    def _finalize_result(self, result: Dict, attempts: List[str]) -> Dict:
+        normalized_courses = normalize_candidates(result.get('courses', []))
+        validation = validate_candidates(normalized_courses)
+        score = score_candidates(validation.courses, validation.errors, attempts)
+        llm_used = False
+        llm_parse_success = False
+
+        accept_threshold = self._accept_threshold()
+        retry_threshold = self._retry_threshold()
+
+        if retry_threshold <= score.confidence < accept_threshold:
+            llm_courses, llm_meta = normalize_with_llm(
+                extracted_text=str(result.get('raw_text', '')),
+                seed_courses=validation.courses,
+            )
+            llm_used = bool(llm_meta.get('llm_used', False))
+            llm_parse_success = bool(llm_meta.get('llm_parse_success', False))
+            if llm_parse_success:
+                llm_attempts = attempts + ['llm_normalize']
+                validation = validate_candidates(normalize_candidates(llm_courses))
+                score = score_candidates(validation.courses, validation.errors, llm_attempts)
+                attempts[:] = llm_attempts
+
+        confidence = score.confidence
+        if validation.errors:
+            failure_category = 'parse_error'
+        elif confidence < retry_threshold:
+            failure_category = 'low_confidence'
+        elif confidence < accept_threshold:
+            failure_category = 'low_confidence'
+        else:
+            failure_category = 'none'
+
+        result['courses'] = validation.courses
+        result['confidence'] = confidence
+        result['validator_errors'] = validation.errors
+        result['score_breakdown'] = score.breakdown
+        result['failure_category'] = failure_category
+        result['llm_used'] = llm_used
+        result['llm_parse_success'] = llm_parse_success
+        return result
     
-    def extract_schedule(self, file_path: str, upload_type: str) -> Dict:
+    def extract_schedule(self, file_path: str, upload_type: str, force_ocr_fallback: bool = False) -> Dict:
         """
         Extract schedule from a document using the optimal extraction method.
         
@@ -74,18 +131,23 @@ class ExtractionManager:
         """
         start_time = time.time()
         file_extension = os.path.splitext(file_path)[1].lower()
-        attempts = []
         
         logger.info(f"Starting extraction for {upload_type} COR: {file_path}")
         logger.info(f"File extension: {file_extension}")
         
-        # Determine extraction strategy based on file type
-        if file_extension == '.pdf':
-            result = self._extract_from_pdf(file_path, upload_type, attempts)
-        else:
-            # Image files (.jpg, .jpeg, .png) - use OCR directly
-            result = self._extract_from_image(file_path, upload_type, attempts)
-        
+        orchestrator = StagedExtractionOrchestrator(
+            extract_pdf=self._extract_from_pdf,
+            extract_image=self._extract_from_image,
+        )
+        result = orchestrator.run(
+            file_path=file_path,
+            upload_type=upload_type,
+            force_ocr_fallback=force_ocr_fallback,
+        )
+        attempts = result.get('attempts', [])
+
+        result = self._finalize_result(result, attempts)
+
         # Add processing time
         processing_time = time.time() - start_time
         result['processing_time'] = round(processing_time, 3)
@@ -97,7 +159,13 @@ class ExtractionManager:
         
         return result
     
-    def _extract_from_pdf(self, file_path: str, upload_type: str, attempts: List[str]) -> Dict:
+    def _extract_from_pdf(
+        self,
+        file_path: str,
+        upload_type: str,
+        attempts: List[str],
+        force_ocr_fallback: bool = False,
+    ) -> Dict:
         """
         Extract schedule from PDF file using hybrid approach.
         
@@ -121,16 +189,29 @@ class ExtractionManager:
             # Try PDF text extraction
             pdf_extractor = get_pdf_extractor(upload_type)
             pdf_result = pdf_extractor.extract_from_pdf(file_path)
-            courses = pdf_result['courses']
-            semester = pdf_result.get('semester', '')
-            school_year = pdf_result.get('school_year', '')
+            if isinstance(pdf_result, dict):
+                courses = pdf_result.get('courses', [])
+                semester = pdf_result.get('semester', '')
+                school_year = pdf_result.get('school_year', '')
+                student_number = pdf_result.get('student_number', '')
+                raw_text = pdf_result.get('raw_text', '')
+            else:
+                courses = pdf_result
+                semester = ''
+                school_year = ''
+                student_number = ''
+                raw_text = ''
             quality = calculate_quality_score(courses)
             
             logger.info(f"PDF extraction results: {len(courses)} courses, quality={quality}, "
                        f"semester={semester}, school_year={school_year}")
             
             # Check if quality meets threshold
-            if quality >= self.quality_threshold:
+            if not should_use_fallback(
+                quality=quality,
+                threshold=self.quality_threshold,
+                force_ocr_fallback=force_ocr_fallback,
+            ):
                 logger.info(f"PDF extraction quality ({quality}) meets threshold ({self.quality_threshold})")
                 return {
                     'courses': courses,
@@ -138,7 +219,8 @@ class ExtractionManager:
                     'confidence': quality,
                     'semester': semester,
                     'school_year': school_year,
-                    'student_number': pdf_result.get('student_number', ''),
+                    'student_number': student_number,
+                    'raw_text': raw_text,
                 }
             else:
                 logger.warning(f"PDF extraction quality ({quality}) below threshold ({self.quality_threshold}), "
@@ -186,6 +268,7 @@ class ExtractionManager:
                 'semester': ocr_extractor.metadata.get('semester', ''),
                 'school_year': ocr_extractor.metadata.get('school_year', ''),
                 'student_number': ocr_extractor.metadata.get('student_number', ''),
+                'raw_text': ocr_extractor.metadata.get('raw_text', ''),
             }
         
         except Exception as e:
@@ -233,6 +316,7 @@ class ExtractionManager:
                 'semester': ocr_extractor.metadata.get('semester', ''),
                 'school_year': ocr_extractor.metadata.get('school_year', ''),
                 'student_number': ocr_extractor.metadata.get('student_number', ''),
+                'raw_text': ocr_extractor.metadata.get('raw_text', ''),
             }
         
         except Exception as e:

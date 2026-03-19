@@ -22,7 +22,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from api.models import ExtractionLog, IncidentReport, Course
+from api.models import ExtractionLog, IncidentReport, Course, ExtractionRequest
 
 User = get_user_model()
 
@@ -145,6 +145,19 @@ class UploadExtractionTelemetryViewTestCase(TestCase):
         )
         return self.client.post("/api/upload-cor/student/", {"file": upload}, format="multipart")
 
+    def _post_upload_with_idempotency_key(self, key: str, filename="test_cor.pdf"):
+        upload = SimpleUploadedFile(
+            filename,
+            b"fake-pdf-content",
+            content_type="application/pdf",
+        )
+        return self.client.post(
+            "/api/upload-cor/student/",
+            {"file": upload},
+            format="multipart",
+            HTTP_IDEMPOTENCY_KEY=key,
+        )
+
     @patch("api.views.upload_views.ExtractionManager")
     def test_no_courses_is_logged_as_failed_extraction(self, mock_manager_class):
         mock_manager = mock_manager_class.return_value
@@ -244,6 +257,89 @@ class UploadExtractionTelemetryViewTestCase(TestCase):
         log = ExtractionLog.objects.first()
         self.assertFalse(log.success)
         self.assertEqual(log.extraction_method, "none")
+
+    @patch("api.views.upload_views.ExtractionManager")
+    def test_idempotency_key_replays_success_without_duplicate_courses(self, mock_manager_class):
+        mock_manager = mock_manager_class.return_value
+        mock_manager.extract_schedule.return_value = {
+            "courses": [
+                {
+                    "subject_code": "CS101",
+                    "subject_name": "Intro to CS",
+                    "start_time": "08:00AM",
+                    "end_time": "09:00AM",
+                    "day": "M",
+                    "location": "R1",
+                }
+            ],
+            "student_number": "2024-0001",
+            "extraction_method": "pdf_text",
+            "confidence": 0.91,
+            "processing_time": 0.31,
+            "attempts": ["pdf_text"],
+            "semester": "1st",
+            "school_year": "2025-2026",
+            "failure_category": "none",
+            "validator_errors": [],
+            "score_breakdown": {
+                "completeness": 1.0,
+                "validity": 1.0,
+                "consistency": 1.0,
+                "parser_reliability": 0.92,
+                "agreement": 1.0,
+            },
+        }
+
+        key = "student-upload-123"
+        first = self._post_upload_with_idempotency_key(key)
+        second = self._post_upload_with_idempotency_key(key)
+
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(Course.objects.filter(user=self.user).count(), 1)
+        self.assertEqual(ExtractionRequest.objects.filter(user=self.user, idempotency_key=key).count(), 1)
+        self.assertTrue(second.data.get("idempotency", {}).get("hit"))
+
+    @patch("api.views.upload_views.ExtractionManager")
+    def test_idempotency_replay_skips_second_extraction_call(self, mock_manager_class):
+        mock_manager = mock_manager_class.return_value
+        mock_manager.extract_schedule.return_value = {
+            "courses": [
+                {
+                    "subject_code": "CS101",
+                    "subject_name": "Intro to CS",
+                    "start_time": "08:00AM",
+                    "end_time": "09:00AM",
+                    "day": "M",
+                    "location": "R1",
+                }
+            ],
+            "student_number": "2024-0001",
+            "extraction_method": "pdf_text",
+            "confidence": 0.91,
+            "processing_time": 0.31,
+            "attempts": ["pdf_text"],
+            "semester": "1st",
+            "school_year": "2025-2026",
+            "failure_category": "none",
+            "validator_errors": [],
+            "score_breakdown": {
+                "completeness": 1.0,
+                "validity": 1.0,
+                "consistency": 1.0,
+                "parser_reliability": 0.92,
+                "agreement": 1.0,
+            },
+        }
+
+        key = "student-upload-replay-once"
+        first = self._post_upload_with_idempotency_key(key)
+        second = self._post_upload_with_idempotency_key(key)
+
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(mock_manager.extract_schedule.call_count, 1)
+        self.assertTrue(second.data.get("idempotency", {}).get("hit"))
 
 
 # ---------------------------------------------------------------------------

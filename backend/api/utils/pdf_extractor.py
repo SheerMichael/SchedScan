@@ -100,16 +100,16 @@ def calculate_quality_score(courses: List[Dict]) -> float:
     for course in courses:
         course_score = 0.0
         
-        # Check required fields presence
+        # Required fields contribute most of the score but do not make it perfect.
         for field in required_fields:
             if course.get(field):
-                course_score += 0.25
+                course_score += 0.175
         
-        # Bonus for having subject name and location
+        # Optional context fields complete the score.
         if course.get('subject_name'):
-            course_score += 0.1
+            course_score += 0.15
         if course.get('location'):
-            course_score += 0.1
+            course_score += 0.15
         
         total_score += min(course_score, 1.0)
     
@@ -146,9 +146,13 @@ class BasePDFExtractor(ABC):
             with pdfplumber.open(file_path) as pdf:
                 all_courses = []
                 metadata = {'semester': '', 'school_year': ''}
+                all_text = []
                 
                 for page_num, page in enumerate(pdf.pages, start=1):
                     logger.info(f"Processing page {page_num}/{len(pdf.pages)}")
+                    page_text = page.extract_text() or ''
+                    if page_text:
+                        all_text.append(page_text)
                     courses = self._extract_from_page(page)
                     all_courses.extend(courses)
                     
@@ -167,6 +171,7 @@ class BasePDFExtractor(ABC):
                 logger.info(f"Total courses after day splitting: {len(split_courses)}")
                 return {
                     'courses': split_courses,
+                    'raw_text': "\n".join(all_text),
                     **metadata
                 }
                 

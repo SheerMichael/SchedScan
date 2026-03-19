@@ -159,7 +159,7 @@ class BaseCORExtractor(ABC):
         """
         self.dpi = dpi
         # Metadata extracted during processing
-        self.metadata = {'semester': '', 'school_year': '', 'student_number': ''}
+        self.metadata = {'semester': '', 'school_year': '', 'student_number': '', 'raw_text': ''}
         logger.info(f"Initialized {self.__class__.__name__}")
     
     # Pattern for extracting semester and school year
@@ -260,6 +260,7 @@ class BaseCORExtractor(ABC):
         
         # Extract school year metadata from text
         self.metadata = self._extract_school_year_from_text(all_text)
+        self.metadata['raw_text'] = all_text
         
         return self._parse_text(all_text)
 
@@ -281,6 +282,7 @@ class BaseCORExtractor(ABC):
         for i, image in enumerate(images):
             text = pytesseract.image_to_string(image)
             all_text += text + "\n"
+        self.metadata['raw_text'] = all_text
         
         return self._parse_text(all_text)
 
@@ -326,6 +328,7 @@ class BaseCORExtractor(ABC):
         
         # Use psm 6 for better table/block detection
         text = pytesseract.image_to_string(image, config='--psm 6')
+        self.metadata['raw_text'] = text
         
         return self._parse_text(text)
 

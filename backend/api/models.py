@@ -1202,6 +1202,14 @@ class ExtractionLog(models.Model):
         ('pdf_text_only', 'PDF Text Only (No OCR)'),
         ('none', 'None (Failed Before Extraction)'),
     ]
+    FAILURE_CATEGORY_CHOICES = [
+        ('none', 'None'),
+        ('no_text', 'No Text'),
+        ('parse_error', 'Parse Error'),
+        ('low_confidence', 'Low Confidence'),
+        ('metadata_mismatch', 'Metadata Mismatch'),
+        ('system_error', 'System Error'),
+    ]
 
     user = models.ForeignKey(
         User,
@@ -1252,6 +1260,40 @@ class ExtractionLog(models.Model):
         default='',
         help_text="First ~2000 chars of extracted text (for debugging)",
     )
+    failure_category = models.CharField(
+        max_length=30,
+        choices=FAILURE_CATEGORY_CHOICES,
+        default='none',
+        help_text="Structured reason why extraction failed or required retry",
+    )
+    validator_errors = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Deterministic validation errors produced by extraction validators",
+    )
+    template_family = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        help_text="Template/profile hint for the uploaded document",
+    )
+    review_required = models.BooleanField(
+        default=False,
+        help_text="Whether extraction output should be reviewed before trusting",
+    )
+    llm_used = models.BooleanField(
+        default=False,
+        help_text="Whether optional LLM normalization was used",
+    )
+    llm_parse_success = models.BooleanField(
+        default=False,
+        help_text="Whether LLM output passed schema parsing",
+    )
+    score_breakdown = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Composite extraction score contribution per scoring component",
+    )
     processing_time = models.FloatField(
         default=0.0,
         help_text="Total processing time in seconds",
@@ -1272,6 +1314,9 @@ class ExtractionLog(models.Model):
             models.Index(fields=['success']),
             models.Index(fields=['extraction_method']),
             models.Index(fields=['upload_type']),
+            models.Index(fields=['failure_category'], name='api_exlog_fail_cat_idx'),
+            models.Index(fields=['template_family'], name='api_exlog_tmpl_idx'),
+            models.Index(fields=['review_required'], name='api_exlog_review_idx'),
         ]
 
     def __str__(self):
@@ -1279,6 +1324,98 @@ class ExtractionLog(models.Model):
         return (
             f"[{status}] {self.file_name} — {self.get_extraction_method_display()} "
             f"({self.confidence:.0%}) {self.created_at:%Y-%m-%d %H:%M}"
+        )
+
+
+class ExtractionRequest(models.Model):
+    """
+    Idempotency record for upload extraction requests.
+    Stores a finalized API response so duplicate submissions can replay
+    the exact response without writing duplicate courses.
+    """
+
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('succeeded', 'Succeeded'),
+        ('failed', 'Failed'),
+    ]
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='extraction_requests',
+        help_text="User associated with this upload request",
+    )
+    request_id = models.CharField(
+        max_length=64,
+        blank=True,
+        default='',
+        help_text="Stable request id supplied by client or generated server-side",
+    )
+    idempotency_key = models.CharField(
+        max_length=128,
+        help_text="Stable idempotency key to dedupe retries",
+    )
+    extraction_run_id = models.CharField(
+        max_length=64,
+        blank=True,
+        default='',
+        help_text="Unique extraction run id for telemetry correlation",
+    )
+    schema_version = models.CharField(
+        max_length=20,
+        default='v1',
+        help_text="Extraction schema version used for this request",
+    )
+    upload_type = models.CharField(
+        max_length=10,
+        choices=[('student', 'Student'), ('faculty', 'Faculty')],
+    )
+    file_hash = models.CharField(
+        max_length=64,
+        blank=True,
+        default='',
+        help_text="SHA256 of uploaded file content",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending',
+    )
+    is_finalized = models.BooleanField(
+        default=False,
+        help_text="Whether the response for this key is finalized and replayable",
+    )
+    response_status = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+    )
+    response_payload = models.JSONField(
+        default=dict,
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Extraction Request'
+        verbose_name_plural = 'Extraction Requests'
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'idempotency_key'],
+                name='unique_user_idempotency_key',
+            )
+        ]
+        indexes = [
+            models.Index(fields=['user', 'idempotency_key'], name='api_extract_user_id_541ef2_idx'),
+            models.Index(fields=['status'], name='api_extract_status_9d6488_idx'),
+            models.Index(fields=['-created_at'], name='api_extract_created_76f9c8_idx'),
+        ]
+
+    def __str__(self):
+        return (
+            f"[{self.status}] {self.user_id}:{self.idempotency_key[:12]}..."
         )
 
 
