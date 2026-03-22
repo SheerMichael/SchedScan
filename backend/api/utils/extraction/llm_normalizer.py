@@ -30,6 +30,26 @@ ALLOWED_METADATA_KEYS = {
 }
 
 
+def _build_ollama_headers(*, content_type: bool = False) -> dict:
+    """
+    Build HTTP headers for all outbound requests to Ollama (or the nginx proxy
+    that sits in front of it).
+
+    Behaviour:
+    - Always sets Accept: application/json.
+    - Sets Content-Type: application/json when content_type=True (POST calls).
+    - Injects X-Api-Key when EXTRACTION_LLM_API_KEY is non-empty.
+      An empty/missing key is silently omitted so local dev works without a proxy.
+    """
+    headers: dict = {'Accept': 'application/json'}
+    if content_type:
+        headers['Content-Type'] = 'application/json'
+    api_key = str(getattr(settings, 'EXTRACTION_LLM_API_KEY', '')).strip()
+    if api_key:
+        headers['X-Api-Key'] = api_key
+    return headers
+
+
 def _truncate_text(text: str, max_chars: int) -> str:
     if max_chars <= 0:
         return ''
@@ -82,7 +102,7 @@ def _verify_model_digest(*, base_url: str, model_name: str, required_digest: str
     response = requests.get(
         f'{base_url}{OLLAMA_TAGS_PATH}',
         timeout=timeout_seconds,
-        headers={'Accept': 'application/json'},
+        headers=_build_ollama_headers(),
     )
     response.raise_for_status()
     payload = response.json()
@@ -165,7 +185,7 @@ def run_llm_startup_health_check() -> None:
         response = requests.get(
             f'{base_url}{OLLAMA_TAGS_PATH}',
             timeout=timeout_seconds,
-            headers={'Accept': 'application/json'},
+            headers=_build_ollama_headers(),
         )
         response.raise_for_status()
         payload = response.json()
@@ -314,7 +334,7 @@ def normalize_with_llm(
             generate_url,
             json=request_payload,
             timeout=timeout_seconds,
-            headers={'Content-Type': 'application/json'},
+            headers=_build_ollama_headers(content_type=True),
         )
         response.raise_for_status()
         ollama_payload = response.json()
