@@ -422,7 +422,7 @@ class BaseCORUploadView(APIView):
                     }
                     return Response(payload, status=final_status)
 
-            if result.get('failure_category', 'none') != 'none':
+            if not result.get('accepted', False):
                 self._write_extraction_log(
                     user=request.user,
                     uploaded_file=uploaded_file,

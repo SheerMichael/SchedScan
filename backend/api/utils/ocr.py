@@ -539,9 +539,12 @@ class FacultyCORExtractor(BaseCORExtractor):
                 seen_courses.add(key)
                 all_courses.append(c)
         
-        # Attempt 2: Scaled 2x for small images
+        # Attempt 2: Scaled 2x — only run if the first pass found nothing.
+        # Phone/Messenger photos are already high-res; running a 2x upscale on
+        # them doubles OCR time (~50s → ~100s) without adding courses.
+        # If attempt 1 found courses, the image quality was sufficient.
         width, height = image.size
-        if width < 3000:
+        if width < 3000 and not all_courses:
             scaled = image.resize((width * 2, height * 2), Image.LANCZOS)
             text2 = pytesseract.image_to_string(scaled, config='--psm 6')
             raw_text_parts.append(text2)

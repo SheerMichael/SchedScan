@@ -135,6 +135,10 @@ class ExtractionManager:
         result['schema_version'] = str(getattr(settings, 'EXTRACTION_SCHEMA_VERSION', 'v1'))
         result['score_version'] = str(getattr(settings, 'EXTRACTION_SCORE_VERSION', 'v1'))
         result['rule_version'] = str(getattr(settings, 'EXTRACTION_RULE_VERSION', 'v1'))
+        # True when the valid-course subset meets the quality bar for saving.
+        # Courses rejected by the validator are already excluded from result['courses'];
+        # accepting here means we save the trustworthy subset, not the bad rows.
+        result['accepted'] = bool(validation.courses) and confidence >= accept_threshold
         return result
     
     def extract_schedule(self, file_path: str, upload_type: str, force_ocr_fallback: bool = False) -> Dict:
