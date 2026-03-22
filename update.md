@@ -1,98 +1,207 @@
 # SchedScan Hybrid Extraction Pipeline Update
 
-Date: 2026-03-19
+Date: 2026-03-20
 
-## Current State
+## Executive Summary
 
-### Phase 1 (Quality Gates + Telemetry) - Implemented
-- Deterministic validation added for required fields, day/time rules, duration cap, and duplicate collapse.
-- Composite confidence scoring added with configurable thresholds.
-- Upload flow now hard-gates persistence on validation and confidence outcomes.
-- Structured extraction failure metadata now returned in API responses.
-- Extraction telemetry extended with failure category, validator errors, score breakdown, review flags, and LLM telemetry fields.
+The hybrid extraction pipeline has progressed from structural scaffolding to a working deterministic + optional LLM-assisted flow with fail-closed behavior. Core extraction safety requirements are in place: no persistence on invalid rows, deterministic validation gates, confidence-based decisioning, telemetry enrichment, and idempotent request replay. Local Ollama integration is implemented and reachable, model pinning controls are wired, and startup/runtime safeguards are configurable.
 
-### Reliability Enhancements - Implemented
-- Idempotency request tracking model added.
-- Upload endpoints now support idempotency key replay semantics.
-- Dedupe + course writes protected by transaction with lock-safe race handling.
-- Retry requests with same key return the finalized response and avoid duplicate inserts.
+Current blocker for faculty OCR-heavy samples is quality and latency calibration rather than pipeline correctness. With default local timeout (12s), LLM normalization times out. With extended timeout (30-45s), LLM parsing succeeds and validator errors drop to zero on medium-confidence faculty samples, but aggregate confidence remains below accept threshold in tested cases.
 
-### Phase 2 (Staged Orchestration) - Structure Implemented
-- New extraction package scaffolding added:
-  - profiler
-  - orchestrator
-  - fallbacks
-  - normalizer
-- Extraction manager now runs through staged orchestration and deterministic normalize -> validate -> score path.
+## Implementation Status by Phase
 
-### Contract and Regression Coverage - Added
-- Tests for validators and scoring behavior.
-- Contract tests for enhanced extraction metadata while preserving legacy response keys.
-- Idempotency replay tests to verify no duplicate writes and replay behavior.
-- Extraction-focused suite validated via local SQLite test settings.
+### Phase 1: Quality Gates and Telemetry
 
-## Files Added/Updated (High-Level)
+Status: Implemented
 
-### New
-- backend/api/utils/extraction/__init__.py
-- backend/api/utils/extraction/types.py
-- backend/api/utils/extraction/validators.py
-- backend/api/utils/extraction/scoring.py
-- backend/api/utils/extraction/profiler.py
-- backend/api/utils/extraction/fallbacks.py
-- backend/api/utils/extraction/normalizer.py
-- backend/api/utils/extraction/orchestrator.py
-- backend/api/utils/extraction/llm_normalizer.py
-- backend/api/migrations/0030_extractionlog_phase1_fields.py
-- backend/api/migrations/0031_extractionrequest.py
-- backend/api/tests/test_extraction_validators.py
-- backend/api/tests/test_extraction_scoring.py
-- backend/core/test_settings.py
-- update.md
+- Deterministic validation implemented for required fields, day/time rules, duration cap, and duplicate collapse.
+- Composite confidence scoring implemented with configurable thresholds.
+- Persistence is hard-gated by validator/scoring outcomes.
+- Extraction responses include structured failure metadata for client guidance.
+- Extraction telemetry includes failure category, validator errors, score breakdown, and LLM fields.
 
-### Updated
-- backend/api/models.py
-- backend/api/views/upload_views.py
-- backend/api/views/admin_views.py
-- backend/api/utils/extraction_manager.py
-- backend/api/utils/pdf_extractor.py
-- backend/api/utils/ocr.py
-- backend/api/tests/test_extraction.py
-- backend/api/tests/test_extraction_health.py
-- backend/core/settings.py
+### Reliability Enhancements
 
-## LLM Normalization Status
-- Safe Phase 3 hook is in place and feature-flagged.
-- Current behavior is fail-closed by default.
-- Medium-confidence band integration is wired; actual Ollama inference call is still pending final implementation and rollout config.
+Status: Implemented
 
-## Next Steps
+- Idempotency tracking model and replay semantics are in place.
+- Upload writes are transaction-protected to avoid duplicate inserts under retries.
+- Request replay returns finalized payload/status for same `(user, idempotency_key)`.
 
-### 1) Complete Ollama Runtime Integration (Phase 3)
-- Implement actual Ollama HTTP inference in llm_normalizer.
-- Enforce strict JSON schema and key whitelist.
-- Keep fail-closed behavior when response is malformed or timeout occurs.
-- Add bounded input size and timeout controls.
+### Phase 2: Staged Orchestration
 
-### 2) Production Rollout Plan (DigitalOcean)
-- Keep EXTRACTION_LLM_NORMALIZATION_ENABLED off in production initially.
-- Deploy Ollama as a separate internal service (not in the web app process).
-- Restrict network access to backend-only path.
-- Enable feature flag gradually (faculty first), monitor telemetry, then expand.
+Status: Implemented
 
-### 3) Testing and Hardening
-- Add unit tests for LLM timeout, malformed output, unknown keys, and successful normalization path.
-- Add concurrency tests for idempotency key race conditions under parallel requests.
-- Validate staging rollback procedure for latest migrations.
+- Staged orchestrator is active (profile -> extraction path -> normalize -> validate -> score).
+- Fallback decisions are deterministic.
+- Template family and attempt chain are persisted in metadata.
 
-### 4) Observability
-- Add dashboards for:
-  - idempotency hit rate
-  - llm_used / llm_parse_success
-  - top validator failures
-  - confidence distribution by upload type and method
+### Phase 3: LLM Normalization (Ollama)
 
-## Operational Notes
-- If PostgreSQL is unavailable locally, use:
-  - python manage.py test ... --settings=core.test_settings
-- For production validation, run against PostgreSQL-backed staging before enabling LLM normalization.
+Status: Implemented behind feature flags, rollout pending tuning
+
+- Ollama HTTP inference call implemented in `llm_normalizer`.
+- Strict schema enforcement implemented:
+  - top-level key whitelist (`courses` only)
+  - course field whitelist
+  - metadata key whitelist
+- Fail-closed behavior implemented for timeout, malformed JSON, unknown keys, HTTP errors.
+- Input bounding and timeout controls are configurable.
+- Model pinning policy implemented (reject non-pinned `latest` style usage when enabled).
+- Optional model digest verification against Ollama tags endpoint implemented.
+- Optional startup health checks implemented (warning mode and strict fail-fast mode).
+
+## What Was Verified Recently
+
+### Test Coverage
+
+- Extraction + LLM test suite runs are passing locally using SQLite test settings.
+- Added LLM normalization tests for:
+  - timeout fail-closed
+  - malformed JSON fail-closed
+  - unknown key fail-closed
+  - success path
+  - pinning/digest policy failures
+
+### Faculty Sample Benchmark (`backend/img/fac1.jpeg` to `fac4.jpeg`)
+
+Baseline (LLM disabled):
+
+- `fac1.jpeg`: confidence 0.511, low confidence, 0 valid courses.
+- `fac2.jpeg`: parse error due to invalid OCR time token, 6 valid courses retained.
+- `fac3.jpeg`: parse errors (missing day and invalid ranges), 6 valid courses retained.
+- `fac4.jpeg`: parse errors (missing day), 2 valid courses retained.
+
+LLM enabled at default timeout (12s):
+
+- LLM normalization invoked for medium-confidence samples but timed out.
+- No parse recovery achieved at this timeout budget.
+
+LLM enabled at extended timeout (30-45s) for calibration:
+
+- LLM parse succeeded for `fac2` to `fac4`.
+- Validator errors reduced to zero for those samples.
+- Final confidence remained below accept threshold (still low confidence).
+
+Interpretation:
+
+- Pipeline behavior is correct and conservative.
+- Remaining work is calibration and OCR quality uplift, not correctness hotfixes.
+
+## Recent Technical Improvements Since Last Update
+
+- Faculty OCR day extraction hardened for noisy OCR text.
+- Faculty OCR raw text is now captured and passed forward so LLM stage can operate on non-empty input.
+- LLM integration now fully functional in process with strict safety guards and policy controls.
+
+## Configuration Surface (Current)
+
+Available settings include:
+
+- `EXTRACTION_LLM_NORMALIZATION_ENABLED`
+- `EXTRACTION_LLM_MODEL_NAME`
+- `EXTRACTION_LLM_MODEL_DIGEST`
+- `EXTRACTION_LLM_BASE_URL`
+- `EXTRACTION_LLM_TIMEOUT_SECONDS`
+- `EXTRACTION_LLM_MAX_INPUT_CHARS`
+- `EXTRACTION_LLM_REQUIRE_PINNED_MODEL`
+- `EXTRACTION_LLM_REQUIRE_MODEL_DIGEST`
+- `EXTRACTION_LLM_STARTUP_CHECK_ENABLED`
+- `EXTRACTION_LLM_STARTUP_CHECK_STRICT`
+- `EXTRACTION_LLM_STARTUP_CHECK_TIMEOUT_SECONDS`
+
+## Recommended DigitalOcean Deployment Pattern
+
+### Topology and Security
+
+1. Deploy Ollama as a separate internal service (not in Django web process).
+2. Restrict Ollama endpoint to private network path accessible only by backend service.
+3. Do not expose Ollama publicly.
+4. Keep backend as policy enforcement point; never trust model output without schema validation.
+
+### Environment Strategy
+
+Staging first:
+
+- Keep `EXTRACTION_LLM_NORMALIZATION_ENABLED=False` on first deploy of new code.
+- Set model + digest + startup checks in non-strict mode.
+- Verify startup check logs and runtime connectivity.
+
+Then controlled enablement:
+
+- Enable LLM normalization for faculty uploads only (operational policy/gating).
+- Use a higher timeout budget in staging for OCR-heavy faculty docs (for example 30s) and measure p95 latency.
+- If stable, roll to production with conservative timeout and explicit rollback switch.
+
+Production hardening target:
+
+- `EXTRACTION_LLM_REQUIRE_PINNED_MODEL=True`
+- `EXTRACTION_LLM_REQUIRE_MODEL_DIGEST=True`
+- `EXTRACTION_LLM_STARTUP_CHECK_ENABLED=True`
+- `EXTRACTION_LLM_STARTUP_CHECK_STRICT=True` after a successful burn-in period
+
+## Operational Runbook (Rollout and Rollback)
+
+### Rollout
+
+1. Deploy backend changes with LLM disabled.
+2. Validate baseline upload behavior unchanged.
+3. Verify Ollama service health and model digest consistency.
+4. Enable LLM normalization in staging.
+5. Monitor telemetry for:
+   - `llm_used`
+   - `llm_parse_success`
+   - timeout rate
+   - top validator errors
+   - acceptance/reject split by upload type
+6. Enable production gradually (faculty first).
+
+### Rollback
+
+Immediate rollback switch:
+
+- Set `EXTRACTION_LLM_NORMALIZATION_ENABLED=False`
+
+Secondary rollback levers:
+
+- Increase strictness by lowering timeout risk to deterministic-only path.
+- Temporarily disable startup strict mode if deployment sequencing causes transient service ordering issues.
+
+## Outstanding Work and Next Steps
+
+### Priority 1: Calibration and Throughput
+
+1. Tune timeout budget for OCR-heavy documents (benchmark p50/p95 per upload type).
+2. Recalibrate confidence scoring weights for faculty OCR + LLM corrected candidates.
+3. Add upload-type specific threshold policy if justified by telemetry (avoid global threshold drift).
+
+### Priority 2: Deterministic OCR Cleanup
+
+1. Add safe faculty time normalization for OCR artifacts that are unambiguous.
+2. Expand day-token normalization map for observed OCR variants.
+3. Keep strict fail rules for ambiguous time/day values (no guessing policy).
+
+### Priority 3: Testing and Reliability
+
+1. Add API-level benchmark script for corpus runs (`fac1-fac4` plus new fixtures).
+2. Add idempotency concurrency tests under parallel request conditions.
+3. Add startup policy tests for digest verification behavior and strict mode.
+
+### Priority 4: Observability and Ops
+
+1. Build dashboards for acceptance/rejection by upload type and method.
+2. Alert on:
+   - high timeout rates
+   - high parse_error rates
+   - startup check failures
+3. Track score/rule/schema versions in dashboards for change attribution.
+
+## Risk Register (Current)
+
+1. LLM latency variance on local CPU can cause timeout-driven non-determinism in medium-confidence rescue path.
+2. OCR quality variance for faculty image captures remains the dominant source of parse/low-confidence outcomes.
+3. Confidence policy may be too strict for corrected faculty OCR rows; requires data-backed recalibration.
+
+## Final Note
+
+The system is in a safe and production-conscious state: deterministic gates and fail-closed behavior are working as intended. Remaining effort is now operational excellence and calibration, not foundational architecture changes.

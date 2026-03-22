@@ -91,9 +91,20 @@ class BaseCORUploadView(APIView):
         llm_used=False,
         llm_parse_success=False,
         raw_text_preview='',
+        score_policy_upload_type='',
+        schema_version='v1',
+        score_version='v1',
+        rule_version='v1',
     ):
         try:
             file_ext = os.path.splitext(uploaded_file.name)[1].lower().lstrip('.')
+            enriched_score_breakdown = dict(score_breakdown or {})
+            enriched_score_breakdown.update({
+                'policy_upload_type': score_policy_upload_type or self.upload_type,
+                'schema_version': schema_version,
+                'score_version': score_version,
+                'rule_version': rule_version,
+            })
             ExtractionLog.objects.create(
                 user=user,
                 file_name=uploaded_file.name,
@@ -109,7 +120,7 @@ class BaseCORUploadView(APIView):
                 attempts=attempts or [],
                 failure_category=failure_category,
                 validator_errors=validator_errors or [],
-                score_breakdown=score_breakdown or {},
+                score_breakdown=enriched_score_breakdown,
                 template_family=template_family,
                 review_required=review_required,
                 llm_used=llm_used,
@@ -279,6 +290,9 @@ class BaseCORUploadView(APIView):
                 'idempotency_key': idempotency_context['idempotency_key'],
                 'extraction_run_id': idempotency_context['extraction_run_id'],
                 'schema_version': idempotency_context['schema_version'],
+                'score_version': result.get('score_version', str(getattr(settings, 'EXTRACTION_SCORE_VERSION', 'v1'))),
+                'rule_version': result.get('rule_version', str(getattr(settings, 'EXTRACTION_RULE_VERSION', 'v1'))),
+                'score_policy_upload_type': result.get('score_policy_upload_type', self.upload_type),
             }
             redacted_preview = self._build_raw_text_preview(uploaded_file, result)
             
@@ -330,6 +344,10 @@ class BaseCORUploadView(APIView):
                     llm_used=result.get('llm_used', False),
                     llm_parse_success=result.get('llm_parse_success', False),
                     raw_text_preview=redacted_preview,
+                    score_policy_upload_type=result.get('score_policy_upload_type', self.upload_type),
+                    schema_version=extraction_metadata.get('schema_version', 'v1'),
+                    score_version=extraction_metadata.get('score_version', 'v1'),
+                    rule_version=extraction_metadata.get('rule_version', 'v1'),
                 )
                 payload = {
                     "error": "Unable to verify COR ownership because student number could not be extracted.",
@@ -381,6 +399,10 @@ class BaseCORUploadView(APIView):
                         llm_used=result.get('llm_used', False),
                         llm_parse_success=result.get('llm_parse_success', False),
                         raw_text_preview=redacted_preview,
+                        score_policy_upload_type=result.get('score_policy_upload_type', self.upload_type),
+                        schema_version=extraction_metadata.get('schema_version', 'v1'),
+                        score_version=extraction_metadata.get('score_version', 'v1'),
+                        rule_version=extraction_metadata.get('rule_version', 'v1'),
                     )
                     payload = {
                         "error": "COR verification failed. The student number in "
@@ -418,6 +440,10 @@ class BaseCORUploadView(APIView):
                     llm_used=result.get('llm_used', False),
                     llm_parse_success=result.get('llm_parse_success', False),
                     raw_text_preview=redacted_preview,
+                    score_policy_upload_type=result.get('score_policy_upload_type', self.upload_type),
+                    schema_version=extraction_metadata.get('schema_version', 'v1'),
+                    score_version=extraction_metadata.get('score_version', 'v1'),
+                    rule_version=extraction_metadata.get('rule_version', 'v1'),
                 )
                 payload = {
                     "error": "Extraction did not meet quality requirements.",
@@ -460,6 +486,10 @@ class BaseCORUploadView(APIView):
                     llm_used=result.get('llm_used', False),
                     llm_parse_success=result.get('llm_parse_success', False),
                     raw_text_preview=redacted_preview,
+                    score_policy_upload_type=result.get('score_policy_upload_type', self.upload_type),
+                    schema_version=extraction_metadata.get('schema_version', 'v1'),
+                    score_version=extraction_metadata.get('score_version', 'v1'),
+                    rule_version=extraction_metadata.get('rule_version', 'v1'),
                 )
                 payload = {
                     "error": "No courses could be extracted from the document.",
@@ -561,6 +591,10 @@ class BaseCORUploadView(APIView):
                 llm_used=result.get('llm_used', False),
                 llm_parse_success=result.get('llm_parse_success', False),
                 raw_text_preview=redacted_preview,
+                score_policy_upload_type=result.get('score_policy_upload_type', self.upload_type),
+                schema_version=extraction_metadata.get('schema_version', 'v1'),
+                score_version=extraction_metadata.get('score_version', 'v1'),
+                rule_version=extraction_metadata.get('rule_version', 'v1'),
             )
             
             return Response(success_payload, status=status.HTTP_201_CREATED)

@@ -62,3 +62,42 @@ class ExtractionScoringTestCase(TestCase):
         )
 
         self.assertLess(multi.breakdown["agreement"], single.breakdown["agreement"])
+
+    @override_settings(
+        EXTRACTION_SCORE_WEIGHTS_BY_UPLOAD_TYPE={
+            "student": {
+                "completeness": 0.25,
+                "validity": 0.25,
+                "consistency": 0.20,
+                "parser_reliability": 0.15,
+                "agreement": 0.15,
+            },
+            "faculty": {
+                "completeness": 0.50,
+                "validity": 0.20,
+                "consistency": 0.20,
+                "parser_reliability": 0.05,
+                "agreement": 0.05,
+            },
+        }
+    )
+    def test_upload_type_weight_policy_changes_confidence(self):
+        shared_input = dict(
+            courses=[
+                {
+                    "subject_code": "CC 102",
+                    "day": "T",
+                    "start_time": "02:30PM",
+                    "end_time": "04:00PM",
+                    "subject_name": "",
+                    "location": "",
+                }
+            ],
+            validator_errors=[],
+            attempts=["ocr_fallback"],
+        )
+
+        student = score_candidates(upload_type="student", **shared_input)
+        faculty = score_candidates(upload_type="faculty", **shared_input)
+
+        self.assertNotEqual(student.confidence, faculty.confidence)

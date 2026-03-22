@@ -39,6 +39,55 @@ services:
         value: ${db.DATABASE_URL}
       - key: CORS_ALLOW_ALL
         value: "False"
+
+      # ---------------------------------------------------------------
+      # Extraction pipeline — quality gate thresholds
+      # ---------------------------------------------------------------
+      - key: EXTRACTION_V2_ENABLED
+        value: "True"
+      - key: EXTRACTION_ACCEPT_THRESHOLD
+        value: "0.85"
+      - key: EXTRACTION_RETRY_THRESHOLD
+        value: "0.60"
+      - key: EXTRACTION_STRICT_OWNERSHIP_MODE
+        value: "False"
+      - key: EXTRACTION_SCHEMA_VERSION
+        value: "v1"
+      - key: EXTRACTION_SCORE_VERSION
+        value: "v1"
+      - key: EXTRACTION_RULE_VERSION
+        value: "v1"
+      - key: EXTRACTION_ASYNC_FALLBACK_ENABLED
+        value: "False"
+
+      # ---------------------------------------------------------------
+      # Extraction pipeline — LLM normalization (disabled until Ollama
+      # Droplet is provisioned; flip EXTRACTION_LLM_NORMALIZATION_ENABLED
+      # to "True" and set EXTRACTION_LLM_BASE_URL to the Droplet's
+      # private IP once ready — see ollama_do_deployment_guide.md)
+      # ---------------------------------------------------------------
+      - key: EXTRACTION_LLM_NORMALIZATION_ENABLED
+        value: "False"
+      - key: EXTRACTION_LLM_MODEL_NAME
+        value: "llama3.2:3b"
+      - key: EXTRACTION_LLM_MODEL_DIGEST
+        value: ""
+      - key: EXTRACTION_LLM_BASE_URL
+        value: "http://127.0.0.1:11434"
+      - key: EXTRACTION_LLM_TIMEOUT_SECONDS
+        value: "45"
+      - key: EXTRACTION_LLM_MAX_INPUT_CHARS
+        value: "6000"
+      - key: EXTRACTION_LLM_REQUIRE_PINNED_MODEL
+        value: "True"
+      - key: EXTRACTION_LLM_REQUIRE_MODEL_DIGEST
+        value: "False"
+      - key: EXTRACTION_LLM_STARTUP_CHECK_ENABLED
+        value: "False"
+      - key: EXTRACTION_LLM_STARTUP_CHECK_STRICT
+        value: "False"
+      - key: EXTRACTION_LLM_STARTUP_CHECK_TIMEOUT_SECONDS
+        value: "2"
     routes:
       - path: /
 

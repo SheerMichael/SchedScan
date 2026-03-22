@@ -527,9 +527,11 @@ class FacultyCORExtractor(BaseCORExtractor):
         # Try multiple OCR attempts and combine results
         all_courses = []
         seen_courses = set()  # Track unique courses by (subject, day, start_time)
+        raw_text_parts = []
         
         # Attempt 1: Original size with psm 6
         text1 = pytesseract.image_to_string(image, config='--psm 6')
+        raw_text_parts.append(text1)
         courses1 = self._parse_text(text1)
         for c in courses1:
             key = (c['subject_code'], c['day'], c['start_time'])
@@ -542,6 +544,7 @@ class FacultyCORExtractor(BaseCORExtractor):
         if width < 3000:
             scaled = image.resize((width * 2, height * 2), Image.LANCZOS)
             text2 = pytesseract.image_to_string(scaled, config='--psm 6')
+            raw_text_parts.append(text2)
             courses2 = self._parse_text(text2)
             for c in courses2:
                 key = (c['subject_code'], c['day'], c['start_time'])
@@ -549,6 +552,8 @@ class FacultyCORExtractor(BaseCORExtractor):
                     seen_courses.add(key)
                     all_courses.append(c)
         
+        self.metadata['raw_text'] = '\n'.join(part for part in raw_text_parts if part)
+
         logger.info(f"Combined OCR extracted {len(all_courses)} unique courses")
         return all_courses
     
@@ -621,10 +626,62 @@ class FacultyCORExtractor(BaseCORExtractor):
                 clean_line = correct + clean_line[len(ocr_var):]
                 break
         
+        # Accept very short day headers that often appear in row labels.
+        day_header_shortcuts = {
+            'M': 'M',
+            'T': 'T',
+            'W': 'W',
+            'TH': 'TH',
+            'F': 'F',
+            'S': 'S',
+        }
+        if clean_line in day_header_shortcuts:
+            return day_header_shortcuts[clean_line]
+
+        # Handle OCR substitutions in day tokens before matching.
+        normalized_line = clean_line
+        normalized_line = re.sub(r'\bM0N(?:DAY)?\b', 'MON', normalized_line)
+        normalized_line = re.sub(r'\bTUE5(?:DAY)?\b', 'TUE', normalized_line)
+        normalized_line = re.sub(r'\bWEDNE5DAY\b', 'WEDNESDAY', normalized_line)
+        normalized_line = re.sub(r'\bTHU[R]?5(?:DAY)?\b', 'THU', normalized_line)
+        normalized_line = re.sub(r'\bFR[1I](?:DAY)?\b', 'FRI', normalized_line)
+        normalized_line = re.sub(r'\b5AT(?:URDAY)?\b', 'SAT', normalized_line)
+
         for label, code in self.DAY_LABELS.items():
-            if clean_line.startswith(label):
+            if normalized_line.startswith(label):
                 return code
         
+        return None
+
+    def _extract_day_anywhere(self, line: str) -> Optional[str]:
+        """
+        Extract day token from anywhere in a noisy OCR line.
+
+        This is used as a fallback when row headers are not cleanly detected.
+        """
+        upper_line = line.upper()
+        explicit_day_patterns = [
+            (r'\bMON(?:DAY)?\b', 'M'),
+            (r'\bTUE(?:SDAY)?\b', 'T'),
+            (r'\bWED(?:NESDAY)?\b', 'W'),
+            (r'\bTHU(?:RSDAY)?\b', 'TH'),
+            (r'\bFRI(?:DAY)?\b', 'F'),
+            (r'\bSAT(?:URDAY)?\b', 'S'),
+            # OCR-variant tokens
+            (r'\bM0N(?:DAY)?\b', 'M'),
+            (r'\bTUE5(?:DAY)?\b', 'T'),
+            (r'\bWEDNE5DAY\b', 'W'),
+            (r'\bTHU5(?:DAY)?\b', 'TH'),
+            (r'\bFR[1I](?:DAY)?\b', 'F'),
+            (r'\b5AT(?:URDAY)?\b', 'S'),
+        ]
+        for pattern, code in explicit_day_patterns:
+            if re.search(pattern, upper_line):
+                return code
+
+        short_token_match = re.search(r'\b(M|T|W|TH|F|S)\b', upper_line)
+        if short_token_match:
+            return short_token_match.group(1)
         return None
     
     def _parse_idp_line(self, line: str, current_day: Optional[str]) -> Optional[Dict]:
@@ -671,14 +728,18 @@ class FacultyCORExtractor(BaseCORExtractor):
             times = re.findall(r'(\d{1,2}:\d{2})', line)
             if len(times) >= 2:
                 # Use first two times found
-                start_time = self._convert_to_12hr(times[0])
-                end_time = self._convert_to_12hr(times[1])
+                start_time = self._convert_to_12hr(times[0], line_context=line)
+                end_time = self._convert_to_12hr(times[1], line_context=line)
             else:
                 # Can't find valid time - skip this entry
                 return None
         else:
-            start_time = self._convert_to_12hr(time_match.group(1))
-            end_time = self._convert_to_12hr(time_match.group(2))
+            start_time = self._convert_to_12hr(time_match.group(1), line_context=line)
+            end_time = self._convert_to_12hr(time_match.group(2), line_context=line)
+
+        # Fail closed on ambiguous or invalid time tokens.
+        if not start_time or not end_time:
+            return None
         
         # Extract room/location
         room_match = self.IDP_ROOM_PATTERN.search(line)
@@ -690,7 +751,12 @@ class FacultyCORExtractor(BaseCORExtractor):
             location = loc.replace(' ', '')
         
         # Get day from line or use current context
-        day = self._extract_day_from_line(line) or current_day or ''
+        day = (
+            self._extract_day_from_line(line)
+            or self._extract_day_anywhere(line)
+            or current_day
+            or ''
+        )
         
         course = {
             'subject_code': subject_code,
@@ -704,7 +770,36 @@ class FacultyCORExtractor(BaseCORExtractor):
         logger.debug(f"Parsed IDP course (OCR): {course}")
         return course
     
-    def _convert_to_12hr(self, time_str: str) -> str:
+    def _normalize_ocr_time_token(self, time_str: str) -> str:
+        token = (time_str or '').upper().strip()
+        token = token.replace('.', ':').replace(';', ':')
+        token = token.replace('O', '0')
+        token = re.sub(r'\s+', '', token)
+        return token
+
+    def _extract_meridiem_hint(self, line_context: str, time_token: str) -> Optional[str]:
+        """
+        Extract AM/PM from nearby OCR text when explicitly present.
+        """
+        upper_line = (line_context or '').upper()
+        token = self._normalize_ocr_time_token(time_token)
+        hour_minute = token[:5] if len(token) >= 4 else token
+
+        nearby = re.search(
+            rf"{re.escape(hour_minute)}\s*([AP])\.?M\.?",
+            upper_line,
+            re.IGNORECASE,
+        )
+        if nearby:
+            return nearby.group(1).upper() + 'M'
+
+        if 'AM' in upper_line and 'PM' not in upper_line:
+            return 'AM'
+        if 'PM' in upper_line and 'AM' not in upper_line:
+            return 'PM'
+        return None
+
+    def _convert_to_12hr(self, time_str: str, line_context: str = '') -> Optional[str]:
         """
         Convert time string to 12-hour format.
         Handles OCR variations like "9.00" instead of "9:00".
@@ -716,12 +811,42 @@ class FacultyCORExtractor(BaseCORExtractor):
             Time in format "09:00AM" or "01:00PM"
         """
         try:
-            # Normalize separator (handle . instead of :)
-            time_str = time_str.replace('.', ':')
+            time_str = self._normalize_ocr_time_token(time_str)
+
+            suffix_match = re.search(r'([AP])M?$', time_str)
+            explicit_suffix = suffix_match.group(1) + 'M' if suffix_match else None
+            if explicit_suffix:
+                time_str = re.sub(r'([AP])M?$', '', time_str)
             
             parts = time_str.split(':')
             hour = int(parts[0])
             minute = parts[1] if len(parts) > 1 else '00'
+
+            if not minute.isdigit() or len(minute) != 2:
+                return None
+            minute_val = int(minute)
+            if minute_val > 59:
+                return None
+
+            suffix = explicit_suffix or self._extract_meridiem_hint(line_context, time_str)
+
+            if suffix == 'AM':
+                if hour == 12:
+                    return f"12:{minute}AM"
+                if 1 <= hour <= 11:
+                    return f"{hour:02d}:{minute}AM"
+                if hour == 0:
+                    return f"12:{minute}AM"
+                return None
+
+            if suffix == 'PM':
+                if hour == 12:
+                    return f"12:{minute}PM"
+                if 1 <= hour <= 11:
+                    return f"{hour:02d}:{minute}PM"
+                if 13 <= hour <= 23:
+                    return f"{hour - 12:02d}:{minute}PM"
+                return None
             
             # Handle 24-hour format (13:00 - 23:00)
             if hour >= 13:
@@ -730,15 +855,11 @@ class FacultyCORExtractor(BaseCORExtractor):
                 return f"12:{minute}PM"
             elif hour == 0:
                 return f"12:{minute}AM"
-            else:
-                # Ambiguous times (1-11): use context
-                # Assume times < 7 are PM (afternoon classes)
-                if hour < 7:
-                    return f"{hour:02d}:{minute}PM"
-                else:
-                    return f"{hour:02d}:{minute}AM"
+            elif 1 <= hour <= 11:
+                # Ambiguous without explicit meridiem; reject instead of guessing.
+                return None
         except Exception:
-            return time_str
+            return None
 
 
 # Factory function to get the appropriate extractor

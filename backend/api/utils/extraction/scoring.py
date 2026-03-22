@@ -13,6 +13,14 @@ DEFAULT_RELIABILITY_PRIOR = {
     "none": 0.0,
 }
 
+DEFAULT_SCORE_WEIGHTS = {
+    "completeness": 0.25,
+    "validity": 0.25,
+    "consistency": 0.20,
+    "parser_reliability": 0.15,
+    "agreement": 0.15,
+}
+
 
 def _bounded(value: float) -> float:
     return round(max(0.0, min(1.0, value)), 4)
@@ -63,17 +71,29 @@ def _agreement_score(attempts: List[str]) -> float:
     return 0.7
 
 
-def score_candidates(courses: List[Dict[str, Any]], validator_errors: List[str], attempts: List[str]) -> ScoreResult:
-    weights = {
-        "completeness": 0.25,
-        "validity": 0.25,
-        "consistency": 0.20,
-        "parser_reliability": 0.15,
-        "agreement": 0.15,
-    }
+def _resolve_weights(upload_type: str) -> Dict[str, float]:
+    weights = dict(DEFAULT_SCORE_WEIGHTS)
+
     configured = getattr(settings, "EXTRACTION_SCORE_WEIGHTS", None)
     if isinstance(configured, dict):
         weights.update({k: float(v) for k, v in configured.items() if k in weights})
+
+    by_upload_type = getattr(settings, "EXTRACTION_SCORE_WEIGHTS_BY_UPLOAD_TYPE", None)
+    if isinstance(by_upload_type, dict):
+        scoped = by_upload_type.get((upload_type or "").lower())
+        if isinstance(scoped, dict):
+            weights.update({k: float(v) for k, v in scoped.items() if k in weights})
+
+    return weights
+
+
+def score_candidates(
+    courses: List[Dict[str, Any]],
+    validator_errors: List[str],
+    attempts: List[str],
+    upload_type: str = "student",
+) -> ScoreResult:
+    weights = _resolve_weights(upload_type)
 
     breakdown = {
         "completeness": _bounded(_completeness_score(courses)),

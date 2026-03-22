@@ -341,8 +341,17 @@ EXTRACTION_STRICT_OWNERSHIP_MODE = os.getenv('EXTRACTION_STRICT_OWNERSHIP_MODE',
 EXTRACTION_ASYNC_FALLBACK_ENABLED = os.getenv('EXTRACTION_ASYNC_FALLBACK_ENABLED', 'False') == 'True'
 EXTRACTION_SCHEMA_VERSION = os.getenv('EXTRACTION_SCHEMA_VERSION', 'v1')
 EXTRACTION_SCORE_VERSION = os.getenv('EXTRACTION_SCORE_VERSION', 'v1')
+EXTRACTION_RULE_VERSION = os.getenv('EXTRACTION_RULE_VERSION', 'v1')
 EXTRACTION_LLM_MODEL_NAME = os.getenv('EXTRACTION_LLM_MODEL_NAME', '')
+EXTRACTION_LLM_MODEL_DIGEST = os.getenv('EXTRACTION_LLM_MODEL_DIGEST', '')
+EXTRACTION_LLM_BASE_URL = os.getenv('EXTRACTION_LLM_BASE_URL', 'http://127.0.0.1:11434')
 EXTRACTION_LLM_TIMEOUT_SECONDS = int(os.getenv('EXTRACTION_LLM_TIMEOUT_SECONDS', '12'))
+EXTRACTION_LLM_MAX_INPUT_CHARS = int(os.getenv('EXTRACTION_LLM_MAX_INPUT_CHARS', '6000'))
+EXTRACTION_LLM_REQUIRE_PINNED_MODEL = os.getenv('EXTRACTION_LLM_REQUIRE_PINNED_MODEL', 'True') == 'True'
+EXTRACTION_LLM_REQUIRE_MODEL_DIGEST = os.getenv('EXTRACTION_LLM_REQUIRE_MODEL_DIGEST', 'False') == 'True'
+EXTRACTION_LLM_STARTUP_CHECK_ENABLED = os.getenv('EXTRACTION_LLM_STARTUP_CHECK_ENABLED', 'False') == 'True'
+EXTRACTION_LLM_STARTUP_CHECK_STRICT = os.getenv('EXTRACTION_LLM_STARTUP_CHECK_STRICT', 'False') == 'True'
+EXTRACTION_LLM_STARTUP_CHECK_TIMEOUT_SECONDS = int(os.getenv('EXTRACTION_LLM_STARTUP_CHECK_TIMEOUT_SECONDS', '2'))
 
 # Optional override for parser priors used by composite confidence scoring.
 EXTRACTION_PARSER_RELIABILITY_PRIOR = {
@@ -351,6 +360,38 @@ EXTRACTION_PARSER_RELIABILITY_PRIOR = {
     'ocr_fallback': float(os.getenv('EXTRACTION_PRIOR_OCR_FALLBACK', '0.68')),
     'pdf_text_only': float(os.getenv('EXTRACTION_PRIOR_PDF_TEXT_ONLY', '0.60')),
     'none': 0.0,
+}
+
+# Optional score-weight policy by upload type.
+# Student defaults mirror existing global weights.
+# Faculty gets slightly higher completeness/consistency weight to better account
+# OCR-corrected rows where deterministic validity has already passed.
+EXTRACTION_SCORE_WEIGHTS_BY_UPLOAD_TYPE = {
+    'student': {
+        'completeness': float(os.getenv('EXTRACTION_STUDENT_WEIGHT_COMPLETENESS', '0.25')),
+        'validity': float(os.getenv('EXTRACTION_STUDENT_WEIGHT_VALIDITY', '0.25')),
+        'consistency': float(os.getenv('EXTRACTION_STUDENT_WEIGHT_CONSISTENCY', '0.20')),
+        'parser_reliability': float(os.getenv('EXTRACTION_STUDENT_WEIGHT_PARSER_RELIABILITY', '0.15')),
+        'agreement': float(os.getenv('EXTRACTION_STUDENT_WEIGHT_AGREEMENT', '0.15')),
+    },
+    'faculty': {
+        'completeness': float(os.getenv('EXTRACTION_FACULTY_WEIGHT_COMPLETENESS', '0.30')),
+        'validity': float(os.getenv('EXTRACTION_FACULTY_WEIGHT_VALIDITY', '0.25')),
+        'consistency': float(os.getenv('EXTRACTION_FACULTY_WEIGHT_CONSISTENCY', '0.25')),
+        'parser_reliability': float(os.getenv('EXTRACTION_FACULTY_WEIGHT_PARSER_RELIABILITY', '0.10')),
+        'agreement': float(os.getenv('EXTRACTION_FACULTY_WEIGHT_AGREEMENT', '0.10')),
+    },
+}
+
+# Optional threshold policy by upload type.
+EXTRACTION_ACCEPT_THRESHOLD_BY_UPLOAD_TYPE = {
+    'student': float(os.getenv('EXTRACTION_ACCEPT_THRESHOLD_STUDENT', str(EXTRACTION_ACCEPT_THRESHOLD))),
+    'faculty': float(os.getenv('EXTRACTION_ACCEPT_THRESHOLD_FACULTY', str(EXTRACTION_ACCEPT_THRESHOLD))),
+}
+
+EXTRACTION_RETRY_THRESHOLD_BY_UPLOAD_TYPE = {
+    'student': float(os.getenv('EXTRACTION_RETRY_THRESHOLD_STUDENT', str(EXTRACTION_RETRY_THRESHOLD))),
+    'faculty': float(os.getenv('EXTRACTION_RETRY_THRESHOLD_FACULTY', str(EXTRACTION_RETRY_THRESHOLD))),
 }
 
 # ---------------------------------------------------------------------------

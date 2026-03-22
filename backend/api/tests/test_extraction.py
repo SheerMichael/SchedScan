@@ -22,6 +22,7 @@ from api.utils.pdf_extractor import (
 )
 from api.utils.extraction_manager import ExtractionManager
 from api.utils.ocr import StudentCORExtractor
+from api.utils.ocr import FacultyCORExtractor
 
 User = get_user_model()
 
@@ -206,6 +207,29 @@ class PDFExtractorTestCase(TestCase):
         self.assertEqual(extractor._normalize_time('2:30PM'), '02:30PM')
 
 
+class FacultyOCRDayRecoveryTestCase(TestCase):
+    """Regression tests for faculty OCR day extraction robustness."""
+
+    def setUp(self):
+        self.extractor = FacultyCORExtractor()
+
+    def test_extract_day_anywhere_handles_full_day_word(self):
+        line = 'OS137-BSCS-3A 9:00-11:00 MONDAY LR 3'
+        day = self.extractor._extract_day_anywhere(line)
+        self.assertEqual(day, 'M')
+
+    def test_extract_day_anywhere_handles_common_ocr_variation(self):
+        line = 'OS137-BSCS-3A 9:00-11:00 M0N LR 3'
+        day = self.extractor._extract_day_anywhere(line)
+        self.assertEqual(day, 'M')
+
+    def test_parse_idp_line_uses_anywhere_day_fallback(self):
+        line = 'OS137-BSCS-3A 9:00AM-11:00AM THURSDAY LR 3'
+        course = self.extractor._parse_idp_line(line, current_day=None)
+        self.assertIsNotNone(course)
+        self.assertEqual(course['day'], 'TH')
+
+
 class ExtractionManagerTestCase(TestCase):
     """Test extraction manager orchestration"""
     
@@ -382,6 +406,9 @@ class ExtractionViewIntegrationTestCase(TestCase):
         self.assertIn('idempotency_key', metadata)
         self.assertIn('extraction_run_id', metadata)
         self.assertIn('schema_version', metadata)
+        self.assertIn('score_version', metadata)
+        self.assertIn('rule_version', metadata)
+        self.assertIn('score_policy_upload_type', metadata)
 
     @patch('api.views.upload_views.ExtractionManager')
     def test_retry_response_preserves_legacy_keys_with_enhanced_metadata(self, mock_manager_class):

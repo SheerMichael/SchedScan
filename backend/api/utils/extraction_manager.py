@@ -65,21 +65,36 @@ class ExtractionManager:
         
         logger.info(f"ExtractionManager initialized with quality threshold: {self.quality_threshold}")
 
-    def _accept_threshold(self) -> float:
+    def _accept_threshold(self, upload_type: str) -> float:
+        by_type = getattr(settings, 'EXTRACTION_ACCEPT_THRESHOLD_BY_UPLOAD_TYPE', None)
+        if isinstance(by_type, dict):
+            scoped = by_type.get((upload_type or '').lower())
+            if scoped is not None:
+                return float(scoped)
         return float(getattr(settings, 'EXTRACTION_ACCEPT_THRESHOLD', 0.85))
 
-    def _retry_threshold(self) -> float:
+    def _retry_threshold(self, upload_type: str) -> float:
+        by_type = getattr(settings, 'EXTRACTION_RETRY_THRESHOLD_BY_UPLOAD_TYPE', None)
+        if isinstance(by_type, dict):
+            scoped = by_type.get((upload_type or '').lower())
+            if scoped is not None:
+                return float(scoped)
         return float(getattr(settings, 'EXTRACTION_RETRY_THRESHOLD', 0.60))
 
-    def _finalize_result(self, result: Dict, attempts: List[str]) -> Dict:
+    def _finalize_result(self, result: Dict, attempts: List[str], upload_type: str) -> Dict:
         normalized_courses = normalize_candidates(result.get('courses', []))
         validation = validate_candidates(normalized_courses)
-        score = score_candidates(validation.courses, validation.errors, attempts)
+        score = score_candidates(
+            validation.courses,
+            validation.errors,
+            attempts,
+            upload_type=upload_type,
+        )
         llm_used = False
         llm_parse_success = False
 
-        accept_threshold = self._accept_threshold()
-        retry_threshold = self._retry_threshold()
+        accept_threshold = self._accept_threshold(upload_type)
+        retry_threshold = self._retry_threshold(upload_type)
 
         if retry_threshold <= score.confidence < accept_threshold:
             llm_courses, llm_meta = normalize_with_llm(
@@ -91,7 +106,12 @@ class ExtractionManager:
             if llm_parse_success:
                 llm_attempts = attempts + ['llm_normalize']
                 validation = validate_candidates(normalize_candidates(llm_courses))
-                score = score_candidates(validation.courses, validation.errors, llm_attempts)
+                score = score_candidates(
+                    validation.courses,
+                    validation.errors,
+                    llm_attempts,
+                    upload_type=upload_type,
+                )
                 attempts[:] = llm_attempts
 
         confidence = score.confidence
@@ -111,6 +131,10 @@ class ExtractionManager:
         result['failure_category'] = failure_category
         result['llm_used'] = llm_used
         result['llm_parse_success'] = llm_parse_success
+        result['score_policy_upload_type'] = (upload_type or '').lower() or 'student'
+        result['schema_version'] = str(getattr(settings, 'EXTRACTION_SCHEMA_VERSION', 'v1'))
+        result['score_version'] = str(getattr(settings, 'EXTRACTION_SCORE_VERSION', 'v1'))
+        result['rule_version'] = str(getattr(settings, 'EXTRACTION_RULE_VERSION', 'v1'))
         return result
     
     def extract_schedule(self, file_path: str, upload_type: str, force_ocr_fallback: bool = False) -> Dict:
@@ -146,7 +170,7 @@ class ExtractionManager:
         )
         attempts = result.get('attempts', [])
 
-        result = self._finalize_result(result, attempts)
+        result = self._finalize_result(result, attempts, upload_type)
 
         # Add processing time
         processing_time = time.time() - start_time
