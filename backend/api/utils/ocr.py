@@ -740,6 +740,10 @@ class FacultyCORExtractor(BaseCORExtractor):
         # Fail closed on ambiguous or invalid time tokens.
         if not start_time or not end_time:
             return None
+
+        # Correct meridiem mismatches caused by the heuristic boundary.
+        # e.g. 5:30-7:00 → 05:30PM-07:00AM → correction → 05:30PM-07:00PM
+        start_time, end_time = self._fix_time_pair_meridiem(start_time, end_time)
         
         # Extract room/location
         room_match = self.IDP_ROOM_PATTERN.search(line)
@@ -798,6 +802,71 @@ class FacultyCORExtractor(BaseCORExtractor):
         if 'PM' in upper_line and 'AM' not in upper_line:
             return 'PM'
         return None
+
+    def _fix_time_pair_meridiem(
+        self,
+        start_time: Optional[str],
+        end_time: Optional[str],
+    ) -> tuple:
+        """
+        Correct start/end meridiem mismatches caused by the hour-boundary
+        heuristic in _convert_to_12hr().
+
+        Problem: 5:30-7:00 → heuristic makes 5 → PM and 7 → AM, giving
+        05:30PM-07:00AM (start > end). The real class is 5:30 PM – 7:00 PM.
+
+        Fix: if start_minutes > end_minutes, try flipping end meridiem.
+        Use the flipped value only when it resolves the inversion.
+        Handles:
+          5:30-7:00  → 05:30PM-07:00AM → fixed to 05:30PM-07:00PM
+          1:30-7:00  → 01:30PM-07:00AM → fixed to 01:30PM-07:00PM
+        Leaves valid pairs unchanged:
+          7:00-8:30  → 07:00AM-08:30AM (already valid)
+          11:30-1:00 → 11:30AM-01:00PM (already valid, crossover)
+        """
+        if not start_time or not end_time:
+            return start_time, end_time
+
+        def _to_minutes(t: str) -> int:
+            """Convert '05:30PM' / '11:30AM' to minutes since midnight."""
+            try:
+                t = t.upper().strip()
+                if t.endswith('AM') or t.endswith('PM'):
+                    suffix = t[-2:]
+                    hh, mm = t[:-2].split(':')
+                    h, m = int(hh), int(mm)
+                    if suffix == 'PM' and h != 12:
+                        h += 12
+                    elif suffix == 'AM' and h == 12:
+                        h = 0
+                    return h * 60 + m
+            except Exception:
+                pass
+            return -1
+
+        start_min = _to_minutes(start_time)
+        end_min = _to_minutes(end_time)
+
+        if start_min < 0 or end_min < 0 or start_min <= end_min:
+            return start_time, end_time  # already valid or unparseable
+
+        # start > end — try flipping end meridiem
+        upper_end = end_time.upper()
+        if upper_end.endswith('AM'):
+            end_alt = end_time[:-2] + 'PM'
+        elif upper_end.endswith('PM'):
+            end_alt = end_time[:-2] + 'AM'
+        else:
+            return start_time, end_time
+
+        if start_min < _to_minutes(end_alt):
+            logger.debug(
+                "Fixed time pair meridiem: %s-%s → %s-%s",
+                start_time, end_time, start_time, end_alt,
+            )
+            return start_time, end_alt
+
+        return start_time, end_time  # return original; validator will catch it
 
     def _convert_to_12hr(self, time_str: str, line_context: str = '') -> Optional[str]:
         """
