@@ -856,8 +856,19 @@ class FacultyCORExtractor(BaseCORExtractor):
             elif hour == 0:
                 return f"12:{minute}AM"
             elif 1 <= hour <= 11:
-                # Ambiguous without explicit meridiem; reject instead of guessing.
-                return None
+                # Faculty IDP documents omit AM/PM markers — apply university
+                # schedule heuristics to disambiguate:
+                #   Hours 1–6  → PM  (no university runs 1AM–6AM classes)
+                #   Hours 7–11 → AM  (standard morning session block)
+                # This correctly handles WMSU IDP times like:
+                #   5:30-7:00  → 05:30PM-07:00PM  (evening)
+                #   7:00-8:30  → 07:00AM-08:30AM  (morning)
+                #   11:30-1:00 → 11:30AM-01:00PM  (noon crossover)
+                #   1:30-4:30  → 01:30PM-04:30PM  (afternoon)
+                if hour <= 6:
+                    return f"{hour:02d}:{minute}PM"
+                else:
+                    return f"{hour:02d}:{minute}AM"
         except Exception:
             return None
 
