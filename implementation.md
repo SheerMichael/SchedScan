@@ -1,561 +1,379 @@
-# Hybrid Schedule Extraction Pipeline Implementation Guide
+# SchedScan: Schedule Extraction Pipeline — Implementation Reference
 
-## 1. Purpose and Non-Goals
+> **Status:** Active development.
+> Last updated: 2026-03-25
+> Architecture: LLM-primary, async, regex fallback.
 
-### Purpose
-Implement a robust, dynamic, and low-cost extraction pipeline that can process mixed schedule formats (digital PDFs, scanned PDFs, images) while keeping data quality high and avoiding silent bad saves.
+---
 
-### Non-Goals (for this project phase)
-- Training a custom OCR or document model from scratch.
-- Building a fully automated reviewer UI before extraction quality gates are in place.
-- Handling handwritten schedules as a primary use case.
+## 1. Core Philosophy
 
-## 2. Constraints and Design Decisions
+> **The LLM is the main brain. Regex is only the safety net.**
 
-### Project Constraints
-- Upload volume: ~100 uploads/month.
-- No paid OCR/LLM APIs.
-- Privacy requirements are moderate (still treat uploaded docs as sensitive data).
-- Accuracy, speed, and cost are all important.
-- Re-upload flow is acceptable for low-confidence cases.
+The pipeline is designed around a single principle: LLMs are better at understanding documents than regex. A model that has seen millions of documents can interpret a handwritten schedule, an OCR-noisy scan, or an unusual format that would break any deterministic parser. Regex is fast and predictable, but brittle — it fails the moment a document deviates from the expected pattern.
 
-### Key Design Decisions
-- Keep extraction mostly deterministic.
-- Use LLM only as a controlled normalization/correction layer.
-- Never persist extraction output without deterministic validation.
-- Reject uncertain outputs instead of silently creating incorrect courses.
+The flow is therefore:
 
-## 3. High-Level Architecture
+1. **Extract raw text** from the file (OCR or PDF).
+2. **LLM processes and understands** the extracted text — identifies student number, subjects, schedules, and locations.
+3. **Regex is the fallback** — only activates silently if the LLM is unavailable or fails.
+4. **Validate and save** — hard schema checks before any DB write.
 
-Pipeline stages:
+Processing runs **asynchronously**. The user gets an immediate response and continues using the app while the AI works in the background.
 
-1. Ingestion and preflight checks
-2. Document profiling (file type, scan quality, template hint)
-3. Candidate extraction (primary parser and fallback parsers)
-4. Optional LLM normalization (schema-constrained)
-5. Deterministic validation and scoring
-6. Persistence and telemetry
-7. Retry/reject response with actionable reason
+---
 
-Decision flow:
+## 2. Pipeline Architecture
 
-- High confidence and valid -> save courses.
-- Medium confidence -> run fallback/LLM normalization -> revalidate.
-- Low confidence or invalid -> reject with retry guidance.
-
-## 4. Repository Change Map
-
-Current modules to extend:
-
-- `backend/api/utils/extraction_manager.py`
-- `backend/api/utils/pdf_extractor.py`
-- `backend/api/utils/ocr.py`
-- `backend/api/views/upload_views.py`
-- `backend/api/models.py`
-- `backend/api/tests/test_extraction.py`
-- `backend/api/tests/test_extraction_health.py`
-
-New modules to add:
-
-- `backend/api/utils/extraction/` (new package)
-- `backend/api/utils/extraction/types.py`
-- `backend/api/utils/extraction/profiler.py`
-- `backend/api/utils/extraction/validators.py`
-- `backend/api/utils/extraction/scoring.py`
-- `backend/api/utils/extraction/normalizer.py`
-- `backend/api/utils/extraction/fallbacks.py`
-- `backend/api/utils/extraction/llm_normalizer.py` (optional local LLM path)
-- `backend/api/tests/test_extraction_validators.py`
-- `backend/api/tests/test_extraction_scoring.py`
-
-## 5. Data Contracts
-
-## 5.1 Candidate Course Contract
-
-All extractors should emit this normalized shape before persistence:
-
-```json
-{
-  "subject_code": "CC 102",
-  "subject_name": "COMPUTER PROGRAMMING 2",
-  "day": "T",
-  "start_time": "02:30PM",
-  "end_time": "04:00PM",
-  "location": "LR3",
-  "metadata": {
-    "parser": "student_pdf_table",
-    "field_confidence": {
-      "subject_code": 0.93,
-      "day": 0.88,
-      "start_time": 0.95,
-      "end_time": 0.95,
-      "location": 0.74
-    },
-    "evidence": {
-      "line_index": 37,
-      "source_text": "..."
-    }
-  }
-}
+```
+POST /api/upload-cor/{student|faculty}/
+        │
+        ▼
+┌─────────────────────────────────┐
+│  Stage 0: Text Extraction       │
+│                                 │
+│  PDF  → pdfplumber              │
+│  Image → Tesseract / pytesseract│
+│                                 │
+│  Output: raw_text (string)      │
+└─────────────────────────────────┘
+        │
+        ▼
+  202 Accepted ──────────────────────────► Frontend
+  { job_id, status: "processing" }         (user continues working)
+        │
+        ▼ (background thread)
+┌─────────────────────────────────┐
+│  Stage 1: LLM Full Parser       │  ← PRIMARY PROCESSOR
+│  (Ollama on DigitalOcean)       │
+│                                 │
+│  Input:  raw_text + upload_type │
+│  Output:                        │
+│    - student_number             │
+│    - semester / school_year     │
+│    - courses[]                  │
+│        subject_code             │
+│        day / start / end time   │
+│        location                 │
+└─────────────────────────────────┘
+        │                │
+        │ LLM success    │ LLM failed / timed out
+        │                ▼
+        │       ┌─────────────────────────┐
+        │       │  Stage 1B: Regex Parser │  ← SILENT FALLBACK
+        │       │  (StudentCORExtractor / │
+        │       │   FacultyCORExtractor)  │
+        │       └─────────────────────────┘
+        │                │
+        └────────────────┘
+                │
+                ▼
+┌─────────────────────────────────┐
+│  Stage 2: Validate + Score      │
+│  validators.py + scoring.py     │
+│  Hard gate — rejects bad rows   │
+└─────────────────────────────────┘
+                │
+        ┌───────┴───────┐
+        │               │
+   confidence ≥ 0.85   confidence < 0.85
+        │               │
+        ▼               ▼
+     Save ✅         Reject 422 ❌
+        │
+        ▼
+  Push notification ──────────────► User's device
+  "Your schedule is ready"
+        +
+  Polling endpoint returns        ← Frontend polling
+  { status: "done", courses: [] }
 ```
 
-## 5.2 Extraction Result Contract
+---
 
-```json
-{
-  "courses": [],
-  "extraction_method": "pdf_text|ocr|ocr_fallback|hybrid",
-  "confidence": 0.0,
-  "attempts": ["pdf_text", "ocr_fallback"],
-  "processing_time": 0.0,
-  "semester": "1ST",
-  "school_year": "2025-2026",
-  "student_number": "2022-01191",
-  "failure_category": "none|no_text|parse_error|low_confidence|metadata_mismatch|system_error",
-  "validator_errors": []
-}
+## 3. Module Map
+
+```
+backend/
+├── api/
+│   ├── utils/
+│   │   ├── extraction_manager.py       # Orchestrator — wires all stages, runs async
+│   │   ├── ocr.py                      # Tesseract OCR + StudentCORExtractor / FacultyCORExtractor (regex fallback)
+│   │   ├── pdf_extractor.py            # pdfplumber raw text extraction
+│   │   └── extraction/
+│   │       ├── orchestrator.py         # Routes by file type (PDF vs image)
+│   │       ├── profiler.py             # File type + template family detection
+│   │       ├── llm_normalizer.py       # parse_with_llm() ← PRIMARY parser
+│   │       │                           # normalize_with_llm() ← (legacy correction path)
+│   │       ├── normalizer.py           # normalize_candidates() — field normalisation
+│   │       ├── validators.py           # validate_candidates() — hard gate before DB write
+│   │       ├── scoring.py              # score_candidates() — composite confidence score
+│   │       ├── fallbacks.py            # should_use_fallback() — quality threshold check
+│   │       └── types.py                # Shared type definitions
+│   ├── models.py                       # ExtractionJob — tracks async job status
+│   ├── views/
+│   │   ├── upload_views.py             # POST /api/upload-cor/ → 202, launches background task
+│   │   └── job_views.py                # GET /api/extraction-jobs/{job_id}/ — polling endpoint
+│   └── tests/
+│       ├── test_extraction.py
+│       ├── test_llm_normalizer.py
+│       ├── test_extraction_scoring.py
+│       └── test_extraction_validators.py
+└── core/
+    └── settings.py                     # All LLM + extraction flags
 ```
 
-## 5.3 Extraction Run and Idempotency Contract
+---
 
-Every upload request must carry a stable idempotency key to prevent duplicate writes.
+## 4. Async Job Lifecycle
 
-Minimum fields:
+### States
 
-```json
-{
-  "request_id": "uuid-v4-from-client-or-server",
-  "idempotency_key": "sha256(user_id + file_hash + upload_type + created_minute)",
-  "extraction_run_id": "uuid-v4",
-  "schema_version": "v1"
-}
+```
+pending → processing → done
+                    └─► failed (regex fallback ran, or full rejection)
 ```
 
-Persistence rules:
-- Store one extraction result per `(user_id, idempotency_key)`.
-- If the same key is retried, return the existing result instead of re-inserting courses.
-- Use one transaction for dedupe + course writes.
-
-## 6. Deterministic Validation Rules (Hard Gate)
-
-Define these in `validators.py` and enforce before DB writes.
-
-Required fields per course:
-- `subject_code`
-- `day`
-- `start_time`
-- `end_time`
-
-Validation checks:
-
-1. Day validity
-- Allowed days: `M,T,W,TH,F,S` only.
-- Multi-day values must be expanded before validation.
-
-2. Time validity
-- Parse time with strict parser (`%I:%M%p`-equivalent).
-- `start_time < end_time` required.
-- Reject duration > 8 hours unless explicit override.
-
-3. Duplicate handling
-- Duplicate key: `(subject_code, day, start_time, end_time, location)`.
-- Keep highest-confidence duplicate.
-
-4. Basic text sanity
-- `subject_code` max length and character whitelist.
-- Reject obviously corrupted fields (e.g., >70% symbols).
-
-5. Ownership checks for student uploads
-- If student number mismatches registered student number: reject with 403 policy.
-- If student number is missing from extraction: run one stronger fallback pass, then reject with 422 if still missing.
-- Add optional strict mode flag to convert missing metadata to 403 if policy requires it.
-- Do not bypass this check based on parser path.
-
-## 7. Confidence Scoring Policy
-
-Implement in `scoring.py`.
-
-Composite score (example):
-
-- Field completeness: 0.25
-- Parse validity: 0.25
-- Semantic consistency: 0.20
-- Parser reliability prior: 0.15
-- Cross-parser agreement: 0.15
-
-Thresholds:
-
-- `>= 0.85`: accept and persist
-- `0.60 - 0.84`: run fallback stage (including optional LLM normalization), then re-score
-- `< 0.60`: reject with retryable response
-
-Important: threshold values must be configurable in settings.
-
-Calibration policy:
-- Do not change thresholds directly in production without shadow evaluation.
-- Recalibrate monthly using telemetry from accepted/rejected runs.
-- Keep a `score_version` and `rule_version` in telemetry so regressions are attributable.
-
-## 8. Fallback Strategy
-
-Order of execution:
-
-1. PDF text/table extraction (if PDF)
-2. OCR extraction (image/scanned fallback)
-3. Optional LLM normalization (only if medium confidence)
-4. Final validation and score
-
-Fallback stop conditions:
-
-- Stop early if score >= accept threshold.
-- Stop and reject if parser/validator reports hard-fail (e.g., malformed ownership metadata).
-
-## 9. Optional Local LLM Normalization
-
-Use only for normalization and correction of extracted text, not first-pass OCR.
-
-Input to LLM:
-- Truncated extracted text (bounded size)
-- Strict JSON schema
-- Explicit field constraints
-- Request to return `null` when unknown, never guess
-
-Hard requirements:
-- JSON schema validation required before use.
-- If schema parse fails: discard LLM output.
-- Never persist free-form LLM text.
-- Include `llm_used` and `llm_parse_success` in telemetry.
-- Pin model name and exact version in config (no floating latest tags).
-- Verify model digest/checksum at startup and fail closed on mismatch.
-- Run inference in isolated runtime with read-only model path and no shell/tool access.
-- Deny outbound network for the inference process unless explicitly needed.
-
-Recommended local deployment options:
-- Ollama with a small instruction model for low monthly volume.
-- CPU-first inference acceptable at this scale.
-
-## 10. Security Practices (Mandatory)
-
-## 10.1 Upload Security
-
-- Enforce file type and MIME checks.
-- Enforce max upload size.
-- Reject password-protected PDFs for this phase (or handle separately).
-- Use temporary file storage with guaranteed cleanup.
-- Disable any direct user path access.
-
-## 10.2 Parsing Safety
-
-- Timeouts on OCR and PDF extraction operations.
-- Guard against decompression/image bomb attacks by bounding resolution and page count.
-- Limit pages processed (e.g., first N pages configurable).
-
-## 10.3 LLM Safety
-
-- Treat OCR text as untrusted input.
-- Prevent prompt injection effects:
-  - Never include system behavior in OCR text context.
-  - Use a fixed system instruction template.
-  - Parse output as data only.
-- Deny tool execution from model outputs.
-- Strip or redact PII from telemetry where not required.
-- Enforce max token/input size and hard timeout per inference call.
-- Reject responses with unexpected keys or oversized fields.
-
-## 10.4 Data Security
-
-- Do not store full raw document text in logs.
-- Store only redacted and truncated previews.
-- Add retention policy for extraction artifacts.
-- Avoid logging student_number in plain logs unless necessary.
-
-Redaction standard:
-- Student number: keep format but mask middle digits (e.g., `2022-0***1`).
-- Email: mask local-part except first/last char.
-- File names: remove direct personal identifiers where possible.
-- Persist redacted preview max 2000 chars.
-- Add unit tests that assert redaction for each sensitive field.
-
-## 11. Database and Model Changes
-
-Extend `ExtractionLog` in `models.py`:
-
-Add fields:
-- `failure_category` (CharField, indexed)
-- `validator_errors` (JSONField)
-- `template_family` (CharField, indexed)
-- `review_required` (BooleanField, indexed)
-- `llm_used` (BooleanField)
-- `llm_parse_success` (BooleanField)
-- `score_breakdown` (JSONField)
-
-Keep `raw_text_preview` but ensure:
-- max length enforced
-- redaction applied before save
-
-Migration guidance:
-- Add migration with defaults and indexes.
-- Backfill existing rows with neutral defaults.
-- Use nullable-first migrations for new non-critical fields.
-- Deploy in two steps: schema migration then code path activation via feature flag.
-- Define rollback steps and verify rollback on staging before production rollout.
-
-## 12. API Behavior Changes
-
-Endpoint remains:
-- `POST /api/upload-cor/student/`
-- `POST /api/upload-cor/faculty/`
-
-Enhanced response payload:
-
-```json
-{
-  "message": "...",
-  "courses": [],
-  "total_courses": 0,
-  "extraction_metadata": {
-    "method": "hybrid",
-    "confidence": 0.78,
-    "attempts": ["pdf_text", "ocr_fallback", "llm_normalize"],
-    "failure_category": "low_confidence",
-    "validator_errors": ["Invalid day token: TUES"],
-    "score_breakdown": {
-      "completeness": 0.80,
-      "validity": 0.65,
-      "consistency": 0.70,
-      "agreement": 0.55
-    }
-  }
-}
-```
-
-Compatibility policy:
-- Keep existing response keys unchanged for current clients.
-- Additive keys only unless versioned endpoint is introduced.
-- If breaking changes are needed, expose `/api/v2/upload-cor/...` and maintain `/api/upload-cor/...` during transition.
-- Add contract tests for both legacy and enhanced response shapes.
-
-Error policy:
-- 422 for extraction failures that are retryable.
-- 403 for ownership mismatch.
-- 500 only for system/internal failures.
-
-## 12.1 Synchronous vs Asynchronous Processing
-
-Given low traffic, keep synchronous path for fast extracts and add async fallback for heavy jobs.
-
-Sync mode:
-- Use for digital PDFs and quick OCR passes within timeout budget.
-
-Async mode (recommended for medium/low confidence retries):
-- Return `202 Accepted` with `job_id` when processing exceeds sync threshold.
-- Add status endpoint: `GET /api/extraction-jobs/{job_id}/`.
-- Enforce max wall-clock time and retry budget per job.
-- Surface final result in same schema as sync endpoint.
-
-## 13. Implementation Phases
-
-## Phase 1: Quality Gate and Telemetry Hardening (high priority)
-
-Deliverables:
-- Add validator module and enforce it before save.
-- Add confidence scoring module.
-- Add failure categories and validator errors to logs.
-- Populate `raw_text_preview` with redacted text.
-- Ensure student number verification works for all paths.
-
-Acceptance:
-- No invalid day/time rows persisted.
-- ExtractionLog includes structured failure reason.
-
-## Phase 2: Pluggable Extractors and Fallback Manager
-
-Deliverables:
-- Refactor `ExtractionManager` into staged orchestration.
-- Add extractor interface and explicit attempt records.
-- Add template profiling hints.
-
-Acceptance:
-- Retry path deterministic and test-covered.
-
-## Phase 3: Optional Local LLM Normalization
-
-Deliverables:
-- Add `llm_normalizer.py` behind feature flag.
-- Enforce schema validation on LLM output.
-- Add telemetry fields for LLM usage and parse success.
-
-Acceptance:
-- LLM failure never causes bad persistence.
-
-## Phase 4: Operational Hardening
-
-Deliverables:
-- Add extraction analytics for failure category and threshold tuning.
-- Add retention cleanup job for stale artifacts.
-- Add benchmark script updates for new metrics.
-
-Acceptance:
-- Team can tune thresholds using observed metrics.
-
-## 14. Testing Strategy
-
-## 14.1 Unit Tests
-
-Add tests for:
-- time/day validators
-- duplicate collapse
-- score calculation and thresholds
-- failure category mapping
-- redaction logic
-
-## 14.2 Integration Tests
-
-Update and extend:
-- `test_extraction.py`
-- `test_extraction_health.py`
-
-Scenarios:
-- valid PDF -> accepted
-- low-quality PDF -> fallback -> accepted
-- low confidence after fallback -> rejected 422
-- student mismatch -> 403
-- LLM malformed JSON -> ignored, no crash
-
-## 14.3 Regression Fixtures
-
-Create anonymized fixture set:
-- clean digital student COR
-- scanned/noisy student COR
-- faculty IDP variants
-- malformed/edge examples
-
-## 15. Observability and Metrics
-
-Track per upload:
-- extraction method
-- attempts
-- global confidence
-- score breakdown
-- validator error counts
-- failure category
-- processing time
-- idempotency hit rate
-- async queue latency (if async path enabled)
-- score/rule version used per extraction
-
-Dashboard metrics:
-- acceptance rate
-- fallback rate
-- reject rate
-- average confidence by upload_type
-- top validator failures
-
-## 16. Performance Guidance
-
-Given low volume, prioritize correctness over micro-optimizations.
-
-Still enforce:
-- bounded OCR page count
-- bounded image dimensions
-- bounded text length passed to LLM
-- per-stage timeout settings
-
-Suggested defaults for this project:
-- OCR stage timeout: 25s
-- LLM normalization timeout: 12s
-- Sync request budget: 30s, then enqueue async fallback
-
-## 17. Feature Flags and Rollout
-
-Add settings flags:
-- `EXTRACTION_V2_ENABLED`
-- `EXTRACTION_LLM_NORMALIZATION_ENABLED`
-- `EXTRACTION_ACCEPT_THRESHOLD`
-- `EXTRACTION_RETRY_THRESHOLD`
-- `EXTRACTION_STRICT_OWNERSHIP_MODE`
-- `EXTRACTION_ASYNC_FALLBACK_ENABLED`
-- `EXTRACTION_SCHEMA_VERSION`
-- `EXTRACTION_SCORE_VERSION`
-
-Rollout plan:
-1. Deploy v2 with LLM off.
-2. Validate telemetry and rejection behavior.
-3. Enable LLM for faculty uploads first.
-4. Expand to student uploads if stable.
-
-## 18. Failure Mode and Effects Summary
-
-Expected failure modes and handling:
-
-- OCR unreadable: return 422 retryable, include clear reason.
-- Parser disagreement: run LLM normalization, then revalidate.
-- LLM malformed output: discard and continue fallback path.
-- Ownership mismatch: 403 for student uploads.
-- Ownership missing after retries: 422 with explicit code and re-upload guidance.
-- Unexpected exception: 500 with safe message, log internal details.
-
-## 19. Coding Standards and Practices
-
-- Keep extractor functions pure and side-effect free where possible.
-- Separate concerns: extraction, normalization, validation, persistence.
-- Keep all thresholds/config in settings, not hardcoded.
-- Avoid broad `except Exception` unless re-raising with context.
-- Use structured logging with event names and metadata.
-
-## 20. Example Pseudocode for Orchestrator
+### ExtractionJob Model (to add to models.py)
 
 ```python
-def extract_schedule(file_path: str, upload_type: str) -> dict:
-    profile = profile_document(file_path)
-    attempts = []
-
-    candidates = run_primary_extractors(file_path, upload_type, profile, attempts)
-    validated, errors = validate_candidates(candidates, upload_type)
-    score = score_candidates(validated, errors, attempts)
-
-    if score >= ACCEPT_THRESHOLD and not errors:
-        return build_success(validated, score, attempts)
-
-    if RETRY_THRESHOLD <= score < ACCEPT_THRESHOLD:
-        fallback_candidates = run_fallback_extractors(file_path, upload_type, profile, attempts)
-        merged = merge_candidates(validated, fallback_candidates)
-        validated2, errors2 = validate_candidates(merged, upload_type)
-        score2 = score_candidates(validated2, errors2, attempts)
-        if score2 >= ACCEPT_THRESHOLD and not errors2:
-            return build_success(validated2, score2, attempts)
-
-    return build_retryable_failure(score, attempts, errors)
+class ExtractionJob(models.Model):
+    job_id          = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    user            = models.ForeignKey(User, on_delete=models.CASCADE)
+    upload_type     = models.CharField(max_length=20)   # student / faculty
+    status          = models.CharField(max_length=20, default='pending')
+    extraction_method = models.CharField(max_length=50, blank=True)
+    courses         = models.JSONField(null=True)
+    student_number  = models.CharField(max_length=20, blank=True)
+    semester        = models.CharField(max_length=20, blank=True)
+    school_year     = models.CharField(max_length=20, blank=True)
+    confidence      = models.FloatField(null=True)
+    failure_category = models.CharField(max_length=50, blank=True)
+    error_message   = models.TextField(blank=True)
+    created_at      = models.DateTimeField(auto_now_add=True)
+    updated_at      = models.DateTimeField(auto_now=True)
 ```
 
-## 21. Security Checklist (Release Gate)
+### Upload Endpoint Behaviour
 
-- [ ] Upload size limits enforced.
-- [ ] MIME and extension checks enforced.
-- [ ] Temp files always cleaned in `finally`.
-- [ ] OCR/PDF stage timeouts configured.
-- [ ] `raw_text_preview` redacted and truncated.
-- [ ] No raw full OCR text in logs.
-- [ ] Student ownership check enforced for all student uploads.
-- [ ] LLM output schema validation mandatory.
-- [ ] Feature flags default safe values.
-- [ ] Model version pinned and digest-verified.
-- [ ] Idempotency key enforced and duplicate write test passing.
-- [ ] Staging rollback drill completed for latest migrations.
+```
+POST /api/upload-cor/student/
+└── extracts raw text immediately
+└── creates ExtractionJob(status='pending')
+└── launches threading.Thread(target=run_extraction_job, args=[job_id])
+└── returns 202 { job_id, status: "processing" }
+```
 
-## 22. Definition of Done
+### Polling Endpoint
 
-Implementation is complete when:
-- All validators and scoring gates are active in upload flow.
-- Invalid extractions no longer create course records.
-- Extraction logs contain failure categories and score breakdown.
-- Core and edge-case tests pass.
-- Team can inspect extraction quality through admin analytics.
+```
+GET /api/extraction-jobs/{job_id}/
+└── pending   → { status: "processing" }
+└── done      → { status: "done", courses: [], confidence: 0.91, ... }
+└── failed    → { status: "failed", failure_category: "low_confidence" }
+```
 
-## 23. Recommended Immediate Next Steps
+Recommended polling interval: **every 3 seconds**, max 10 attempts (~30s), then show manual retry prompt.
 
-1. Implement Phase 1 first (validator + scoring + telemetry) before adding LLM.
-2. Add fixtures from current failed uploads for regression coverage.
-3. Enable LLM normalization only behind feature flag and only for medium-confidence cases.
+### Push Notification
 
-This sequence gives the highest quality improvement with the lowest risk for your current project scale.
+When job transitions to `done` or `failed`, the backend sends a push notification via the existing notification service:
+
+```
+"done"   → "✅ Your schedule has been extracted and saved!"
+"failed" → "⚠️ We couldn't read your schedule — please try re-uploading."
+```
+
+---
+
+## 5. LLM as Primary Parser — parse_with_llm()
+
+This is the **main extraction function** called first on every upload.
+
+### What the LLM is asked to do
+
+The prompt provides:
+- The upload type context (`STUDENT COR` or `FACULTY IDP`)
+- Format hints (what a formal PDF looks like vs a handwritten note)
+- The raw extracted text
+- Strict JSON schema to fill in
+
+The LLM must return:
+
+```json
+{
+  "doc_metadata": {
+    "student_number": "2022-01191",
+    "semester": "1ST",
+    "school_year": "2025-2026"
+  },
+  "courses": [
+    {
+      "subject_code": "OS",
+      "subject_name": "Operating Systems",
+      "day": "M",
+      "start_time": "01:00PM",
+      "end_time": "03:00PM",
+      "location": "LR1"
+    }
+  ]
+}
+```
+
+Every response is **schema-validated** before use. Unknown keys → whole response discarded. On any failure (timeout, bad JSON, schema violation) → silently falls through to regex.
+
+### LLM Safety Rules
+
+| Rule | Implementation |
+|---|---|
+| Prompt injection mitigation | Fixed system instructions in code, OCR text in labelled `RAW TEXT:` section below all instructions |
+| Schema enforcement | `ALLOWED_KEYS` whitelist — unknown keys discard the entire response |
+| Hard timeout | `EXTRACTION_LLM_TIMEOUT_SECONDS` (currently 45s) |
+| Input bounding | `EXTRACTION_LLM_MAX_INPUT_CHARS` truncates OCR text |
+| Fail closed | Timeout / bad JSON / schema fail → return `([], {}, telemetry)`, never raise |
+| Model pinning | `EXTRACTION_LLM_REQUIRE_PINNED_MODEL=True` rejects `:latest` tags |
+
+---
+
+## 6. Regex Fallback — When It Activates
+
+Regex (`StudentCORExtractor` / `FacultyCORExtractor`) only runs when:
+
+- LLM request times out
+- LLM returns malformed JSON
+- LLM response fails schema validation
+- Ollama service is unreachable
+
+It is **entirely transparent** to the user — the fallback is tried automatically before returning a failure. The `extraction_method` field in the job result will be `regex_fallback` when this path was taken.
+
+---
+
+## 7. Validation Rules (Hard Gate — Always Runs)
+
+Runs after whichever parser produced output (LLM or regex). Failures populate `validator_errors`. Bad rows are dropped; the remaining valid courses are scored.
+
+| Rule | Detail |
+|---|---|
+| Required fields | `subject_code`, `day`, `start_time`, `end_time` |
+| Day validity | One of `M, T, W, TH, F, S` only |
+| Time format | `HH:MMAM` / `HH:MMPM`; `start < end`; duration ≤ 8h |
+| Duplicates | `(subject_code, day, start_time)` — highest confidence kept |
+| Text sanity | `subject_code` character whitelist; >70% symbols → reject |
+| Ownership | `student_number` from extraction must match authenticated user |
+
+---
+
+## 8. Confidence Scoring
+
+Composite score computed after validation:
+
+| Component | Student | Faculty |
+|---|---|---|
+| Field completeness | 0.25 | 0.30 |
+| Parse validity | 0.25 | 0.25 |
+| Semantic consistency | 0.20 | 0.25 |
+| Parser reliability prior | 0.15 | 0.10 |
+| Cross-parser agreement | 0.15 | 0.10 |
+
+**Thresholds:**
+- `≥ 0.85` → accept & save
+- `< 0.85` → reject with 422, job status = `failed`
+
+---
+
+## 9. Configuration Reference
+
+### LLM Settings (DigitalOcean App Platform)
+
+| Setting | Value | Purpose |
+|---|---|---|
+| `EXTRACTION_LLM_NORMALIZATION_ENABLED` | `True` | Enables LLM normalizer (Stage A) |
+| `EXTRACTION_LLM_FULL_PARSE_ENABLED` | `True` | Enables LLM full parser (primary path) |
+| `EXTRACTION_LLM_MODEL_NAME` | `llama3.2:3b` | Ollama model |
+| `EXTRACTION_LLM_BASE_URL` | `http://209.97.172.45:8080` | Ollama on DigitalOcean Droplet |
+| `EXTRACTION_LLM_API_KEY` | *(see update.md)* | nginx X-Api-Key auth |
+| `EXTRACTION_LLM_TIMEOUT_SECONDS` | `45` | Hard timeout per LLM call |
+| `EXTRACTION_LLM_MAX_INPUT_CHARS` | `6000` | Input truncation limit |
+| `EXTRACTION_LLM_REQUIRE_PINNED_MODEL` | `True` | Reject `:latest` tags |
+| `EXTRACTION_ACCEPT_THRESHOLD` | `0.85` | Minimum to accept & save |
+
+---
+
+## 10. API Reference
+
+### Upload
+
+```
+POST /api/upload-cor/student/
+POST /api/upload-cor/faculty/
+
+Request:  multipart/form-data { file }
+Response: 202 Accepted
+{
+  "job_id": "uuid",
+  "status": "processing",
+  "message": "Your file is being processed. We'll notify you when it's ready."
+}
+```
+
+### Poll
+
+```
+GET /api/extraction-jobs/{job_id}/
+
+Response (processing): { "status": "processing" }
+Response (done):        { "status": "done", "courses": [...], "confidence": 0.92, ... }
+Response (failed):      { "status": "failed", "failure_category": "low_confidence", "message": "..." }
+```
+
+### Error codes
+
+| Code | Meaning |
+|---|---|
+| `202` | Job accepted, processing in background |
+| `200` | Poll response — check `status` field |
+| `403` | Student number ownership mismatch |
+| `500` | System error |
+
+---
+
+## 11. Frontend Integration
+
+1. `POST` upload → receive `job_id`.
+2. Poll `GET /api/extraction-jobs/{job_id}/` every **3 seconds**.
+3. On `status: "done"` → refresh schedule view.
+4. On `status: "failed"` → show retry prompt.
+5. On push notification → stop polling early and reload.
+6. Max poll attempts: **10** (~30s). After that, show "Taking longer than expected — we'll notify you when done."
+
+---
+
+## 12. Failure Mode Reference
+
+| Failure | What happens | User sees |
+|---|---|---|
+| LLM timeout | Regex fallback runs automatically | Normal result (or retry if regex also fails) |
+| LLM bad JSON | Regex fallback runs automatically | Normal result (or retry) |
+| Regex also fails | Job → `failed`, push notification sent | "Couldn't read your schedule — please re-upload" |
+| Student number mismatch | 403 returned synchronously | Error before job is created |
+| Ollama Droplet down | Regex fallback for all jobs | No disruption (slower but correct) |
+| Unexpected exception | Job → `failed`, error logged internally | "Something went wrong — please try again" |
+
+---
+
+## 13. Testing
+
+```bash
+cd backend
+source venv/bin/activate
+python manage.py test api.tests --verbosity=2
+```
+
+Key test classes:
+
+| Class | What it covers |
+|---|---|
+| `ParseWithLLMTestCase` | `parse_with_llm()` — disabled, success, timeout, bad JSON, faculty type |
+| `LLMNormalizerTestCase` | `normalize_with_llm()` — schema, API key, timeout |
+| `ExtractionManagerTestCase` | Orchestration, async job lifecycle |
+| `FacultyOCRDayRecoveryTestCase` | Regex fallback — OCR noise in day tokens |

@@ -13,12 +13,13 @@ import traceback
 import logging
 import re
 import hashlib
+import threading
 from uuid import uuid4
 
 from ..serializers import CourseSerializer
-from ..models import Course, ExtractionLog, IncidentReport, ExtractionRequest
+from ..models import Course, ExtractionLog, IncidentReport, ExtractionRequest, ExtractionJob
 from ..permissions import IsAdminUser
-from ..utils.extraction_manager import ExtractionManager
+from ..utils.extraction_manager import ExtractionManager, run_extraction_job
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -269,108 +270,115 @@ class BaseCORUploadView(APIView):
                 return Response(replay_payload, status=existing_run.response_status)
             
             logger.info(f"Processing {self.upload_type.upper()} COR for user {request.user.id}: {uploaded_file.name}")
-            
-            # Use ExtractionManager for hybrid PDF/OCR extraction
-            manager = ExtractionManager()
-            result = manager.extract_schedule(temp_file_path, self.upload_type)
-            
-            courses_data = result['courses']
-            extracted_student_number = result.get('student_number', '')
-            extraction_metadata = {
-                'method': result['extraction_method'],
-                'confidence': result['confidence'],
-                'processing_time_seconds': result['processing_time'],
-                'attempts': result.get('attempts', []),
-                'semester': result.get('semester', ''),
-                'school_year': result.get('school_year', ''),
-                'failure_category': result.get('failure_category', 'none'),
-                'validator_errors': result.get('validator_errors', []),
-                'score_breakdown': result.get('score_breakdown', {}),
-                'request_id': idempotency_context['request_id'],
-                'idempotency_key': idempotency_context['idempotency_key'],
-                'extraction_run_id': idempotency_context['extraction_run_id'],
-                'schema_version': idempotency_context['schema_version'],
-                'score_version': result.get('score_version', str(getattr(settings, 'EXTRACTION_SCORE_VERSION', 'v1'))),
-                'rule_version': result.get('rule_version', str(getattr(settings, 'EXTRACTION_RULE_VERSION', 'v1'))),
-                'score_policy_upload_type': result.get('score_policy_upload_type', self.upload_type),
-            }
-            redacted_preview = self._build_raw_text_preview(uploaded_file, result)
-            
-            logger.info(f"Extraction completed using {result['extraction_method']} method "
-                       f"(confidence: {result['confidence']}, time: {result['processing_time']}s)")
-            
-            # Verify COR ownership: check that the student number in the COR
-            # matches the student number the user registered with
-            if self.upload_type == 'student' and not extracted_student_number:
-                stronger_fallback_result = manager.extract_schedule(
-                    temp_file_path,
-                    self.upload_type,
-                    force_ocr_fallback=True,
-                )
-                extracted_student_number = stronger_fallback_result.get('student_number', '')
-                if extracted_student_number:
-                    result = stronger_fallback_result
-                    courses_data = result['courses']
-                    extraction_metadata.update({
-                        'method': result['extraction_method'],
-                        'confidence': result['confidence'],
-                        'processing_time_seconds': result['processing_time'],
-                        'attempts': result.get('attempts', []),
-                        'semester': result.get('semester', ''),
-                        'school_year': result.get('school_year', ''),
-                        'failure_category': result.get('failure_category', 'none'),
-                        'validator_errors': result.get('validator_errors', []),
-                        'score_breakdown': result.get('score_breakdown', {}),
-                    })
-                    redacted_preview = self._build_raw_text_preview(uploaded_file, result)
 
-            strict_ownership_mode = bool(getattr(settings, 'EXTRACTION_STRICT_OWNERSHIP_MODE', False))
-            if self.upload_type == 'student' and not extracted_student_number:
-                missing_status = status.HTTP_403_FORBIDDEN if strict_ownership_mode else status.HTTP_422_UNPROCESSABLE_ENTITY
-                self._write_extraction_log(
-                    user=request.user,
-                    uploaded_file=uploaded_file,
-                    extraction_method=result['extraction_method'],
-                    confidence=result['confidence'],
-                    courses_extracted=0,
-                    success=False,
-                    error_message='Student number missing from extraction after stronger fallback pass.',
-                    processing_time=result['processing_time'],
-                    attempts=result.get('attempts', []),
-                    failure_category='metadata_mismatch',
-                    validator_errors=result.get('validator_errors', []),
-                    score_breakdown=result.get('score_breakdown', {}),
-                    review_required=True,
-                    llm_used=result.get('llm_used', False),
-                    llm_parse_success=result.get('llm_parse_success', False),
-                    raw_text_preview=redacted_preview,
-                    score_policy_upload_type=result.get('score_policy_upload_type', self.upload_type),
-                    schema_version=extraction_metadata.get('schema_version', 'v1'),
-                    score_version=extraction_metadata.get('score_version', 'v1'),
-                    rule_version=extraction_metadata.get('rule_version', 'v1'),
-                )
-                payload = {
-                    "error": "Unable to verify COR ownership because student number could not be extracted.",
-                    "code": "STUDENT_NUMBER_MISSING",
-                    "retryable": True,
-                    "message": "Please upload a clearer COR with visible header details including your student number.",
-                    "courses": [],
-                    "total_courses": 0,
-                    "extraction_metadata": extraction_metadata,
-                }
-                payload, final_status, replayed = self._finalize_idempotent_response(
-                    user=request.user,
-                    context=idempotency_context,
-                    payload=payload,
-                    status_code=missing_status,
-                )
-                payload['idempotency'] = {
-                    **{k: idempotency_context[k] for k in ('request_id', 'idempotency_key', 'extraction_run_id', 'schema_version')},
-                    'hit': replayed,
-                }
-                return Response(payload, status=final_status)
+            # ------------------------------------------------------------------
+            # Student COR: synchronous ownership check BEFORE launching async job
+            # We need to verify the student number in the file matches the user
+            # before accepting the upload.  This is a security gate — it must
+            # stay synchronous.  Faculty uploads have no ownership requirement.
+            # ------------------------------------------------------------------
+            if self.upload_type == 'student':
 
-            if self.upload_type == 'student' and extracted_student_number:
+                manager = ExtractionManager()
+                result = manager.extract_schedule(temp_file_path, self.upload_type)
+
+                courses_data = result['courses']
+                extracted_student_number = result.get('student_number', '')
+                extraction_metadata = {
+                    'method': result['extraction_method'],
+                    'confidence': result['confidence'],
+                    'processing_time_seconds': result['processing_time'],
+                    'attempts': result.get('attempts', []),
+                    'semester': result.get('semester', ''),
+                    'school_year': result.get('school_year', ''),
+                    'failure_category': result.get('failure_category', 'none'),
+                    'validator_errors': result.get('validator_errors', []),
+                    'score_breakdown': result.get('score_breakdown', {}),
+                    'request_id': idempotency_context['request_id'],
+                    'idempotency_key': idempotency_context['idempotency_key'],
+                    'extraction_run_id': idempotency_context['extraction_run_id'],
+                    'schema_version': idempotency_context['schema_version'],
+                    'score_version': result.get('score_version', str(getattr(settings, 'EXTRACTION_SCORE_VERSION', 'v1'))),
+                    'rule_version': result.get('rule_version', str(getattr(settings, 'EXTRACTION_RULE_VERSION', 'v1'))),
+                    'score_policy_upload_type': result.get('score_policy_upload_type', self.upload_type),
+                }
+                redacted_preview = self._build_raw_text_preview(uploaded_file, result)
+
+                logger.info(
+                    f"Student COR ownership check: method={result['extraction_method']}, "
+                    f"confidence={result['confidence']}, student_number={extracted_student_number!r}"
+                )
+
+                # Re-run with stronger OCR fallback if student number not found
+                if not extracted_student_number:
+                    stronger_fallback_result = manager.extract_schedule(
+                        temp_file_path,
+                        self.upload_type,
+                        force_ocr_fallback=True,
+                    )
+                    extracted_student_number = stronger_fallback_result.get('student_number', '')
+                    if extracted_student_number:
+                        result = stronger_fallback_result
+                        courses_data = result['courses']
+                        extraction_metadata.update({
+                            'method': result['extraction_method'],
+                            'confidence': result['confidence'],
+                            'processing_time_seconds': result['processing_time'],
+                            'attempts': result.get('attempts', []),
+                            'semester': result.get('semester', ''),
+                            'school_year': result.get('school_year', ''),
+                            'failure_category': result.get('failure_category', 'none'),
+                            'validator_errors': result.get('validator_errors', []),
+                            'score_breakdown': result.get('score_breakdown', {}),
+                        })
+                        redacted_preview = self._build_raw_text_preview(uploaded_file, result)
+
+                strict_ownership_mode = bool(getattr(settings, 'EXTRACTION_STRICT_OWNERSHIP_MODE', False))
+                if not extracted_student_number:
+                    missing_status = status.HTTP_403_FORBIDDEN if strict_ownership_mode else status.HTTP_422_UNPROCESSABLE_ENTITY
+                    self._write_extraction_log(
+                        user=request.user,
+                        uploaded_file=uploaded_file,
+                        extraction_method=result['extraction_method'],
+                        confidence=result['confidence'],
+                        courses_extracted=0,
+                        success=False,
+                        error_message='Student number missing from extraction after stronger fallback pass.',
+                        processing_time=result['processing_time'],
+                        attempts=result.get('attempts', []),
+                        failure_category='metadata_mismatch',
+                        validator_errors=result.get('validator_errors', []),
+                        score_breakdown=result.get('score_breakdown', {}),
+                        review_required=True,
+                        llm_used=result.get('llm_used', False),
+                        llm_parse_success=result.get('llm_parse_success', False),
+                        raw_text_preview=redacted_preview,
+                        score_policy_upload_type=result.get('score_policy_upload_type', self.upload_type),
+                        schema_version=extraction_metadata.get('schema_version', 'v1'),
+                        score_version=extraction_metadata.get('score_version', 'v1'),
+                        rule_version=extraction_metadata.get('rule_version', 'v1'),
+                    )
+                    payload = {
+                        "error": "Unable to verify COR ownership because student number could not be extracted.",
+                        "code": "STUDENT_NUMBER_MISSING",
+                        "retryable": True,
+                        "message": "Please upload a clearer COR with visible header details including your student number.",
+                        "courses": [],
+                        "total_courses": 0,
+                        "extraction_metadata": extraction_metadata,
+                    }
+                    payload, final_status, replayed = self._finalize_idempotent_response(
+                        user=request.user,
+                        context=idempotency_context,
+                        payload=payload,
+                        status_code=missing_status,
+                    )
+                    payload['idempotency'] = {
+                        **{k: idempotency_context[k] for k in ('request_id', 'idempotency_key', 'extraction_run_id', 'schema_version')},
+                        'hit': replayed,
+                    }
+                    return Response(payload, status=final_status)
+
                 user_student_number = getattr(request.user, 'student_number', None)
                 if user_student_number and extracted_student_number != user_student_number:
                     logger.warning(
@@ -421,188 +429,58 @@ class BaseCORUploadView(APIView):
                         'hit': replayed,
                     }
                     return Response(payload, status=final_status)
+                # end if self.upload_type == 'student'
 
-            if not result.get('accepted', False):
-                self._write_extraction_log(
-                    user=request.user,
-                    uploaded_file=uploaded_file,
-                    extraction_method=result['extraction_method'],
-                    confidence=result['confidence'],
-                    courses_extracted=0,
-                    success=False,
-                    error_message='Extraction rejected by validation/scoring gate.',
-                    processing_time=result['processing_time'],
-                    attempts=result.get('attempts', []),
-                    failure_category=result.get('failure_category', 'low_confidence'),
-                    validator_errors=result.get('validator_errors', []),
-                    score_breakdown=result.get('score_breakdown', {}),
-                    review_required=True,
-                    llm_used=result.get('llm_used', False),
-                    llm_parse_success=result.get('llm_parse_success', False),
-                    raw_text_preview=redacted_preview,
-                    score_policy_upload_type=result.get('score_policy_upload_type', self.upload_type),
-                    schema_version=extraction_metadata.get('schema_version', 'v1'),
-                    score_version=extraction_metadata.get('score_version', 'v1'),
-                    rule_version=extraction_metadata.get('rule_version', 'v1'),
-                )
-                payload = {
-                    "error": "Extraction did not meet quality requirements.",
-                    "code": "EXTRACTION_VALIDATION_FAILED",
-                    "retryable": True,
-                    "message": "Please re-upload a clearer document. Parsed output failed validation or confidence checks.",
-                    "courses": [],
-                    "total_courses": 0,
-                    "extraction_metadata": extraction_metadata,
-                }
-                payload, final_status, replayed = self._finalize_idempotent_response(
-                    user=request.user,
-                    context=idempotency_context,
-                    payload=payload,
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                )
-                payload['idempotency'] = {
-                    **{k: idempotency_context[k] for k in ('request_id', 'idempotency_key', 'extraction_run_id', 'schema_version')},
-                    'hit': replayed,
-                }
-                return Response(payload, status=final_status)
-            
-            if not courses_data:
-                self._write_extraction_log(
-                    user=request.user,
-                    uploaded_file=uploaded_file,
-                    extraction_method=result['extraction_method'],
-                    confidence=result['confidence'],
-                    courses_extracted=0,
-                    success=False,
-                    error_message=(
-                        f"No courses found in extracted {self.upload_type.upper()} COR document."
-                    ),
-                    processing_time=result['processing_time'],
-                    attempts=result.get('attempts', []),
-                    failure_category=result.get('failure_category', 'no_text'),
-                    validator_errors=result.get('validator_errors', []),
-                    score_breakdown=result.get('score_breakdown', {}),
-                    review_required=True,
-                    llm_used=result.get('llm_used', False),
-                    llm_parse_success=result.get('llm_parse_success', False),
-                    raw_text_preview=redacted_preview,
-                    score_policy_upload_type=result.get('score_policy_upload_type', self.upload_type),
-                    schema_version=extraction_metadata.get('schema_version', 'v1'),
-                    score_version=extraction_metadata.get('score_version', 'v1'),
-                    rule_version=extraction_metadata.get('rule_version', 'v1'),
-                )
-                payload = {
-                    "error": "No courses could be extracted from the document.",
-                    "code": "NO_COURSES_EXTRACTED",
-                    "retryable": True,
-                    "message": (
-                        "Please try again with a clearer image/PDF, ensure the schedule details "
-                        "are visible, and upload a valid "
-                        f"{self.upload_type.upper()} COR document."
-                    ),
-                    "courses": [],
-                    "total_courses": 0,
-                    "extraction_metadata": extraction_metadata
-                }
-                payload, final_status, replayed = self._finalize_idempotent_response(
-                    user=request.user,
-                    context=idempotency_context,
-                    payload=payload,
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                )
-                payload['idempotency'] = {
-                    **{k: idempotency_context[k] for k in ('request_id', 'idempotency_key', 'extraction_run_id', 'schema_version')},
-                    'hit': replayed,
-                }
-                return Response(payload, status=final_status)
-            
-            # Dedupe + course writes are committed in one transaction.
-            created_courses = []
-            with transaction.atomic():
-                run = self._get_or_create_locked_request_run(
-                    user=request.user,
-                    context=idempotency_context,
-                )
-
-                if run.is_finalized and run.response_status and isinstance(run.response_payload, dict):
-                    replay_payload = dict(run.response_payload)
-                    replay_payload['idempotency'] = {
-                        'request_id': run.request_id,
-                        'idempotency_key': run.idempotency_key,
-                        'extraction_run_id': run.extraction_run_id,
-                        'schema_version': run.schema_version,
-                        'hit': True,
-                    }
-                    return Response(replay_payload, status=run.response_status)
-
-                for course_dict in courses_data:
-                    course = Course.objects.create(
-                        user=request.user,
-                        subject_code=course_dict.get('subject_code', ''),
-                        subject_name=course_dict.get('subject_name', ''),
-                        start_time=course_dict.get('start_time', ''),
-                        end_time=course_dict.get('end_time', ''),
-                        day=course_dict.get('day', ''),
-                        location=course_dict.get('location', '')
-                    )
-                    created_courses.append(course)
-
-                serializer = CourseSerializer(created_courses, many=True)
-                success_payload = {
-                    "message": f"Successfully processed {self.upload_type.upper()} COR and created {len(created_courses)} courses",
-                    "courses": serializer.data,
-                    "total_courses": len(created_courses),
-                    "upload_type": self.upload_type,
-                    "semester": extraction_metadata.get('semester', ''),
-                    "school_year": extraction_metadata.get('school_year', ''),
-                    "extraction_metadata": extraction_metadata,
-                    "idempotency": {
-                        **{k: idempotency_context[k] for k in ('request_id', 'idempotency_key', 'extraction_run_id', 'schema_version')},
-                        'hit': False,
-                    },
-                }
-
-                run.request_id = idempotency_context['request_id']
-                run.extraction_run_id = idempotency_context['extraction_run_id']
-                run.schema_version = idempotency_context['schema_version']
-                run.upload_type = self.upload_type
-                run.file_hash = idempotency_context['file_hash']
-                run.response_payload = success_payload
-                run.response_status = status.HTTP_201_CREATED
-                run.is_finalized = True
-                run.status = 'succeeded'
-                run.save()
-            
-            logger.info(f"Successfully created {len(created_courses)} courses for user {request.user.id} ({self.upload_type.upper()} COR)")
-            
-            # Write extraction telemetry (success)
-            self._write_extraction_log(
+            # ------------------------------------------------------------------
+            # Launch async extraction job
+            # ------------------------------------------------------------------
+            # The ownership check above (for student CORs) already ran a sync
+            # extraction pass to get the student number.  Now we create the
+            # ExtractionJob and hand the temp file to the background thread.
+            # For faculty uploads, the temp file path is passed directly.
+            #
+            # IMPORTANT: do NOT add a finally: os.unlink(temp_file_path) here.
+            # Cleanup is owned by run_extraction_job() after the job completes.
+            # ------------------------------------------------------------------
+            job = ExtractionJob.objects.create(
                 user=request.user,
-                uploaded_file=uploaded_file,
-                extraction_method=result['extraction_method'],
-                confidence=result['confidence'],
-                courses_extracted=len(created_courses),
-                success=True,
-                processing_time=result['processing_time'],
-                attempts=result.get('attempts', []),
-                failure_category='none',
-                validator_errors=result.get('validator_errors', []),
-                score_breakdown=result.get('score_breakdown', {}),
-                llm_used=result.get('llm_used', False),
-                llm_parse_success=result.get('llm_parse_success', False),
-                raw_text_preview=redacted_preview,
-                score_policy_upload_type=result.get('score_policy_upload_type', self.upload_type),
-                schema_version=extraction_metadata.get('schema_version', 'v1'),
-                score_version=extraction_metadata.get('score_version', 'v1'),
-                rule_version=extraction_metadata.get('rule_version', 'v1'),
+                upload_type=self.upload_type,
+                file_name=uploaded_file.name,
+                status='pending',
+                _temp_file_path=temp_file_path,
             )
-            
-            return Response(success_payload, status=status.HTTP_201_CREATED)
-        
+            # Transfer temp-file ownership to the background thread
+            temp_file_path = None  # Prevent the finally block from deleting it
+
+            thread = threading.Thread(
+                target=run_extraction_job,
+                args=(job.job_id,),
+                daemon=True,
+                name=f"extraction-job-{job.job_id}",
+            )
+            thread.start()
+
+            logger.info(
+                "Launched async extraction thread for job %s (user=%s, type=%s)",
+                job.job_id, request.user.id, self.upload_type,
+            )
+
+            return Response(
+                {
+                    "job_id": str(job.job_id),
+                    "status": "processing",
+                    "message": (
+                        "Your file is being processed. "
+                        "We'll notify you when it's ready."
+                    ),
+                },
+                status=status.HTTP_202_ACCEPTED,
+            )
+
         except Exception as e:
             logger.error(f"Error processing {self.upload_type.upper()} COR for user {request.user.id}: {str(e)}")
-            
-            # Write extraction telemetry (failure)
+
+            # Write extraction telemetry (pre-thread failure only)
             self._write_extraction_log(
                 user=request.user,
                 uploaded_file=uploaded_file,
@@ -615,30 +493,18 @@ class BaseCORUploadView(APIView):
                 attempts=[],
                 failure_category='system_error',
             )
-            
-            payload = {
-                "error": "Failed to process the document. Please try again or use a different file.",
-            }
-            if idempotency_context:
-                payload, final_status, replayed = self._finalize_idempotent_response(
-                    user=request.user,
-                    context=idempotency_context,
-                    payload=payload,
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
-                payload['idempotency'] = {
-                    **{k: idempotency_context[k] for k in ('request_id', 'idempotency_key', 'extraction_run_id', 'schema_version')},
-                    'hit': replayed,
-                }
-                return Response(payload, status=final_status)
 
-            return Response(payload, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+            return Response(
+                {"error": "Failed to process the document. Please try again or use a different file."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
         finally:
-            # Clean up temporary file
+            # Only clean up if we still own the temp file (i.e. job creation
+            # failed before we could transfer ownership to the thread).
             if temp_file_path and os.path.exists(temp_file_path):
                 os.unlink(temp_file_path)
-                logger.info(f"Cleaned up temporary file: {temp_file_path}")
+                logger.info(f"Cleaned up orphaned temp file: {temp_file_path}")
 
 
 class UploadStudentCORView(BaseCORUploadView):

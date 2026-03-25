@@ -30,6 +30,10 @@ urlpatterns = [
     path('upload-cor/faculty/', views.UploadFacultyCORView.as_view(), name='upload_faculty_cor'),
     path('courses/', views.UserCoursesView.as_view(), name='user_courses'),
     path('courses/delete-all/', views.DeleteAllCoursesView.as_view(), name='delete_all_courses'),
+
+    # Async extraction job polling
+    path('extraction-jobs/<uuid:job_id>/', views.ExtractionJobStatusView.as_view(), name='extraction_job_status'),
+
     
     # Schedule endpoints (new - for cross-device sync)
     path('schedules/', views.ScheduleListCreateView.as_view(), name='schedule_list_create'),

@@ -169,17 +169,31 @@ class BaseCORExtractor(ABC):
         re.IGNORECASE
     )
     
-    # Pattern for extracting student number from COR header
-    # Anchored to the line following the "Student Number" header
-    # Matches: "2022-01191", "2023-04795" (YYYY-NNNNN format)
-    STUDENT_NUMBER_PATTERN = re.compile(
-        r'Student\s+Number\s*\n.*?(\d{4}-\d{4,6})\s*$',
-        re.MULTILINE | re.IGNORECASE
+    # Pattern for extracting student number from COR header.
+    # Two variants to handle both same-line and next-line layouts:
+    #   Same-line:  "Student number 2022-01191"  (common in handwritten/OCR docs)
+    #   Next-line:  "Student Number\n... 2022-01191"  (digital COR format)
+    # Also tolerates OCR noise in the label (e.g. "Stuoent", "5tudent").
+    STUDENT_NUMBER_SAME_LINE_PATTERN = re.compile(
+        r'Stu[a-z]?[do][a-z]?[e3]?n[a-z]?[t]?\s+[nN][u][m][bB][e3][r]\s+(\d{4}[\-–]\d{4,6})',
+        re.IGNORECASE
     )
+    STUDENT_NUMBER_NEXT_LINE_PATTERN = re.compile(
+        r'Stu[a-z]?[do][a-z]?[e3]?n[a-z]?[t]?\s+[nN][u][m][bB][e3][r]\s*[\n\r].*?(\d{4}[\-–]\d{4,6})',
+        re.MULTILINE | re.IGNORECASE | re.DOTALL
+    )
+    # Kept for backward-compatibility (used by subclass checks if any)
+    STUDENT_NUMBER_PATTERN = STUDENT_NUMBER_SAME_LINE_PATTERN
     
     def _extract_school_year_from_text(self, text: str) -> Dict:
         """
         Extract semester, school year, and student number from COR text.
+
+        Handles:
+        - Same-line format: "Student number 2022-01191"
+        - Next-line format: "Student Number\\n... 2022-01191" (digital COR)
+        - OCR noise in label characters
+        - Falls back to any YYYY-NNNNN near the word 'number'
         
         Args:
             text: Full text extracted from document
@@ -198,12 +212,50 @@ class BaseCORExtractor(ABC):
             metadata['school_year'] = match.group(2).replace(' ', '')
             logger.info(f"OCR found semester: {metadata['semester']}, "
                        f"school_year: {metadata['school_year']}")
-        
-        # Extract student number - anchored to "Student Number" header line
-        sn_match = self.STUDENT_NUMBER_PATTERN.search(header_text)
+
+        # --- Student number extraction (smart, context-aware) ---
+        student_number = ''
+
+        # Strategy 1: same-line — "Student number 2022-01191"
+        sn_match = self.STUDENT_NUMBER_SAME_LINE_PATTERN.search(header_text)
         if sn_match:
-            metadata['student_number'] = sn_match.group(1)
-            logger.info(f"OCR found student number: {metadata['student_number']}")
+            student_number = sn_match.group(1).replace('–', '-')
+            logger.info(f"OCR found student number (same-line): {student_number}")
+
+        # Strategy 2: next-line — "Student Number\n... 2022-01191"
+        if not student_number:
+            sn_match = self.STUDENT_NUMBER_NEXT_LINE_PATTERN.search(header_text)
+            if sn_match:
+                student_number = sn_match.group(1).replace('–', '-')
+                logger.info(f"OCR found student number (next-line): {student_number}")
+
+        # Strategy 3: context-aware fallback — find any YYYY-NNNNN near the word 'number'
+        if not student_number:
+            sn_fallback = re.search(
+                r'(?:number|num|no\.?)[^\n]{0,40}?(\d{4}[\-–]\d{4,6})',
+                header_text,
+                re.IGNORECASE,
+            )
+            if sn_fallback:
+                student_number = sn_fallback.group(1).replace('–', '-')
+                logger.info(f"OCR found student number (context fallback): {student_number}")
+
+        # Strategy 4: last resort — any YYYY-NNNNN in the header that isn't a year range
+        if not student_number:
+            for candidate in re.findall(r'(\d{4}[\-–]\d{4,6})', header_text):
+                candidate = candidate.replace('–', '-')
+                # Exclude school-year ranges like "2024-2025"
+                parts = candidate.split('-')
+                if len(parts) == 2 and len(parts[1]) <= 4 and parts[1].isdigit() and int(parts[1]) > 2000:
+                    continue  # looks like a year range, skip
+                student_number = candidate
+                logger.info(f"OCR found student number (last-resort): {student_number}")
+                break
+
+        if student_number:
+            metadata['student_number'] = student_number
+        else:
+            logger.warning("OCR could not extract student number from header text")
         
         return metadata
 
@@ -328,6 +380,9 @@ class BaseCORExtractor(ABC):
         
         # Use psm 6 for better table/block detection
         text = pytesseract.image_to_string(image, config='--psm 6')
+        
+        # Extract metadata (semester, school year, student number) from text
+        self.metadata = self._extract_school_year_from_text(text)
         self.metadata['raw_text'] = text
         
         return self._parse_text(text)
@@ -360,6 +415,10 @@ class StudentCORExtractor(BaseCORExtractor):
         """
         Parse extracted text into course dictionaries.
         
+        Tries the formal WMSU COR parser first (requires schedule ID prefix).
+        If no courses are found, falls back to a handwritten-format parser
+        that handles simple lines like:  "OS  1:00 pm - 3:00 pm  LR1"
+        
         Args:
             text: Full text extracted from document
             
@@ -380,8 +439,83 @@ class StudentCORExtractor(BaseCORExtractor):
                 split_courses = split_course_by_days(course)
                 courses.extend(split_courses)
         
+        # If formal parser found nothing, try the handwritten fallback
+        if not courses:
+            logger.info("Formal parser found no courses — trying handwritten fallback parser")
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                course = self._parse_handwritten_line(line)
+                if course:
+                    split_courses = split_course_by_days(course)
+                    courses.extend(split_courses)
+        
         logger.info(f"Extracted {len(courses)} courses from Student COR (after day splitting)")
         return courses
+
+    # Handwritten / simple format time pattern: 1:00 pm or 1:00pm
+    _HW_TIME_RANGE = re.compile(
+        r'(\d{1,2}:\d{2}\s*[aApP][mM])\s*[-\u2013]\s*(\d{1,2}:\d{2}\s*[aApP][mM])',
+        re.IGNORECASE,
+    )
+    _HW_SUBJ = re.compile(r'^([A-Z]{2,8}(?:\s*\d{1,3})?)', re.IGNORECASE)
+
+    def _normalize_hw_time(self, t: str) -> str:
+        """Normalize '1:00 pm' → '01:00PM'."""
+        t = re.sub(r'\s+', '', t.strip().upper())
+        m = re.match(r'(\d{1,2}):(\d{2})(AM|PM)', t)
+        if m:
+            return f"{int(m.group(1)):02d}:{m.group(2)}{m.group(3)}"
+        return t
+
+    def _parse_handwritten_line(self, line: str) -> Optional[Dict]:
+        """
+        Parse a simple handwritten / informal COR line.
+        Expected format:  SUBJECT_CODE  START_TIME - END_TIME  [ROOM]
+        Example:  OS  1:00 pm - 3:00 pm  LR1
+
+        Does NOT require a schedule-ID prefix.
+        """
+        # Must have a recognisable time range
+        time_match = self._HW_TIME_RANGE.search(line)
+        if not time_match:
+            return None
+
+        # Subject code must appear BEFORE the time range
+        before_time = line[:time_match.start()].strip()
+        subj_match = self._HW_SUBJ.match(before_time)
+        if not subj_match:
+            return None
+
+        subject_code = subj_match.group(1).strip().upper()
+        # Skip obvious header words
+        if subject_code in ('SUBJECT', 'SUB', 'COURSE', 'CODE'):
+            return None
+
+        start_time = self._normalize_hw_time(time_match.group(1))
+        end_time   = self._normalize_hw_time(time_match.group(2))
+
+        # Extract day (after time, if present)
+        after_time = line[time_match.end():].strip()
+        day_match = self.DAY_PATTERN.search(after_time)
+        day = day_match.group(1).upper() if day_match else ''
+
+        # Extract location
+        location_match = self.LOCATION_PATTERN.search(after_time)
+        location = re.sub(r'\s+', '', location_match.group(1).upper()) if location_match else ''
+
+        if not subject_code or not start_time or not end_time:
+            return None
+
+        return {
+            'subject_code': subject_code,
+            'subject_name': '',
+            'start_time': start_time,
+            'end_time': end_time,
+            'day': day,
+            'location': location,
+        }
 
     def _parse_line(self, line: str) -> Optional[Dict]:
         """

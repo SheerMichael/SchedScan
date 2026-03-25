@@ -1,5 +1,7 @@
 import api from './api';
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export interface Course {
   id: number;
   user: number;
@@ -14,7 +16,7 @@ export interface Course {
   updated_at: string;
 }
 
-export interface UploadCORResponse {
+export interface UploadCORSyncResponse {
   message: string;
   courses: Course[];
   total_courses: number;
@@ -22,6 +24,57 @@ export interface UploadCORResponse {
   semester?: string;
   school_year?: string;
 }
+
+export interface UploadCORAcceptedResponse {
+  job_id: string;
+  status: 'processing';
+  message: string;
+}
+
+export type UploadCORResponse = UploadCORSyncResponse | UploadCORAcceptedResponse;
+
+export interface ExtractionJobDoneResponse {
+  job_id: string;
+  status: 'done';
+  upload_type: string;
+  courses: Course[];
+  total_courses: number;
+  confidence?: number;
+  extraction_method?: string;
+  semester?: string;
+  school_year?: string;
+  message?: string;
+}
+
+export interface ExtractionJobFailedResponse {
+  job_id: string;
+  status: 'failed';
+  failure_category?: string;
+  message: string;
+  retryable?: boolean;
+}
+
+export interface ExtractionJobProcessingResponse {
+  job_id: string;
+  status: 'processing';
+  message?: string;
+}
+
+export interface ExtractionJobTimeoutResponse {
+  job_id: string;
+  status: 'timeout';
+  message: string;
+}
+
+export interface PollingCancelToken {
+  isCancelled: boolean;
+}
+
+export type ExtractionJobResult =
+  | ExtractionJobDoneResponse
+  | ExtractionJobFailedResponse
+  | ExtractionJobProcessingResponse
+  | ExtractionJobTimeoutResponse;
 
 export const courseService = {
   /**
@@ -59,6 +112,55 @@ export const courseService = {
       console.error(`Upload ${uploadType.toUpperCase()} COR error:`, error.response?.data || error.message);
       throw error;
     }
+  },
+
+  /**
+   * Poll async extraction status until terminal state or timeout.
+   */
+  pollExtractionJob: async (
+    jobId: string,
+    options?: {
+      maxAttempts?: number;
+      intervalMs?: number;
+      cancelToken?: PollingCancelToken;
+    }
+  ): Promise<ExtractionJobResult> => {
+    const maxAttempts = options?.maxAttempts ?? 10;
+    const intervalMs = options?.intervalMs ?? 3000;
+    const cancelToken = options?.cancelToken;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (cancelToken?.isCancelled) {
+        return {
+          job_id: jobId,
+          status: 'timeout',
+          message: 'Polling was cancelled.',
+        };
+      }
+
+      await sleep(intervalMs);
+
+      if (cancelToken?.isCancelled) {
+        return {
+          job_id: jobId,
+          status: 'timeout',
+          message: 'Polling was cancelled.',
+        };
+      }
+
+      const response = await api.get(`/extraction-jobs/${jobId}/`);
+      const data = response.data as ExtractionJobResult;
+
+      if (data.status === 'done' || data.status === 'failed') {
+        return data;
+      }
+    }
+
+    return {
+      job_id: jobId,
+      status: 'timeout',
+      message: "We'll notify you when done.",
+    };
   },
 
   /**

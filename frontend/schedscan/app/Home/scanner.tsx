@@ -1,16 +1,30 @@
 import { View, Text, TouchableOpacity, Image, Alert, ActivityIndicator, Modal, TextInput, Dimensions, SafeAreaView } from "react-native";
 import { useRouter } from "expo-router";
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import Svg, { Path } from 'react-native-svg';
 import { Images, Files, GraduationCap, Briefcase, ArrowRight, AlertTriangle } from "lucide-react-native";
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import { courseService, Course } from '../../services/courseService';
+import * as Notifications from 'expo-notifications';
+import {
+  courseService,
+  Course,
+  ExtractionJobDoneResponse,
+  PollingCancelToken,
+  UploadCORAcceptedResponse,
+} from '../../services/courseService';
 import { scheduleStorageService } from '../../services/scheduleStorageService';
 import { useAuth } from '../../context/AuthContext';
 import FacultyModeModal from '../../components/FacultyModeModal';
 import { detectSemesterFromDate } from '../../utils/semesterUtils';
 import api from '../../services/api';
+
+type ActivePollState = {
+  jobId: string;
+  uploadType: 'student' | 'faculty';
+  isRetry: boolean;
+  cancelToken: PollingCancelToken;
+};
 
 export default function Scanner() {
   const router = useRouter();
@@ -27,6 +41,8 @@ export default function Scanner() {
   const [reportModal, setReportModal] = useState(false);
   const [incidentDetails, setIncidentDetails] = useState('');
   const [uploadError, setUploadError] = useState('');
+  const [processingSubtitle, setProcessingSubtitle] = useState('Extracting course data...');
+  const activePollRef = useRef<ActivePollState | null>(null);
 
   // Faculty mode unlock modal
   const [showFacultyModeModal, setShowFacultyModeModal] = useState(false);
@@ -34,6 +50,116 @@ export default function Scanner() {
   // --- Logic Helpers (Rate Limit, Upload, Etc) ---
 
   const MAX_REPORT_LENGTH = 500;
+
+  const isAsyncUploadResponse = (value: any): value is UploadCORAcceptedResponse => {
+    return Boolean(value && typeof value.job_id === 'string' && value.status === 'processing');
+  };
+
+  const clearActivePolling = useCallback(() => {
+    if (activePollRef.current) {
+      activePollRef.current.cancelToken.isCancelled = true;
+      activePollRef.current = null;
+    }
+  }, []);
+
+  const handleExtractionSuccess = useCallback(async (
+    response: { courses: Course[]; semester?: string; school_year?: string },
+    uploadType: 'student' | 'faculty',
+    options?: { isRetry?: boolean; alreadyRecorded?: boolean }
+  ) => {
+    const isRetry = options?.isRetry === true;
+    const alreadyRecorded = options?.alreadyRecorded === true;
+
+    if (!response?.courses || response.courses.length === 0) {
+      throw new Error(
+        'No courses were extracted. Please try again with a clearer image or a valid COR file.'
+      );
+    }
+
+    // Record one upload attempt when the async job is accepted.
+    if (!isRetry && !alreadyRecorded && user?.id) {
+      await scheduleStorageService.recordUpload(user.id);
+    }
+
+    setUploadedCourses(response.courses);
+
+    if (response.semester) {
+      setUploadedSemester(response.semester);
+      setUploadedSchoolYear(response.school_year || '');
+    } else {
+      const detected = detectSemesterFromDate();
+      setUploadedSemester(detected.semester);
+      setUploadedSchoolYear(detected.schoolYear);
+    }
+
+    setIsUploading(false);
+    setShowTitleModal(true);
+  }, [user?.id]);
+
+  const finalizeJobFromPush = useCallback(async (activePoll: ActivePollState) => {
+    try {
+      setProcessingSubtitle('Finalizing extraction...');
+      const response = await api.get(`/extraction-jobs/${activePoll.jobId}/`);
+      const jobStatus = response.data;
+
+      if (jobStatus.status === 'done') {
+        await handleExtractionSuccess(jobStatus as ExtractionJobDoneResponse, activePoll.uploadType, {
+          isRetry: activePoll.isRetry,
+          alreadyRecorded: true,
+        });
+        return;
+      }
+
+      if (jobStatus.status === 'failed') {
+        setIsUploading(false);
+        setUploadError(jobStatus.message || 'Extraction failed. Please try again.');
+        setReportModal(true);
+        return;
+      }
+
+      setIsUploading(false);
+      Alert.alert('Still Processing', "We'll notify you when done.");
+    } catch (error) {
+      setIsUploading(false);
+      Alert.alert('Status Check Failed', 'Unable to fetch extraction result. Please check your schedules shortly.');
+    }
+  }, [handleExtractionSuccess]);
+
+  useEffect(() => {
+    const handleExtractionNotification = async (rawData: unknown) => {
+      const data = (rawData ?? {}) as Record<string, any>;
+      if (data.type !== 'extraction_job' || typeof data.job_id !== 'string') {
+        return;
+      }
+
+      const activePoll = activePollRef.current;
+      if (!activePoll || activePoll.jobId !== data.job_id) {
+        return;
+      }
+
+      activePoll.cancelToken.isCancelled = true;
+      activePollRef.current = null;
+      await finalizeJobFromPush(activePoll);
+    };
+
+    const receivedSub = Notifications.addNotificationReceivedListener((notification) => {
+      handleExtractionNotification(notification.request.content.data).catch((error) => {
+        console.error('Failed to handle extraction notification:', error);
+      });
+    });
+
+    const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
+      handleExtractionNotification(response.notification.request.content.data).catch((error) => {
+        console.error('Failed to handle extraction notification response:', error);
+      });
+    });
+
+    return () => {
+      receivedSub.remove();
+      responseSub.remove();
+      clearActivePolling();
+    };
+  }, [clearActivePolling, finalizeJobFromPush]);
 
   const handleSubmit = async () => {
     const sanitizedDetails = incidentDetails.trim().slice(0, MAX_REPORT_LENGTH);
@@ -151,38 +277,54 @@ export default function Scanner() {
   ) => {
     const isRetry = options?.isRetry === true;
     setIsUploading(true);
+    setProcessingSubtitle('Uploading document...');
     try {
       const response = await courseService.uploadCOR(file, uploadType);
 
-      if (!response?.courses || response.courses.length === 0) {
-        throw new Error(
-          'No courses were extracted. Please try again with a clearer image or a valid COR file.'
-        );
+      if (isAsyncUploadResponse(response)) {
+        if (!isRetry && user?.id) {
+          await scheduleStorageService.recordUpload(user.id);
+        }
+
+        const cancelToken: PollingCancelToken = { isCancelled: false };
+        activePollRef.current = {
+          jobId: response.job_id,
+          uploadType,
+          isRetry,
+          cancelToken,
+        };
+
+        setProcessingSubtitle('Processing your schedule...');
+        const result = await courseService.pollExtractionJob(response.job_id, {
+          maxAttempts: 10,
+          intervalMs: 3000,
+          cancelToken,
+        });
+
+        // If a push notification already finalized this job, stop here.
+        if (!activePollRef.current || activePollRef.current.jobId !== response.job_id) {
+          return;
+        }
+        activePollRef.current = null;
+
+        if (result.status === 'done') {
+          await handleExtractionSuccess(result, uploadType, {
+            isRetry,
+            alreadyRecorded: true,
+          });
+          return;
+        }
+
+        if (result.status === 'failed') {
+          throw new Error(result.message || 'Extraction failed. Please try again.');
+        }
+
+        setIsUploading(false);
+        Alert.alert('Still Processing', "We'll notify you when done.");
+        return;
       }
 
-      console.log('Upload successful:', response);
-
-      // Record the upload timestamp for rate limiting
-      if (!isRetry && user?.id) {
-        await scheduleStorageService.recordUpload(user.id);
-      }
-
-      // Store courses
-      setUploadedCourses(response.courses);
-
-      // Capture semester data from extraction (student COR) or auto-detect (faculty)
-      if (response.semester) {
-        setUploadedSemester(response.semester);
-        setUploadedSchoolYear(response.school_year || '');
-      } else {
-        // Faculty IDP or missing data — auto-detect from today's date
-        const detected = detectSemesterFromDate();
-        setUploadedSemester(detected.semester);
-        setUploadedSchoolYear(detected.schoolYear);
-      }
-
-      setIsUploading(false);
-      setShowTitleModal(true);
+      await handleExtractionSuccess(response, uploadType, { isRetry });
     } catch (error: any) {
       const errorMessage =
         error.response?.data?.error ||
@@ -272,6 +414,7 @@ export default function Scanner() {
   };
 
   const resetScanner = () => {
+    clearActivePolling();
     setSelectedFile(null);
     setSelectedRole(null);
     setScheduleTitle('');
@@ -415,7 +558,7 @@ export default function Scanner() {
           <View className="bg-white rounded-xl p-6 items-center w-64">
             <ActivityIndicator size="large" color="#B88080" />
             <Text className="mt-4 text-lg font-bold text-gray-800">Processing</Text>
-            <Text className="text-sm text-gray-500 mt-1">Extracting course data...</Text>
+            <Text className="text-sm text-gray-500 mt-1">{processingSubtitle}</Text>
           </View>
         </View>
       )}

@@ -10,10 +10,12 @@ This ensures optimal performance while maintaining robustness.
 """
 
 import os
+from datetime import timedelta
 import time
 import logging
 from typing import Dict, List
 from django.conf import settings
+from django.utils import timezone
 from .pdf_extractor import get_pdf_extractor, calculate_quality_score
 from .extraction import (
     normalize_candidates,
@@ -22,7 +24,7 @@ from .extraction import (
     validate_candidates,
 )
 from .extraction.fallbacks import should_use_fallback
-from .extraction.llm_normalizer import normalize_with_llm
+from .extraction.llm_normalizer import normalize_with_llm, parse_with_llm
 
 # Try to import OCR module - uses pytesseract (lightweight)
 try:
@@ -96,6 +98,7 @@ class ExtractionManager:
         accept_threshold = self._accept_threshold(upload_type)
         retry_threshold = self._retry_threshold(upload_type)
 
+        # --- Stage A: LLM normalizer (corrects low-confidence regex output) ---
         if retry_threshold <= score.confidence < accept_threshold:
             llm_courses, llm_meta = normalize_with_llm(
                 extracted_text=str(result.get('raw_text', '')),
@@ -113,6 +116,43 @@ class ExtractionManager:
                     upload_type=upload_type,
                 )
                 attempts[:] = llm_attempts
+
+        # --- Stage B: LLM full parse (regex found nothing / low confidence) ---
+        # Activated when: courses == [] OR confidence still below retry_threshold.
+        # The LLM reads raw OCR text directly, bypassing regex entirely.
+        should_full_parse = (
+            not validation.courses
+            or score.confidence < retry_threshold
+        )
+        if should_full_parse:
+            raw_text = str(result.get('raw_text', ''))
+            fp_courses, fp_meta, fp_telemetry = parse_with_llm(
+                raw_text=raw_text,
+                upload_type=upload_type,
+            )
+            llm_used = llm_used or bool(fp_telemetry.get('llm_used', False))
+            if fp_telemetry.get('llm_parse_success') and fp_courses:
+                llm_parse_success = True
+                fp_attempts = attempts + ['llm_full_parse']
+                validation = validate_candidates(normalize_candidates(fp_courses))
+                score = score_candidates(
+                    validation.courses,
+                    validation.errors,
+                    fp_attempts,
+                    upload_type=upload_type,
+                )
+                attempts[:] = fp_attempts
+                result['extraction_method'] = 'llm_full_parse'
+                # Merge doc metadata extracted by the LLM (overrides empty regex metadata)
+                for key in ('student_number', 'semester', 'school_year'):
+                    if fp_meta.get(key):
+                        result[key] = fp_meta[key]
+                logger.info(
+                    'Stage B (LLM full-parse) succeeded: %d courses, method=llm_full_parse',
+                    len(validation.courses),
+                )
+            else:
+                logger.info('Stage B (LLM full-parse) did not improve results — keeping regex output')
 
         confidence = score.confidence
         if validation.errors:
@@ -135,9 +175,6 @@ class ExtractionManager:
         result['schema_version'] = str(getattr(settings, 'EXTRACTION_SCHEMA_VERSION', 'v1'))
         result['score_version'] = str(getattr(settings, 'EXTRACTION_SCORE_VERSION', 'v1'))
         result['rule_version'] = str(getattr(settings, 'EXTRACTION_RULE_VERSION', 'v1'))
-        # True when the valid-course subset meets the quality bar for saving.
-        # Courses rejected by the validator are already excluded from result['courses'];
-        # accepting here means we save the trustworthy subset, not the bad rows.
         result['accepted'] = bool(validation.courses) and confidence >= accept_threshold
         return result
     
@@ -352,17 +389,351 @@ class ExtractionManager:
             raise
 
 
-# Convenience function for quick extraction
+
+# ---------------------------------------------------------------------------
+# Async job runner — called by background threads launched from upload views
+# ---------------------------------------------------------------------------
+
+def run_extraction_job(job_id) -> None:
+    """
+    Execute a full extraction pipeline for the given ExtractionJob.
+
+    Designed to run in a daemon thread launched from the upload view.
+    The upload view has already:
+      - Written the uploaded file to a temp path stored in job._temp_file_path
+      - Created the ExtractionJob row with status='pending'
+
+    This function:
+      1. Sets status → 'processing'
+      2. Runs ExtractionManager.extract_schedule() (LLM primary, regex fallback)
+      3. On accepted result: writes Course rows, sets status → 'done'
+      4. On rejected result: sets status → 'failed'
+      5. On ANY unhandled exception: sets status → 'failed', logs full traceback
+      6. After terminal state: fires push notification to user's device
+      7. Always: deletes the temp file in finally block
+
+    CRITICAL: The outer try/except must never be removed.  Without it a thread
+    crash leaves the job stuck in 'processing' and the user is never notified.
+    """
+    import os
+    import uuid as _uuid
+    import traceback as _traceback
+
+    # Local imports to avoid circular imports at module level
+    from django.contrib.auth import get_user_model
+    from api.models import ExtractionJob, Course, ExtractionLog, Notification
+    from api.utils.notification_service import NotificationService
+
+    logger.info("run_extraction_job: starting job %s", job_id)
+
+    job = None
+    temp_file_path = None
+
+    try:
+        # ── 1. Load job and transition to 'processing' ──────────────────────
+        try:
+            job = ExtractionJob.objects.get(pk=job_id)
+
+        except ExtractionJob.DoesNotExist:
+            logger.error("run_extraction_job: job %s not found in DB", job_id)
+            return
+
+        temp_file_path = job._temp_file_path or ''
+        job.status = 'processing'
+        job.save(update_fields=['status', 'updated_at'])
+        logger.info("run_extraction_job: job %s → processing (file=%s)", job_id, temp_file_path)
+
+        if not temp_file_path or not os.path.exists(temp_file_path):
+            raise FileNotFoundError(
+                f"Temp file missing or not found: {temp_file_path!r}"
+            )
+
+        # ── 2. Run extraction ────────────────────────────────────────────────
+        manager = ExtractionManager()
+        result = manager.extract_schedule(temp_file_path, job.upload_type)
+
+        courses_data = result.get('courses', [])
+        accepted = result.get('accepted', False)
+
+        if accepted and courses_data:
+            # ── 3a. Success: write Course rows ───────────────────────────────
+            from django.db import transaction
+            with transaction.atomic():
+                for course_dict in courses_data:
+                    Course.objects.create(
+                        user=job.user,
+                        subject_code=course_dict.get('subject_code', ''),
+                        subject_name=course_dict.get('subject_name', ''),
+                        start_time=course_dict.get('start_time', ''),
+                        end_time=course_dict.get('end_time', ''),
+                        day=course_dict.get('day', ''),
+                        location=course_dict.get('location', ''),
+                    )
+
+            # Determine extraction_method for job record
+            raw_method = result.get('extraction_method', 'none')
+            if 'llm_full_parse' in result.get('attempts', []) or raw_method == 'llm_full_parse':
+                job_method = 'llm'
+            elif 'llm_normalize' in result.get('attempts', []):
+                job_method = 'llm_normalization'
+            else:
+                job_method = 'regex_fallback' if 'ocr_fallback' in result.get('attempts', []) else 'none'
+
+            job.status = 'done'
+            job.extraction_method = job_method
+            job.courses = courses_data
+            job.student_number = result.get('student_number', '')
+            job.semester = result.get('semester', '')
+            job.school_year = result.get('school_year', '')
+            job.confidence = result.get('confidence')
+            job.failure_category = 'none'
+            job._temp_file_path = ''
+            job.save()
+
+            logger.info(
+                "run_extraction_job: job %s → done (%d courses, confidence=%.2f)",
+                job_id, len(courses_data), result.get('confidence', 0.0),
+            )
+
+            # ── Telemetry ────────────────────────────────────────────────────
+            _write_extraction_log_for_job(job, result, success=True)
+
+            # ── Push notification ────────────────────────────────────────────
+            _send_extraction_job_notification(job, success=True)
+
+        else:
+            # ── 3b. Rejected by quality gate ─────────────────────────────────
+            failure_reason = result.get('failure_category', 'low_confidence') or 'low_confidence'
+            job.status = 'failed'
+            job.failure_category = failure_reason
+            job.confidence = result.get('confidence')
+            job.error_message = (
+                f"Extraction rejected by quality gate: "
+                f"confidence={result.get('confidence', 0.0):.2f}, "
+                f"courses={len(courses_data)}, "
+                f"accepted={accepted}"
+            )
+            job._temp_file_path = ''
+            job.save()
+
+            logger.warning(
+                "run_extraction_job: job %s → failed (%s, confidence=%.2f)",
+                job_id, failure_reason, result.get('confidence', 0.0),
+            )
+
+            _write_extraction_log_for_job(job, result, success=False)
+            _send_extraction_job_notification(job, success=False)
+
+    except Exception:
+        # ── CRITICAL SAFETY NET ──────────────────────────────────────────────
+        # Any unhandled exception must NOT leave the job stuck in 'processing'.
+        tb = _traceback.format_exc()
+        logger.exception("run_extraction_job: unhandled exception in job %s", job_id)
+
+        if job is not None:
+            try:
+                job.status = 'failed'
+                job.failure_category = 'system_error'
+                job.error_message = tb[:4000]
+                job._temp_file_path = ''
+                job.save()
+                _send_extraction_job_notification(job, success=False)
+            except Exception:
+                logger.exception(
+                    "run_extraction_job: ALSO failed to save failure state for job %s", job_id
+                )
+
+    finally:
+        # ── Temp file cleanup ────────────────────────────────────────────────
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+                logger.info("run_extraction_job: cleaned up temp file %s", temp_file_path)
+            except OSError:
+                logger.warning(
+                    "run_extraction_job: could not delete temp file %s", temp_file_path
+                )
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers for run_extraction_job
+# ---------------------------------------------------------------------------
+
+def _write_extraction_log_for_job(job, result: dict, *, success: bool) -> None:
+    """Write an ExtractionLog record for a completed async job."""
+    from api.models import ExtractionLog
+
+    try:
+        ExtractionLog.objects.create(
+            user=job.user,
+            file_name=job.file_name or 'unknown',
+            file_type=(job.file_name.rsplit('.', 1)[-1].lower() if '.' in (job.file_name or '') else 'unknown'),
+            upload_type=job.upload_type,
+            extraction_method=result.get('extraction_method', 'none'),
+            confidence=result.get('confidence', 0.0) or 0.0,
+            courses_extracted=len(result.get('courses', [])) if success else 0,
+            success=success,
+            error_message=(job.error_message or '')[:2000],
+            processing_time=result.get('processing_time', 0.0) or 0.0,
+            attempts=result.get('attempts', []),
+            failure_category=result.get('failure_category', 'none') or 'none',
+            validator_errors=result.get('validator_errors', []),
+            score_breakdown=result.get('score_breakdown', {}),
+            llm_used=result.get('llm_used', False),
+            llm_parse_success=result.get('llm_parse_success', False),
+            raw_text_preview='',  # Not exposed for async path (text not stored in job)
+        )
+    except Exception:
+        logger.exception("_write_extraction_log_for_job: failed to write ExtractionLog for job %s", job.job_id)
+
+
+def _send_extraction_job_notification(job, *, success: bool) -> None:
+    """
+    Fire a push notification and create a Notification DB record for a completed job.
+    Silently swallows errors so a push failure never breaks the job runner.
+    """
+    from api.models import Notification
+    from api.utils.notification_service import NotificationService
+
+    try:
+        if success:
+            title = "Schedule Ready ✅"
+            body = "Your schedule has been extracted and saved!"
+            notif_type = 'general'
+        else:
+            title = "Extraction Failed ⚠️"
+            body = "We couldn't read your schedule — please try re-uploading."
+            notif_type = 'general'
+
+        data_payload = {
+            "type": "extraction_job",
+            "job_id": str(job.job_id),
+            "status": job.status,
+        }
+
+        # Persist in-app notification
+        Notification.objects.create(
+            user=job.user,
+            notification_type=notif_type,
+            title=title,
+            message=body,
+            data=data_payload,
+        )
+
+        # Fire push if the user has a token
+        token = getattr(job.user, 'expo_push_token', None)
+        if token:
+            service = NotificationService()
+            service.send_push_notification(
+                token=token,
+                title=title,
+                body=body,
+                data=data_payload,
+            )
+
+    except Exception:
+        logger.exception(
+            "_send_extraction_job_notification: failed to notify user for job %s", job.job_id
+        )
+
+
+def recover_stale_processing_jobs(
+    *,
+    max_age_minutes: int = 5,
+    notify_user: bool = True,
+    dry_run: bool = False,
+) -> int:
+    """
+    Mark stale extraction jobs as failed.
+
+    A stale job is any ExtractionJob still in `processing` status whose
+    `updated_at` is older than max_age_minutes.
+
+    Returns:
+        Number of stale jobs found (dry_run) or recovered (non-dry_run).
+    """
+    from api.models import ExtractionJob
+
+    cutoff = timezone.now() - timedelta(minutes=max_age_minutes)
+    stale_jobs = list(
+        ExtractionJob.objects.select_related('user').filter(
+            status='processing',
+            updated_at__lt=cutoff,
+        )
+    )
+
+    if not stale_jobs:
+        return 0
+
+    if dry_run:
+        logger.info(
+            "recover_stale_processing_jobs: found %d stale jobs older than %d minutes",
+            len(stale_jobs),
+            max_age_minutes,
+        )
+        return len(stale_jobs)
+
+    recovered = 0
+    for job in stale_jobs:
+        temp_path = (job._temp_file_path or '').strip()
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+                logger.info(
+                    "recover_stale_processing_jobs: deleted stale temp file %s for job %s",
+                    temp_path,
+                    job.job_id,
+                )
+            except OSError:
+                logger.warning(
+                    "recover_stale_processing_jobs: failed to delete stale temp file %s for job %s",
+                    temp_path,
+                    job.job_id,
+                )
+
+        job.status = 'failed'
+        job.failure_category = 'system_error'
+        job.error_message = (
+            "Job marked as failed by stale-job recovery after server restart "
+            f"(older than {max_age_minutes} minutes in processing state)."
+        )
+        job._temp_file_path = ''
+        job.save(update_fields=[
+            'status',
+            'failure_category',
+            'error_message',
+            '_temp_file_path',
+            'updated_at',
+        ])
+
+        if notify_user:
+            _send_extraction_job_notification(job, success=False)
+
+        recovered += 1
+
+    logger.warning(
+        "recover_stale_processing_jobs: recovered %d stale jobs older than %d minutes",
+        recovered,
+        max_age_minutes,
+    )
+    return recovered
+
+
+# ---------------------------------------------------------------------------
+# Convenience function for quick synchronous extraction (unchanged)
+# ---------------------------------------------------------------------------
+
 def extract_schedule_from_file(file_path: str, upload_type: str = 'student') -> Dict:
     """
-    Convenience function to extract schedule from a file.
-    
+    Convenience function to extract schedule from a file synchronously.
+
     Args:
         file_path: Path to the COR file (PDF or image)
         upload_type: Either 'student' or 'faculty' (default: 'student')
-        
+
     Returns:
         Extraction result dictionary
     """
     manager = ExtractionManager()
     return manager.extract_schedule(file_path, upload_type)
+

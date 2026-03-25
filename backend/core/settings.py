@@ -335,6 +335,10 @@ ENABLE_SERVER_CLASS_REMINDERS = os.getenv('ENABLE_SERVER_CLASS_REMINDERS', 'Fals
 # Extraction pipeline flags (Phase 1)
 EXTRACTION_V2_ENABLED = os.getenv('EXTRACTION_V2_ENABLED', 'True') == 'True'
 EXTRACTION_LLM_NORMALIZATION_ENABLED = os.getenv('EXTRACTION_LLM_NORMALIZATION_ENABLED', 'False') == 'True'
+# When True, Ollama is promoted to a first-class parser: if regex yields no courses
+# (or fewer than the retry threshold), the LLM parses raw OCR text directly.
+# Requires EXTRACTION_LLM_NORMALIZATION_ENABLED=True and a running Ollama model.
+EXTRACTION_LLM_FULL_PARSE_ENABLED = os.getenv('EXTRACTION_LLM_FULL_PARSE_ENABLED', 'False') == 'True'
 EXTRACTION_ACCEPT_THRESHOLD = float(os.getenv('EXTRACTION_ACCEPT_THRESHOLD', '0.85'))
 EXTRACTION_RETRY_THRESHOLD = float(os.getenv('EXTRACTION_RETRY_THRESHOLD', '0.60'))
 EXTRACTION_STRICT_OWNERSHIP_MODE = os.getenv('EXTRACTION_STRICT_OWNERSHIP_MODE', 'False') == 'True'
@@ -352,6 +356,8 @@ EXTRACTION_LLM_REQUIRE_MODEL_DIGEST = os.getenv('EXTRACTION_LLM_REQUIRE_MODEL_DI
 EXTRACTION_LLM_STARTUP_CHECK_ENABLED = os.getenv('EXTRACTION_LLM_STARTUP_CHECK_ENABLED', 'False') == 'True'
 EXTRACTION_LLM_STARTUP_CHECK_STRICT = os.getenv('EXTRACTION_LLM_STARTUP_CHECK_STRICT', 'False') == 'True'
 EXTRACTION_LLM_STARTUP_CHECK_TIMEOUT_SECONDS = int(os.getenv('EXTRACTION_LLM_STARTUP_CHECK_TIMEOUT_SECONDS', '2'))
+EXTRACTION_RECOVER_STALE_JOBS_ON_STARTUP = os.getenv('EXTRACTION_RECOVER_STALE_JOBS_ON_STARTUP', 'False') == 'True'
+EXTRACTION_STALE_JOB_MAX_AGE_MINUTES = int(os.getenv('EXTRACTION_STALE_JOB_MAX_AGE_MINUTES', '5'))
 # API key sent in the X-Api-Key header to the nginx reverse proxy in front of Ollama.
 # Empty string (default) = no header sent — backward-compatible for local dev where Ollama
 # is accessed directly on 127.0.0.1:11434 without a proxy.

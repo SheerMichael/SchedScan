@@ -366,3 +366,212 @@ def normalize_with_llm(
     except (JSONDecodeError, ValueError):
         logger.warning('LLM normalization output was not valid JSON')
         return seed_courses, telemetry
+
+
+# ---------------------------------------------------------------------------
+# Full-document parse: LLM as primary parser (no seed courses required)
+# ---------------------------------------------------------------------------
+
+ALLOWED_DOC_METADATA_KEYS = {'student_number', 'semester', 'school_year'}
+
+
+def _build_full_parse_prompt(raw_text: str, upload_type: str) -> str:
+    """
+    Build a prompt that asks the LLM to extract BOTH course rows AND document
+    metadata directly from raw OCR/PDF text — no regex seed required.
+
+    The prompt explicitly teaches the LLM what each upload_type looks like so
+    it can interpret handwritten, scanned, or informal formats intelligently.
+    """
+    if upload_type == 'faculty':
+        format_hint = (
+            'Faculty IDP format: rows contain a subject code like "OS137-BSCS-3A", '
+            'a time range like "9:00-11:00" or "1:00PM-3:00PM", a room like "LR3", '
+            'and a day column (MON, TUE, WED, THU, FRI, SAT). '
+            'There is no student_number in faculty documents; set it to null.'
+        )
+    else:
+        format_hint = (
+            'Student COR format: may be a formal PDF with schedule IDs like "BSCS222285", '
+            'or a handwritten/informal note. '
+            'Handwritten format looks like: "OS  1:00 pm - 3:00 pm  LR1". '
+            'The header usually says "Student number YYYY-NNNNN" on the same line or '
+            '"Student Number" followed by the number on the next line. '
+            'Extract subject_code, start_time (HH:MMam/pm or HH:MMAM/PM), end_time, '
+            'day (M/T/W/TH/F/S — leave empty if not shown), location (room name).'
+        )
+
+    return (
+        'You are a precise schedule data extractor for a university registration system. '
+        'Analyze the following raw text (which may be OCR output from a photo or scan) '
+        f'and extract all course schedule rows. Document type: {upload_type.upper()} COR/IDP.\n\n'
+        f'FORMAT CONTEXT: {format_hint}\n\n'
+        'Return ONLY valid JSON matching this exact schema — no markdown, no explanation:\n'
+        '{\n'
+        '  "doc_metadata": {\n'
+        '    "student_number": "<YYYY-NNNNN or null>",\n'
+        '    "semester": "<1ST|2ND|SUMMER or null>",\n'
+        '    "school_year": "<YYYY-YYYY or null>"\n'
+        '  },\n'
+        '  "courses": [\n'
+        '    {\n'
+        '      "subject_code": "<code>",\n'
+        '      "subject_name": "<name or empty string>",\n'
+        '      "day": "<M|T|W|TH|F|S or empty>",\n'
+        '      "start_time": "<HH:MMAM or HH:MMPM>",\n'
+        '      "end_time": "<HH:MMAM or HH:MMPM>",\n'
+        '      "location": "<room or empty string>"\n'
+        '    }\n'
+        '  ]\n'
+        '}\n\n'
+        'Rules:\n'
+        '- Normalize times to HH:MMAM or HH:MMPM (e.g. "1:00 pm" → "01:00PM").\n'
+        '- If a field is unclear or missing, use null (for doc_metadata) or empty string (for course fields).\n'
+        '- Skip header rows (Subject/Time/Room labels) and non-course lines.\n'
+        '- Do NOT invent data. Only extract what is present in the text.\n\n'
+        'RAW TEXT:\n'
+        f'{raw_text}\n'
+    )
+
+
+def _validate_doc_metadata(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    unknown = set(value.keys()) - ALLOWED_DOC_METADATA_KEYS
+    if unknown:
+        return False
+    return True
+
+
+def parse_with_llm(
+    *,
+    raw_text: str,
+    upload_type: str,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
+    """
+    Use Ollama to parse raw OCR/PDF text directly into structured courses + metadata.
+
+    This is a FULL-DOCUMENT parse — it does not require seed courses from the
+    regex parser and can handle formats the regex cannot (handwritten, informal).
+
+    Gated by: EXTRACTION_LLM_FULL_PARSE_ENABLED (must be True) AND
+               EXTRACTION_LLM_NORMALIZATION_ENABLED (must be True).
+
+    Returns:
+        (courses, doc_metadata, telemetry)
+        - courses: list of course dicts (may be empty on failure)
+        - doc_metadata: dict with student_number / semester / school_year
+        - telemetry: dict with llm_used, llm_parse_success, llm_model, etc.
+    """
+    empty_meta: Dict[str, Any] = {'student_number': '', 'semester': '', 'school_year': ''}
+    telemetry: Dict[str, Any] = {
+        'llm_used': False,
+        'llm_parse_success': False,
+        'llm_model': '',
+        'llm_timeout_seconds': int(getattr(settings, 'EXTRACTION_LLM_TIMEOUT_SECONDS', 12)),
+        'stage': 'llm_full_parse',
+    }
+
+    # Gate 1: full-parse feature flag
+    if not bool(getattr(settings, 'EXTRACTION_LLM_FULL_PARSE_ENABLED', False)):
+        return [], empty_meta, telemetry
+
+    # Gate 2: general LLM normalization flag
+    if not bool(getattr(settings, 'EXTRACTION_LLM_NORMALIZATION_ENABLED', False)):
+        return [], empty_meta, telemetry
+
+    model_name = str(getattr(settings, 'EXTRACTION_LLM_MODEL_NAME', '')).strip()
+    telemetry['llm_model'] = model_name
+    telemetry['llm_used'] = True
+
+    if not model_name:
+        logger.warning('LLM full-parse enabled but EXTRACTION_LLM_MODEL_NAME is empty')
+        return [], empty_meta, telemetry
+
+    timeout_seconds = int(getattr(settings, 'EXTRACTION_LLM_TIMEOUT_SECONDS', 12))
+    max_input_chars = int(getattr(settings, 'EXTRACTION_LLM_MAX_INPUT_CHARS', 6000))
+    base_url = str(getattr(settings, 'EXTRACTION_LLM_BASE_URL', 'http://127.0.0.1:11434')).rstrip('/')
+    generate_url = f'{base_url}{OLLAMA_GENERATE_PATH}'
+
+    policy_ok, policy_error = _validate_runtime_policy(
+        base_url=base_url,
+        model_name=model_name,
+        timeout_seconds=timeout_seconds,
+    )
+    if not policy_ok:
+        logger.warning('LLM full-parse policy check failed: %s', policy_error)
+        return [], empty_meta, telemetry
+
+    bounded_text = _truncate_text(raw_text, max_input_chars)
+    if not bounded_text:
+        logger.warning('LLM full-parse skipped: raw text is empty after truncation')
+        return [], empty_meta, telemetry
+
+    try:
+        request_payload = {
+            'model': model_name,
+            'prompt': _build_full_parse_prompt(bounded_text, upload_type),
+            'stream': False,
+            'format': 'json',
+            'options': {'temperature': 0},
+        }
+        response = requests.post(
+            generate_url,
+            json=request_payload,
+            timeout=timeout_seconds,
+            headers=_build_ollama_headers(content_type=True),
+        )
+        response.raise_for_status()
+        ollama_payload = response.json()
+        llm_output = _extract_response_text(ollama_payload)
+        if not llm_output:
+            logger.warning('LLM full-parse returned empty response')
+            return [], empty_meta, telemetry
+
+        parsed = _parse_llm_json(llm_output)
+
+        # Validate top-level keys
+        unknown_top = set(parsed.keys()) - {'courses', 'doc_metadata'}
+        if unknown_top:
+            logger.warning('LLM full-parse response had unknown top-level keys: %s', sorted(unknown_top))
+            return [], empty_meta, telemetry
+
+        # Extract and validate courses
+        courses = parsed.get('courses')
+        if not isinstance(courses, list):
+            logger.warning('LLM full-parse: "courses" is not a list')
+            return [], empty_meta, telemetry
+        if not _validate_normalized_courses(courses):
+            logger.warning('LLM full-parse: course schema validation failed')
+            return [], empty_meta, telemetry
+
+        # Extract and validate doc_metadata
+        raw_doc_meta = parsed.get('doc_metadata', {})
+        if not _validate_doc_metadata(raw_doc_meta):
+            logger.warning('LLM full-parse: doc_metadata schema validation failed')
+            raw_doc_meta = {}
+
+        doc_metadata: Dict[str, Any] = {
+            'student_number': str(raw_doc_meta.get('student_number') or '').strip(),
+            'semester': str(raw_doc_meta.get('semester') or '').strip().upper(),
+            'school_year': str(raw_doc_meta.get('school_year') or '').strip(),
+        }
+
+        telemetry['llm_parse_success'] = True
+        logger.info(
+            'LLM full-parse success: %d courses, student_number=%s, semester=%s',
+            len(courses),
+            doc_metadata.get('student_number'),
+            doc_metadata.get('semester'),
+        )
+        return courses, doc_metadata, telemetry
+
+    except requests.Timeout:
+        logger.warning('LLM full-parse timed out after %ss', timeout_seconds)
+        return [], empty_meta, telemetry
+    except requests.RequestException:
+        logger.exception('LLM full-parse request failed')
+        return [], empty_meta, telemetry
+    except (JSONDecodeError, ValueError):
+        logger.warning('LLM full-parse output was not valid JSON')
+        return [], empty_meta, telemetry

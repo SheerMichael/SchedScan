@@ -10,7 +10,9 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from unittest.mock import Mock, patch, MagicMock
 import os
+from datetime import timedelta
 from rest_framework.test import APIClient
+from django.utils import timezone
 
 from api.utils.pdf_extractor import (
     StudentPDFExtractor,
@@ -342,7 +344,7 @@ class ExtractionViewIntegrationTestCase(TestCase):
     
     @patch('api.views.upload_views.ExtractionManager')
     def test_upload_student_cor_with_pdf_extraction(self, mock_manager_class):
-        """Test student COR upload uses extraction manager"""
+        """Student COR upload uses extraction manager for ownership check and returns 202."""
         # Mock extraction manager
         mock_manager = Mock()
         mock_manager.extract_schedule.return_value = {
@@ -372,46 +374,34 @@ class ExtractionViewIntegrationTestCase(TestCase):
             },
         }
         mock_manager_class.return_value = mock_manager
-        
+
         # Create fake PDF file
         pdf_file = SimpleUploadedFile(
             "test_cor.pdf",
             b"fake pdf content",
             content_type="application/pdf"
         )
-        
-        response = self.client.post(
-            '/api/upload-cor/student/',
-            {'file': pdf_file},
-            format='multipart'
-        )
-        
-        self.assertEqual(response.status_code, 201)
-        self.assertIn('extraction_metadata', response.data)
-        self.assertEqual(response.data['extraction_metadata']['method'], 'pdf_text')
-        self.assertEqual(response.data['extraction_metadata']['confidence'], 0.95)
-        self.assertIn('message', response.data)
-        self.assertIn('courses', response.data)
-        self.assertIn('total_courses', response.data)
-        self.assertIn('upload_type', response.data)
-        self.assertIn('semester', response.data)
-        self.assertIn('school_year', response.data)
-        self.assertIn('idempotency', response.data)
 
-        metadata = response.data['extraction_metadata']
-        self.assertIn('failure_category', metadata)
-        self.assertIn('validator_errors', metadata)
-        self.assertIn('score_breakdown', metadata)
-        self.assertIn('request_id', metadata)
-        self.assertIn('idempotency_key', metadata)
-        self.assertIn('extraction_run_id', metadata)
-        self.assertIn('schema_version', metadata)
-        self.assertIn('score_version', metadata)
-        self.assertIn('rule_version', metadata)
-        self.assertIn('score_policy_upload_type', metadata)
+        with patch('threading.Thread') as mock_thread_class:
+            mock_thread = Mock()
+            mock_thread_class.return_value = mock_thread
+
+            response = self.client.post(
+                '/api/upload-cor/student/',
+                {'file': pdf_file},
+                format='multipart'
+            )
+
+        # Upload now returns 202 Accepted (async) instead of 201 Created (sync)
+        self.assertEqual(response.status_code, 202)
+        self.assertIn('job_id', response.data)
+        self.assertEqual(response.data['status'], 'processing')
+        self.assertIn('message', response.data)
+        mock_thread.start.assert_called_once()
 
     @patch('api.views.upload_views.ExtractionManager')
     def test_retry_response_preserves_legacy_keys_with_enhanced_metadata(self, mock_manager_class):
+        """Low-confidence student upload still returns 202 (quality rejection now async)."""
         mock_manager = Mock()
         mock_manager.extract_schedule.return_value = {
             'courses': [],
@@ -437,21 +427,21 @@ class ExtractionViewIntegrationTestCase(TestCase):
             b'fake pdf content',
             content_type='application/pdf'
         )
-        response = self.client.post(
-            '/api/upload-cor/student/',
-            {'file': pdf_file},
-            format='multipart'
-        )
 
-        self.assertEqual(response.status_code, 422)
-        self.assertIn('courses', response.data)
-        self.assertIn('total_courses', response.data)
-        self.assertIn('extraction_metadata', response.data)
+        with patch('threading.Thread') as mock_thread_class:
+            mock_thread = Mock()
+            mock_thread_class.return_value = mock_thread
 
-        metadata = response.data['extraction_metadata']
-        self.assertEqual(metadata['failure_category'], 'low_confidence')
-        self.assertIn('validator_errors', metadata)
-        self.assertIn('score_breakdown', metadata)
+            response = self.client.post(
+                '/api/upload-cor/student/',
+                {'file': pdf_file},
+                format='multipart'
+            )
+
+        # The sync ownership check won't reject on low confidence — it passes
+        # and hands off to the async thread which will fail internally.
+        self.assertEqual(response.status_code, 202)
+        self.assertIn('job_id', response.data)
 
 
 class PerformanceTestCase(TestCase):
@@ -488,3 +478,398 @@ class PerformanceTestCase(TestCase):
 
 
 # Run tests with: python manage.py test api.tests.test_extraction --verbosity=2
+
+
+class AsyncExtractionJobTestCase(TestCase):
+    """
+    Tests for the async extraction job lifecycle:
+    - Upload view returns 202 with job_id
+    - Polling endpoint returns correct shape for each status
+    - Ownership enforcement on polling endpoint
+    - run_extraction_job() sets status 'done' on success
+    - run_extraction_job() sets status 'failed' on exception (safety net)
+    - run_extraction_job() cleans up the temp file
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email='asynctest@example.com',
+            password='testpass123',
+            first_name='Async',
+            last_name='Tester',
+            student_number='2022-09999',
+        )
+        self.other_user = User.objects.create_user(
+            email='other@example.com',
+            password='testpass123',
+            first_name='Other',
+            last_name='User',
+            student_number='2022-88888',
+        )
+        self.client.force_authenticate(user=self.user)
+
+    # ------------------------------------------------------------------
+    # Upload view: returns 202
+    # ------------------------------------------------------------------
+
+    @patch('api.views.upload_views.run_extraction_job')
+    @patch('api.views.upload_views.ExtractionManager')
+    def test_student_upload_returns_202(self, mock_manager_class, mock_run_job):
+        """Student COR upload passes ownership check and returns 202 Accepted."""
+        mock_manager = Mock()
+        mock_manager.extract_schedule.return_value = {
+            'courses': [
+                {
+                    'subject_code': 'BSCS101',
+                    'subject_name': 'Programming',
+                    'start_time': '08:00AM',
+                    'end_time': '10:00AM',
+                    'day': 'M',
+                    'location': 'LR1',
+                }
+            ],
+            'extraction_method': 'pdf_text',
+            'confidence': 0.95,
+            'processing_time': 0.3,
+            'attempts': ['pdf_text'],
+            'student_number': '2022-09999',
+            'failure_category': 'none',
+            'validator_errors': [],
+            'score_breakdown': {},
+            'accepted': True,
+        }
+        mock_manager_class.return_value = mock_manager
+
+        # Prevent the real background thread from executing
+        mock_run_job.return_value = None
+
+        pdf_file = SimpleUploadedFile(
+            'test_cor.pdf', b'fake pdf content', content_type='application/pdf'
+        )
+
+        with patch('threading.Thread') as mock_thread_class:
+            mock_thread = Mock()
+            mock_thread_class.return_value = mock_thread
+
+            response = self.client.post(
+                '/api/upload-cor/student/',
+                {'file': pdf_file},
+                format='multipart',
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertIn('job_id', response.data)
+        self.assertEqual(response.data['status'], 'processing')
+        self.assertIn('message', response.data)
+        # Thread should have been started
+        mock_thread.start.assert_called_once()
+
+    @patch('api.views.upload_views.ExtractionManager')
+    def test_faculty_upload_returns_202_without_ownership_check(self, mock_manager_class):
+        """Faculty COR upload skips ownership check and returns 202 directly."""
+        # Mock should NOT be called for faculty (no sync extraction for ownership)
+        mock_manager = Mock()
+        mock_manager_class.return_value = mock_manager
+
+        pdf_file = SimpleUploadedFile(
+            'faculty_cor.pdf', b'fake faculty pdf', content_type='application/pdf'
+        )
+
+        self.client.force_authenticate(user=self.user)
+
+        with patch('threading.Thread') as mock_thread_class:
+            mock_thread = Mock()
+            mock_thread_class.return_value = mock_thread
+
+            response = self.client.post(
+                '/api/upload-cor/faculty/',
+                {'file': pdf_file},
+                format='multipart',
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertIn('job_id', response.data)
+        # ExtractionManager should NOT have been instantiated for faculty
+        mock_manager_class.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # Polling endpoint: status shapes
+    # ------------------------------------------------------------------
+
+    def _make_job(self, user=None, status='pending'):
+        from api.models import ExtractionJob
+        return ExtractionJob.objects.create(
+            user=user or self.user,
+            upload_type='student',
+            file_name='test.pdf',
+            status=status,
+        )
+
+    def test_poll_pending_returns_processing(self):
+        job = self._make_job(status='pending')
+        response = self.client.get(f'/api/extraction-jobs/{job.job_id}/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['status'], 'processing')
+        self.assertEqual(response.data['job_id'], str(job.job_id))
+
+    def test_poll_processing_returns_processing(self):
+        job = self._make_job(status='processing')
+        response = self.client.get(f'/api/extraction-jobs/{job.job_id}/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['status'], 'processing')
+
+    def test_poll_done_returns_courses(self):
+        from api.models import ExtractionJob
+        job = ExtractionJob.objects.create(
+            user=self.user,
+            upload_type='student',
+            file_name='test.pdf',
+            status='done',
+            courses=[{'subject_code': 'BSCS101', 'day': 'M', 'start_time': '08:00AM', 'end_time': '10:00AM'}],
+            confidence=0.95,
+            extraction_method='llm',
+        )
+        response = self.client.get(f'/api/extraction-jobs/{job.job_id}/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['status'], 'done')
+        self.assertEqual(response.data['total_courses'], 1)
+        self.assertIn('courses', response.data)
+        self.assertIn('confidence', response.data)
+
+    def test_poll_failed_returns_failure_info(self):
+        from api.models import ExtractionJob
+        job = ExtractionJob.objects.create(
+            user=self.user,
+            upload_type='student',
+            file_name='test.pdf',
+            status='failed',
+            failure_category='low_confidence',
+        )
+        response = self.client.get(f'/api/extraction-jobs/{job.job_id}/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['status'], 'failed')
+        self.assertIn('failure_category', response.data)
+        self.assertIn('message', response.data)
+        self.assertTrue(response.data.get('retryable', False))
+
+    def test_poll_another_users_job_returns_403(self):
+        job = self._make_job(user=self.other_user)
+        response = self.client.get(f'/api/extraction-jobs/{job.job_id}/')
+        self.assertEqual(response.status_code, 403)
+
+    def test_poll_nonexistent_job_returns_404(self):
+        import uuid
+        fake_id = uuid.uuid4()
+        response = self.client.get(f'/api/extraction-jobs/{fake_id}/')
+        self.assertEqual(response.status_code, 404)
+
+    # ------------------------------------------------------------------
+    # run_extraction_job: lifecycle
+    # ------------------------------------------------------------------
+
+    @patch('api.utils.extraction_manager._send_extraction_job_notification')
+    @patch('api.utils.extraction_manager._write_extraction_log_for_job')
+    @patch('api.utils.extraction_manager.ExtractionManager')
+    def test_run_extraction_job_success(self, mock_manager_class, mock_log, mock_notify):
+        """run_extraction_job() sets status=done and writes courses on success."""
+        import tempfile, os
+        from api.models import ExtractionJob
+        from api.utils.extraction_manager import run_extraction_job
+
+        # Create a real temp file
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as f:
+            f.write(b'fake pdf')
+            temp_path = f.name
+
+        job = ExtractionJob.objects.create(
+            user=self.user,
+            upload_type='student',
+            file_name='test.pdf',
+            status='pending',
+            _temp_file_path=temp_path,
+        )
+
+        mock_manager = Mock()
+        mock_manager.extract_schedule.return_value = {
+            'courses': [
+                {
+                    'subject_code': 'BSCS101',
+                    'subject_name': 'Programming',
+                    'start_time': '08:00AM',
+                    'end_time': '10:00AM',
+                    'day': 'M',
+                    'location': 'LR1',
+                }
+            ],
+            'extraction_method': 'pdf_text',
+            'confidence': 0.95,
+            'processing_time': 0.3,
+            'attempts': ['pdf_text'],
+            'student_number': '2022-09999',
+            'failure_category': 'none',
+            'validator_errors': [],
+            'score_breakdown': {},
+            'accepted': True,
+        }
+        mock_manager_class.return_value = mock_manager
+
+        run_extraction_job(job.job_id)
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, 'done')
+        self.assertEqual(len(job.courses), 1)
+        mock_notify.assert_called_once_with(job, success=True)
+        # Temp file should be cleaned up
+        self.assertFalse(os.path.exists(temp_path))
+
+    @patch('api.utils.extraction_manager._send_extraction_job_notification')
+    @patch('api.utils.extraction_manager.ExtractionManager')
+    def test_run_extraction_job_exception_sets_failed(self, mock_manager_class, mock_notify):
+        """
+        CRITICAL: run_extraction_job() must set status=failed on unhandled exception.
+        Without this, jobs would hang in 'processing' forever.
+        """
+        import tempfile, os
+        from api.models import ExtractionJob
+        from api.utils.extraction_manager import run_extraction_job
+
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as f:
+            f.write(b'fake pdf')
+            temp_path = f.name
+
+        job = ExtractionJob.objects.create(
+            user=self.user,
+            upload_type='student',
+            file_name='test.pdf',
+            status='pending',
+            _temp_file_path=temp_path,
+        )
+
+        # Simulate a catastrophic exception inside the extraction
+        mock_manager = Mock()
+        mock_manager.extract_schedule.side_effect = RuntimeError("Simulated crash")
+        mock_manager_class.return_value = mock_manager
+
+        run_extraction_job(job.job_id)  # Must not raise
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, 'failed')
+        self.assertEqual(job.failure_category, 'system_error')
+        self.assertIn('RuntimeError', job.error_message)
+        mock_notify.assert_called_once_with(job, success=False)
+
+    @patch('api.utils.extraction_manager._send_extraction_job_notification')
+    @patch('api.utils.extraction_manager.ExtractionManager')
+    def test_run_extraction_job_cleans_up_temp_file(self, mock_manager_class, mock_notify):
+        """run_extraction_job() always deletes the temp file, even on exception."""
+        import tempfile, os
+        from api.models import ExtractionJob
+        from api.utils.extraction_manager import run_extraction_job
+
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as f:
+            f.write(b'fake pdf')
+            temp_path = f.name
+
+        job = ExtractionJob.objects.create(
+            user=self.user,
+            upload_type='student',
+            file_name='test.pdf',
+            status='pending',
+            _temp_file_path=temp_path,
+        )
+
+        mock_manager = Mock()
+        mock_manager.extract_schedule.side_effect = RuntimeError("Crash")
+        mock_manager_class.return_value = mock_manager
+
+        run_extraction_job(job.job_id)
+
+        self.assertFalse(os.path.exists(temp_path), "Temp file should be deleted after job completes")
+
+    @patch('api.utils.extraction_manager._send_extraction_job_notification')
+    def test_recover_stale_processing_jobs_marks_old_jobs_failed(self, mock_notify):
+        """Stale recovery marks only old processing jobs as failed."""
+        from api.models import ExtractionJob
+        from api.utils.extraction_manager import recover_stale_processing_jobs
+
+        stale_job = ExtractionJob.objects.create(
+            user=self.user,
+            upload_type='student',
+            file_name='stale.pdf',
+            status='processing',
+        )
+        fresh_job = ExtractionJob.objects.create(
+            user=self.user,
+            upload_type='student',
+            file_name='fresh.pdf',
+            status='processing',
+        )
+
+        stale_time = timezone.now() - timedelta(minutes=10)
+        ExtractionJob.objects.filter(job_id=stale_job.job_id).update(updated_at=stale_time)
+
+        recovered = recover_stale_processing_jobs(max_age_minutes=5, notify_user=True)
+
+        self.assertEqual(recovered, 1)
+        stale_job.refresh_from_db()
+        fresh_job.refresh_from_db()
+
+        self.assertEqual(stale_job.status, 'failed')
+        self.assertEqual(stale_job.failure_category, 'system_error')
+        self.assertIn('stale-job recovery', stale_job.error_message)
+
+        self.assertEqual(fresh_job.status, 'processing')
+        mock_notify.assert_called_once_with(stale_job, success=False)
+
+    @patch('api.utils.extraction_manager._send_extraction_job_notification')
+    def test_recover_stale_processing_jobs_dry_run_does_not_modify(self, mock_notify):
+        """Dry-run reports stale jobs without modifying them."""
+        from api.models import ExtractionJob
+        from api.utils.extraction_manager import recover_stale_processing_jobs
+
+        job = ExtractionJob.objects.create(
+            user=self.user,
+            upload_type='student',
+            file_name='dryrun.pdf',
+            status='processing',
+        )
+        stale_time = timezone.now() - timedelta(minutes=10)
+        ExtractionJob.objects.filter(job_id=job.job_id).update(updated_at=stale_time)
+
+        recovered = recover_stale_processing_jobs(max_age_minutes=5, notify_user=True, dry_run=True)
+
+        self.assertEqual(recovered, 1)
+        job.refresh_from_db()
+        self.assertEqual(job.status, 'processing')
+        mock_notify.assert_not_called()
+
+    @patch('api.utils.extraction_manager._send_extraction_job_notification')
+    def test_recover_stale_processing_jobs_cleans_stale_temp_file(self, mock_notify):
+        """Stale recovery deletes leftover temp file from abandoned jobs."""
+        import tempfile
+        from api.models import ExtractionJob
+        from api.utils.extraction_manager import recover_stale_processing_jobs
+
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as f:
+            f.write(b'stale temp file')
+            temp_path = f.name
+
+        job = ExtractionJob.objects.create(
+            user=self.user,
+            upload_type='student',
+            file_name='stale-temp.pdf',
+            status='processing',
+            _temp_file_path=temp_path,
+        )
+        stale_time = timezone.now() - timedelta(minutes=10)
+        ExtractionJob.objects.filter(job_id=job.job_id).update(updated_at=stale_time)
+
+        recovered = recover_stale_processing_jobs(max_age_minutes=5, notify_user=False)
+
+        self.assertEqual(recovered, 1)
+        self.assertFalse(os.path.exists(temp_path))
+        job.refresh_from_db()
+        self.assertEqual(job._temp_file_path, '')
+        mock_notify.assert_not_called()
+

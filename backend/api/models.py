@@ -1,6 +1,9 @@
+import uuid
+
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.contrib.auth.base_user import BaseUserManager
+
 
 
 class CustomUserManager(BaseUserManager):
@@ -1486,3 +1489,180 @@ class IncidentReport(models.Model):
     def __str__(self):
         reporter_email = self.reporter.email if self.reporter else 'Unknown'
         return f"[{self.get_status_display()}] {reporter_email}: {self.description[:60]}"
+
+
+# ============================================
+# Async Extraction Job Model
+# ============================================
+
+class ExtractionJob(models.Model):
+    """
+    Tracks the lifecycle of an async COR extraction job.
+
+    When a user uploads a file the upload view immediately returns 202 Accepted
+    with a job_id, then launches a background thread that runs the full LLM →
+    regex → validate → save pipeline. The frontend polls
+    GET /api/extraction-jobs/{job_id}/ until the job reaches a terminal state.
+
+    States:
+        pending     — job row created, background thread not yet started
+        processing  — background thread running (LLM / regex in flight)
+        done        — extraction succeeded, courses saved
+        failed      — extraction rejected (low confidence, parse error, etc.)
+
+    On transition to done/failed a push notification is sent to the user.
+    """
+
+    STATUS_CHOICES = [
+        ('pending',    'Pending'),
+        ('processing', 'Processing'),
+        ('done',       'Done'),
+        ('failed',     'Failed'),
+    ]
+
+    UPLOAD_TYPE_CHOICES = [
+        ('student', 'Student'),
+        ('faculty', 'Faculty'),
+    ]
+
+    EXTRACTION_METHOD_CHOICES = [
+        ('llm',           'LLM Full Parser'),
+        ('llm_normalization', 'LLM Normalization (Stage A)'),
+        ('regex_fallback', 'Regex Fallback'),
+        ('none',          'None'),
+    ]
+
+    FAILURE_CATEGORY_CHOICES = [
+        ('low_confidence',     'Low Confidence'),
+        ('parse_error',        'Parse Error'),
+        ('no_text',            'No Text Extracted'),
+        ('metadata_mismatch',  'Metadata Mismatch'),
+        ('system_error',       'System Error'),
+        ('none',               'None'),
+    ]
+
+    # ── Identity ──────────────────────────────────────────────────────
+    job_id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        help_text="Public job identifier returned to the frontend on upload",
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='extraction_jobs',
+        help_text="The user who initiated this upload",
+    )
+
+    # ── Input metadata ────────────────────────────────────────────────
+    upload_type = models.CharField(
+        max_length=10,
+        choices=UPLOAD_TYPE_CHOICES,
+        help_text="Whether this is a student or faculty COR upload",
+    )
+    file_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text="Original filename of the uploaded document (for display)",
+    )
+
+    # ── Lifecycle ─────────────────────────────────────────────────────
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending',
+        help_text="Current state of the async extraction job",
+    )
+
+    # ── Extraction result ─────────────────────────────────────────────
+    extraction_method = models.CharField(
+        max_length=20,
+        choices=EXTRACTION_METHOD_CHOICES,
+        default='none',
+        blank=True,
+        help_text="Which parser produced the accepted result (llm / regex_fallback)",
+    )
+    courses = models.JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Extracted courses as a JSON list. "
+            "Each item mirrors the Course model fields. "
+            "Null while job is pending/processing."
+        ),
+    )
+    student_number = models.CharField(
+        max_length=20,
+        blank=True,
+        default='',
+        help_text="Student number extracted from the document (student COR only)",
+    )
+    semester = models.CharField(
+        max_length=20,
+        blank=True,
+        default='',
+        help_text="Semester extracted from the document (e.g. '1ST', '2ND')",
+    )
+    school_year = models.CharField(
+        max_length=20,
+        blank=True,
+        default='',
+        help_text="School year extracted from the document (e.g. '2025-2026')",
+    )
+    confidence = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Composite confidence score (0.0–1.0) of the accepted extraction",
+    )
+
+    # ── Failure details ───────────────────────────────────────────────
+    failure_category = models.CharField(
+        max_length=30,
+        choices=FAILURE_CATEGORY_CHOICES,
+        default='none',
+        blank=True,
+        help_text="Structured reason the job failed (populated on status='failed')",
+    )
+    error_message = models.TextField(
+        blank=True,
+        default='',
+        help_text="Internal error details (not shown to user, used for debugging)",
+    )
+
+    _temp_file_path = models.TextField(
+        blank=True,
+        default='',
+        help_text=(
+            "Absolute path to the temp file the background thread should process. "
+            "Cleared and file deleted after job reaches a terminal state."
+        ),
+    )
+
+    # ── Timestamps ────────────────────────────────────────────────────
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+    class Meta:
+        verbose_name = 'Extraction Job'
+        verbose_name_plural = 'Extraction Jobs'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'status'], name='api_extjob_user_status_idx'),
+            models.Index(fields=['status', '-created_at'], name='api_extjob_status_created_idx'),
+            models.Index(fields=['-created_at'], name='api_extjob_created_idx'),
+        ]
+
+    def __str__(self):
+        return (
+            f"[{self.get_status_display()}] "
+            f"{self.user_id} / {self.upload_type} — "
+            f"{str(self.job_id)[:8]}..."
+        )
+
+    @property
+    def is_terminal(self) -> bool:
+        """Return True if the job has reached a terminal state (done or failed)."""
+        return self.status in ('done', 'failed')

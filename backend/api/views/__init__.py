@@ -24,6 +24,11 @@ from .upload_views import (
     SubmitIncidentReportView,
 )
 
+# Extraction job polling view
+from .job_views import (
+    ExtractionJobStatusView,
+)
+
 # Schedule views
 from .schedule_views import (
     ScheduleListCreateView,

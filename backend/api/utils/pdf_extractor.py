@@ -227,13 +227,18 @@ class StudentPDFExtractor(BasePDFExtractor):
         re.IGNORECASE
     )
     
-    # Pattern for extracting student number from COR header
-    # Anchored to the line following the "Student Number" header
-    # Matches: "2022-01191", "2023-04795" (YYYY-NNNNN format)
-    STUDENT_NUMBER_PATTERN = re.compile(
-        r'Student\s+Number\s*\n.*?(\d{4}-\d{4,6})\s*$',
-        re.MULTILINE | re.IGNORECASE
+    # Two patterns to handle same-line and next-line student number layouts.
+    # Same-line:  "Student number 2022-01191"  (handwritten / simple OCR output)
+    # Next-line:  "Student Number\n... 2022-01191"  (typical digital COR)
+    STUDENT_NUMBER_SAME_LINE_PATTERN = re.compile(
+        r'Stu[a-z]?[do][a-z]?[e3]?n[a-z]?[t]?\s+[nN][u][m][bB][e3][r]\s+(\d{4}[\-–]\d{4,6})',
+        re.IGNORECASE
     )
+    STUDENT_NUMBER_NEXT_LINE_PATTERN = re.compile(
+        r'Stu[a-z]?[do][a-z]?[e3]?n[a-z]?[t]?\s+[nN][u][m][bB][e3][r]\s*[\n\r].*?(\d{4}[\-–]\d{4,6})',
+        re.MULTILINE | re.IGNORECASE | re.DOTALL
+    )
+    STUDENT_NUMBER_PATTERN = STUDENT_NUMBER_SAME_LINE_PATTERN  # backward compat
     
     def _extract_metadata(self, page) -> Dict:
         """
@@ -271,12 +276,32 @@ class StudentPDFExtractor(BasePDFExtractor):
             else:
                 logger.warning("Could not find semester/school year in COR header")
             
-            # Extract student number from the header area
-            # Pattern is anchored to the line after "Student Number" header
-            sn_match = self.STUDENT_NUMBER_PATTERN.search(text)
+            # Extract student number — try same-line then next-line layouts
+            student_number = ''
+
+            sn_match = self.STUDENT_NUMBER_SAME_LINE_PATTERN.search(text)
             if sn_match:
-                metadata['student_number'] = sn_match.group(1)
-                logger.info(f"Found student number: {metadata['student_number']}")
+                student_number = sn_match.group(1).replace('–', '-')
+                logger.info(f"Found student number (same-line): {student_number}")
+
+            if not student_number:
+                sn_match = self.STUDENT_NUMBER_NEXT_LINE_PATTERN.search(text)
+                if sn_match:
+                    student_number = sn_match.group(1).replace('–', '-')
+                    logger.info(f"Found student number (next-line): {student_number}")
+
+            if not student_number:
+                # Context-aware fallback: YYYY-NNNNN near 'number'
+                sn_fb = re.search(
+                    r'(?:number|num|no\.?)[^\n]{0,40}?(\d{4}[\-–]\d{4,6})',
+                    text, re.IGNORECASE,
+                )
+                if sn_fb:
+                    student_number = sn_fb.group(1).replace('–', '-')
+                    logger.info(f"Found student number (context fallback): {student_number}")
+
+            if student_number:
+                metadata['student_number'] = student_number
             else:
                 logger.warning("Could not find student number in COR header")
         
