@@ -69,3 +69,18 @@ class ExtractionValidatorsTestCase(TestCase):
         result = validate_candidates(courses)
         self.assertEqual(len(result.courses), 1)
         self.assertEqual(result.courses[0]["metadata"]["field_confidence"]["day"], 0.95)
+
+    def test_missing_day_is_soft_required(self):
+        result = validate_candidates([
+            {
+                "subject_code": "CC 102",
+                "day": "",
+                "start_time": "02:30PM",
+                "end_time": "04:00PM",
+                "location": "LR3",
+            }
+        ])
+
+        self.assertEqual(result.errors, [])
+        self.assertEqual(len(result.courses), 1)
+        self.assertEqual(result.courses[0]["day"], "")

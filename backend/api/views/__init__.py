@@ -147,6 +147,7 @@ from .admin_views import (
     AdminExtractionAnalyticsView,
     AdminExtractionChartView,
     AdminFailedExtractionListView,
+    AdminExtractionJobListView,
     AdminIncidentReportListView,
     AdminIncidentReportDetailView,
 )

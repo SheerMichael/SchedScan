@@ -70,6 +70,12 @@ export interface PollingCancelToken {
   isCancelled: boolean;
 }
 
+const isTerminalExtractionResult = (
+  result: ExtractionJobResult
+): result is ExtractionJobDoneResponse | ExtractionJobFailedResponse => {
+  return result.status === 'done' || result.status === 'failed';
+};
+
 export type ExtractionJobResult =
   | ExtractionJobDoneResponse
   | ExtractionJobFailedResponse
@@ -148,11 +154,27 @@ export const courseService = {
         };
       }
 
-      const response = await api.get(`/extraction-jobs/${jobId}/`);
-      const data = response.data as ExtractionJobResult;
+      try {
+        const response = await api.get(`/extraction-jobs/${jobId}/`);
+        const data = response.data as ExtractionJobResult;
 
-      if (data.status === 'done' || data.status === 'failed') {
-        return data;
+        if (isTerminalExtractionResult(data)) {
+          return data;
+        }
+      } catch (error: any) {
+        const isLastAttempt = attempt === maxAttempts - 1;
+
+        if (isLastAttempt) {
+          return {
+            job_id: jobId,
+            status: 'failed',
+            message:
+              error?.response?.data?.message ||
+              'Unable to check extraction status right now. Please try again shortly.',
+            failure_category: 'system_error',
+            retryable: true,
+          };
+        }
       }
     }
 

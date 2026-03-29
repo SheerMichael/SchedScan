@@ -72,8 +72,16 @@ DAY_CODE_EXPANSION = {
     'MTH': ['M', 'TH'],
     'TTH': ['T', 'TH'],
     'WS': ['W', 'S'],
+    'FS': ['F', 'S'],
+    'THS': ['TH', 'S'],
     # Three-day combinations
     'MWF': ['M', 'W', 'F'],
+    'MFS': ['M', 'F', 'S'],
+    'WFS': ['W', 'F', 'S'],
+    'TFS': ['T', 'F', 'S'],
+    'TTHS': ['T', 'TH', 'S'],   # Tue + Thu + Sat (seen on WMSU SUMMER COR)
+    'MTHS': ['M', 'TH', 'S'],
+    'MTTHS': ['M', 'T', 'TH', 'S'],
     # Four-day combinations
     'MTWTH': ['M', 'T', 'W', 'TH'],
     # Five-day combinations
@@ -142,7 +150,10 @@ class BaseCORExtractor(ABC):
     TIME_RANGE_PATTERN = re.compile(r'(\d{1,2}:\d{2}[AP]M)\s*-\s*(\d{1,2}:\d{2}[AP]M)', re.IGNORECASE)
     
     # Day pattern
-    DAY_PATTERN = re.compile(r'\b(SUN|SU|M|T|W|TH|F|S|TF|MW|MWF|MTH|TTH|WS|MTWTH|MTWTHF)\b', re.IGNORECASE)
+    DAY_PATTERN = re.compile(
+        r'\b(SUN|SU|MTWTHF|MTWTH|MTTHS|TTHS|MWF|MFS|WFS|TFS|THS|FS|TTH|TF|MW|MTH|WS|M|T|W|TH|F|S)\b',
+        re.IGNORECASE
+    )
     
     # Location pattern
     LOCATION_PATTERN = re.compile(
@@ -579,8 +590,8 @@ class StudentCORExtractor(BaseCORExtractor):
             if time_in_after:
                 subject_name = after_units[:time_in_after.start()].strip()
         
-        # Validate minimum required fields
-        if not subject_code or not start_time or not end_time or not day:
+        # Validate minimum required fields (day is soft — will be stored as '' if missing)
+        if not subject_code or not start_time or not end_time:
             return None
         
         return {

@@ -1,8 +1,8 @@
 # SchedScan: Schedule Extraction Pipeline — Implementation Reference
 
 > **Status:** Active development.
-> Last updated: 2026-03-25
-> Architecture: LLM-primary, async, regex fallback.
+> Last updated: 2026-03-29
+> Architecture: Vision-only LLM-primary, async, regex fallback.
 
 ---
 
@@ -14,9 +14,9 @@ The pipeline is designed around a single principle: LLMs are better at understan
 
 The flow is therefore:
 
-1. **Extract raw text** from the file (OCR or PDF).
-2. **LLM processes and understands** the extracted text — identifies student number, subjects, schedules, and locations.
-3. **Regex is the fallback** — only activates silently if the LLM is unavailable or fails.
+1. **Parse file visuals directly** using a vision-capable LLM (images and rendered PDF pages).
+2. **LLM extracts structure** — student number, subjects, schedules, and locations.
+3. **Regex fallback** activates only when vision output is low confidence or invalid.
 4. **Validate and save** — hard schema checks before any DB write.
 
 Processing runs **asynchronously**. The user gets an immediate response and continues using the app while the AI works in the background.
@@ -30,24 +30,24 @@ POST /api/upload-cor/{student|faculty}/
         │
         ▼
 ┌─────────────────────────────────┐
-│  Stage 0: Text Extraction       │
+│  Stage 0: Vision File Parse     │
 │                                 │
-│  PDF  → pdfplumber              │
-│  Image → Tesseract / pytesseract│
+│  PDF  → page render to images   │
+│  Image → direct image input     │
 │                                 │
-│  Output: raw_text (string)      │
+│  Output: courses + metadata     │
 └─────────────────────────────────┘
-        │
-        ▼
+  │
+  ▼
   202 Accepted ──────────────────────────► Frontend
   { job_id, status: "processing" }         (user continues working)
         │
         ▼ (background thread)
 ┌─────────────────────────────────┐
-│  Stage 1: LLM Full Parser       │  ← PRIMARY PROCESSOR
+│  Stage 1: Vision LLM Parser     │  ← PRIMARY PROCESSOR
 │  (Ollama on DigitalOcean)       │
 │                                 │
-│  Input:  raw_text + upload_type │
+│  Input:  file visuals + upload_type │
 │  Output:                        │
 │    - student_number             │
 │    - semester / school_year     │
@@ -57,13 +57,14 @@ POST /api/upload-cor/{student|faculty}/
 │        location                 │
 └─────────────────────────────────┘
         │                │
-        │ LLM success    │ LLM failed / timed out
+        │ LLM success    │ LLM failed / low confidence
         │                ▼
-        │       ┌─────────────────────────┐
-        │       │  Stage 1B: Regex Parser │  ← SILENT FALLBACK
-        │       │  (StudentCORExtractor / │
-        │       │   FacultyCORExtractor)  │
-        │       └─────────────────────────┘
+        │       ┌──────────────────────────────┐
+        │       │  Stage 1B: Fallback          │
+        │       │  regex parser                │
+        │       │  (StudentCORExtractor /      │
+        │       │   FacultyCORExtractor)       │
+        │       └──────────────────────────────┘
         │                │
         └────────────────┘
                 │
@@ -98,13 +99,13 @@ backend/
 ├── api/
 │   ├── utils/
 │   │   ├── extraction_manager.py       # Orchestrator — wires all stages, runs async
-│   │   ├── ocr.py                      # Tesseract OCR + StudentCORExtractor / FacultyCORExtractor (regex fallback)
-│   │   ├── pdf_extractor.py            # pdfplumber raw text extraction
+│   │   ├── ocr.py                      # Optional legacy OCR fallback path
+│   │   ├── pdf_extractor.py            # Optional legacy PDF text extraction fallback
 │   │   └── extraction/
 │   │       ├── orchestrator.py         # Routes by file type (PDF vs image)
 │   │       ├── profiler.py             # File type + template family detection
-│   │       ├── llm_normalizer.py       # parse_with_llm() ← PRIMARY parser
-│   │       │                           # normalize_with_llm() ← (legacy correction path)
+│   │       ├── llm_normalizer.py       # parse_document_with_llm_vision() ← PRIMARY parser
+│   │       │                           # parse_with_llm()/normalize_with_llm() retained as legacy helpers
 │   │       ├── normalizer.py           # normalize_candidates() — field normalisation
 │   │       ├── validators.py           # validate_candidates() — hard gate before DB write
 │   │       ├── scoring.py              # score_candidates() — composite confidence score
@@ -158,7 +159,6 @@ class ExtractionJob(models.Model):
 
 ```
 POST /api/upload-cor/student/
-└── extracts raw text immediately
 └── creates ExtractionJob(status='pending')
 └── launches threading.Thread(target=run_extraction_job, args=[job_id])
 └── returns 202 { job_id, status: "processing" }
@@ -186,16 +186,16 @@ When job transitions to `done` or `failed`, the backend sends a push notificatio
 
 ---
 
-## 5. LLM as Primary Parser — parse_with_llm()
+## 5. Vision LLM as Primary Parser — parse_document_with_llm_vision()
 
-This is the **main extraction function** called first on every upload.
+This is the **main extraction function** called first on every upload when vision mode is enabled.
 
 ### What the LLM is asked to do
 
 The prompt provides:
 - The upload type context (`STUDENT COR` or `FACULTY IDP`)
 - Format hints (what a formal PDF looks like vs a handwritten note)
-- The raw extracted text
+- The file image(s) as model input
 - Strict JSON schema to fill in
 
 The LLM must return:
@@ -220,31 +220,38 @@ The LLM must return:
 }
 ```
 
-Every response is **schema-validated** before use. Unknown keys → whole response discarded. On any failure (timeout, bad JSON, schema violation) → silently falls through to regex.
+Every response is **schema-validated** before use. Unknown keys are logged and ignored. On failure (timeout, bad JSON, schema violation), extraction falls through to regex fallback.
 
 ### LLM Safety Rules
 
 | Rule | Implementation |
 |---|---|
-| Prompt injection mitigation | Fixed system instructions in code, OCR text in labelled `RAW TEXT:` section below all instructions |
-| Schema enforcement | `ALLOWED_KEYS` whitelist — unknown keys discard the entire response |
+| Prompt injection mitigation | Fixed instruction template + strict response schema |
+| Schema enforcement | `ALLOWED_KEYS` whitelist and shape validation |
 | Hard timeout | `EXTRACTION_LLM_TIMEOUT_SECONDS` (currently 45s) |
-| Input bounding | `EXTRACTION_LLM_MAX_INPUT_CHARS` truncates OCR text |
+| Input bounding | `EXTRACTION_LLM_VISION_MAX_PAGES` limits PDF pages sent to model |
 | Fail closed | Timeout / bad JSON / schema fail → return `([], {}, telemetry)`, never raise |
-| Model pinning | `EXTRACTION_LLM_REQUIRE_PINNED_MODEL=True` rejects `:latest` tags |
+| Model pinning | `EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL=True` rejects `:latest` tags |
 
 ---
 
-## 6. Regex Fallback — When It Activates
+## 6. Fallback Policy — When It Activates
 
-Regex (`StudentCORExtractor` / `FacultyCORExtractor`) only runs when:
+Fallback path only runs when enabled and needed:
 
-- LLM request times out
-- LLM returns malformed JSON
-- LLM response fails schema validation
-- Ollama service is unreachable
+- Vision LLM request timed out
+- Vision LLM returned malformed JSON
+- Vision LLM response failed schema validation
+- Vision LLM score below retry threshold
+- Ollama vision model unavailable
 
-It is **entirely transparent** to the user — the fallback is tried automatically before returning a failure. The `extraction_method` field in the job result will be `regex_fallback` when this path was taken.
+Fallback chain:
+
+1. Regex parser (`StudentCORExtractor` / `FacultyCORExtractor`)
+
+In direct-file mode, OCR/pdfplumber are not required for normal success path.
+
+Fallback is transparent to users; method attribution is stored in `extraction_method` and `attempts` telemetry.
 
 ---
 
@@ -254,7 +261,8 @@ Runs after whichever parser produced output (LLM or regex). Failures populate `v
 
 | Rule | Detail |
 |---|---|
-| Required fields | `subject_code`, `day`, `start_time`, `end_time` |
+| Required fields | `subject_code`, `start_time`, `end_time` |
+| Day policy | Soft-required; missing day is accepted as empty string |
 | Day validity | One of `M, T, W, TH, F, S` only |
 | Time format | `HH:MMAM` / `HH:MMPM`; `start < end`; duration ≤ 8h |
 | Duplicates | `(subject_code, day, start_time)` — highest confidence kept |
@@ -287,14 +295,18 @@ Composite score computed after validation:
 
 | Setting | Value | Purpose |
 |---|---|---|
-| `EXTRACTION_LLM_NORMALIZATION_ENABLED` | `True` | Enables LLM normalizer (Stage A) |
-| `EXTRACTION_LLM_FULL_PARSE_ENABLED` | `True` | Enables LLM full parser (primary path) |
-| `EXTRACTION_LLM_MODEL_NAME` | `llama3.2:3b` | Ollama model |
+| `EXTRACTION_LLM_NORMALIZATION_ENABLED` | `True` | Master LLM gate (must be enabled for vision parsing) |
+| `EXTRACTION_LLM_VISION_PARSE_ENABLED` | `True` | Enables direct-file vision parser |
+| `EXTRACTION_LLM_DIRECT_FILE_PARSE_ENABLED` | `True` | Bypasses OCR/pdfplumber orchestration |
+| `EXTRACTION_LLM_VISION_MODEL_NAME` | `granite3.2-vision:2b` | Primary vision model |
+| `EXTRACTION_LLM_VISION_MAX_PAGES` | `2` | Limits rendered PDF pages sent to model |
+| `EXTRACTION_LLM_FULL_PARSE_ENABLED` | `False` | Legacy text parser flag (not used by runtime orchestration) |
+| `EXTRACTION_LLM_MODEL_NAME` | *(optional)* | Legacy text model config (not used by runtime orchestration) |
 | `EXTRACTION_LLM_BASE_URL` | `http://209.97.172.45:8080` | Ollama on DigitalOcean Droplet |
 | `EXTRACTION_LLM_API_KEY` | *(see update.md)* | nginx X-Api-Key auth |
 | `EXTRACTION_LLM_TIMEOUT_SECONDS` | `45` | Hard timeout per LLM call |
-| `EXTRACTION_LLM_MAX_INPUT_CHARS` | `6000` | Input truncation limit |
-| `EXTRACTION_LLM_REQUIRE_PINNED_MODEL` | `True` | Reject `:latest` tags |
+| `EXTRACTION_LLM_MAX_INPUT_CHARS` | `6000` | Legacy text-parser input bound (not used in runtime orchestration) |
+| `EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL` | `True` | Reject `:latest` tags for vision model |
 | `EXTRACTION_ACCEPT_THRESHOLD` | `0.85` | Minimum to accept & save |
 
 ---
@@ -352,11 +364,11 @@ Response (failed):      { "status": "failed", "failure_category": "low_confidenc
 
 | Failure | What happens | User sees |
 |---|---|---|
-| LLM timeout | Regex fallback runs automatically | Normal result (or retry if regex also fails) |
-| LLM bad JSON | Regex fallback runs automatically | Normal result (or retry) |
+| Vision LLM timeout | Regex fallback runs automatically | Normal result (or retry) |
+| Vision LLM bad JSON | Regex fallback runs automatically | Normal result (or retry) |
 | Regex also fails | Job → `failed`, push notification sent | "Couldn't read your schedule — please re-upload" |
 | Student number mismatch | 403 returned synchronously | Error before job is created |
-| Ollama Droplet down | Regex fallback for all jobs | No disruption (slower but correct) |
+| Ollama vision model down | Regex fallback path handles request | Slower but no hard outage |
 | Unexpected exception | Job → `failed`, error logged internally | "Something went wrong — please try again" |
 
 ---
@@ -373,7 +385,8 @@ Key test classes:
 
 | Class | What it covers |
 |---|---|
-| `ParseWithLLMTestCase` | `parse_with_llm()` — disabled, success, timeout, bad JSON, faculty type |
-| `LLMNormalizerTestCase` | `normalize_with_llm()` — schema, API key, timeout |
+| `ParseDocumentWithLLMVisionTestCase` | `parse_document_with_llm_vision()` — disabled, success, schema behavior |
+| `ParseWithLLMTestCase` | Legacy text parser helper coverage (retained for backward compatibility) |
+| `LLMNormalizerTestCase` | Legacy text normalizer helper coverage (schema, API key, timeout) |
 | `ExtractionManagerTestCase` | Orchestration, async job lifecycle |
 | `FacultyOCRDayRecoveryTestCase` | Regex fallback — OCR noise in day tokens |

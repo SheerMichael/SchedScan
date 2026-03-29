@@ -5,6 +5,7 @@ All endpoints (except AdminLoginView) require is_staff=True via IsAdminUser perm
 JWT tokens are issued from the existing simplejwt token infrastructure.
 """
 import logging
+import uuid
 from datetime import timedelta, date, datetime, time
 
 from django.contrib.auth import authenticate, get_user_model
@@ -22,6 +23,7 @@ from ..models import (
     AdminAuditLog,
     ClassEnrollment,
     Course,
+    ExtractionJob,
     ExtractionLog,
     Holiday,
     IncidentReport,
@@ -1228,6 +1230,131 @@ class AdminFailedExtractionListView(APIView):
             "page_size": page_size,
             "total_pages": max(1, -(-total // page_size)),
             "results": results,
+        })
+
+
+class AdminExtractionJobListView(APIView):
+    """
+    GET /api/admin/extraction/jobs/
+
+    Paginated list of extraction jobs for queue visibility and triage.
+
+    Query params:
+        - search     : job_id, file_name, or user email contains
+        - status     : pending | processing | done | failed
+        - upload_type: student | faculty
+        - user_id    : integer user id
+        - date_from  : ISO date (YYYY-MM-DD), inclusive
+        - date_to    : ISO date (YYYY-MM-DD), inclusive
+        - page       : int (default 1)
+        - page_size  : int (default 20, max 100)
+    """
+
+    permission_classes = [IsAdminUser]
+
+    _allowed_statuses = {'pending', 'processing', 'done', 'failed'}
+    _allowed_upload_types = {'student', 'faculty'}
+
+    def get(self, request):
+        qs = ExtractionJob.objects.select_related('user').order_by('-created_at')
+
+        search = request.query_params.get('search', '').strip()
+        status_filter = request.query_params.get('status', '').strip().lower()
+        upload_type = request.query_params.get('upload_type', '').strip().lower()
+        user_id = request.query_params.get('user_id', '').strip()
+        date_from = request.query_params.get('date_from', '').strip()
+        date_to = request.query_params.get('date_to', '').strip()
+
+        if status_filter in self._allowed_statuses:
+            qs = qs.filter(status=status_filter)
+
+        if upload_type in self._allowed_upload_types:
+            qs = qs.filter(upload_type=upload_type)
+
+        if user_id:
+            try:
+                qs = qs.filter(user_id=int(user_id))
+            except (ValueError, TypeError):
+                pass
+
+        if search:
+            search_filter = (
+                Q(file_name__icontains=search)
+                | Q(user__email__icontains=search)
+            )
+            try:
+                parsed_job_id = uuid.UUID(search)
+                search_filter = search_filter | Q(job_id=parsed_job_id)
+            except (ValueError, TypeError):
+                pass
+            qs = qs.filter(search_filter)
+
+        tz = timezone.get_current_timezone()
+        if date_from:
+            try:
+                start_date = datetime.strptime(date_from, "%Y-%m-%d").date()
+                start_dt = timezone.make_aware(datetime.combine(start_date, time.min), tz)
+                qs = qs.filter(created_at__gte=start_dt)
+            except ValueError:
+                pass
+
+        if date_to:
+            try:
+                end_date = datetime.strptime(date_to, "%Y-%m-%d").date()
+                end_dt = timezone.make_aware(datetime.combine(end_date + timedelta(days=1), time.min), tz)
+                qs = qs.filter(created_at__lt=end_dt)
+            except ValueError:
+                pass
+
+        # Pagination
+        try:
+            page = max(1, int(request.query_params.get('page', 1)))
+            page_size = min(100, max(1, int(request.query_params.get('page_size', 20))))
+        except (ValueError, TypeError):
+            page, page_size = 1, 20
+
+        total = qs.count()
+        start = (page - 1) * page_size
+        jobs = list(qs[start: start + page_size])
+
+        # Breakdown should reflect the filtered query, before pagination.
+        breakdown = {
+            'pending': qs.filter(status='pending').count(),
+            'processing': qs.filter(status='processing').count(),
+            'done': qs.filter(status='done').count(),
+            'failed': qs.filter(status='failed').count(),
+        }
+
+        results = []
+        for job in jobs:
+            duration_seconds = None
+            if job.created_at and job.updated_at:
+                duration_seconds = round((job.updated_at - job.created_at).total_seconds(), 3)
+
+            results.append({
+                'job_id': str(job.job_id),
+                'user_id': job.user_id,
+                'user_email': job.user.email if job.user else None,
+                'upload_type': job.upload_type,
+                'status': job.status,
+                'file_name': job.file_name,
+                'extraction_method': job.extraction_method,
+                'confidence': job.confidence,
+                'failure_category': job.failure_category,
+                'error_message': job.error_message,
+                'total_courses': len(job.courses or []),
+                'created_at': job.created_at,
+                'updated_at': job.updated_at,
+                'duration_seconds': duration_seconds,
+            })
+
+        return Response({
+            'count': total,
+            'page': page,
+            'page_size': page_size,
+            'total_pages': max(1, -(-total // page_size)),
+            'status_breakdown': breakdown,
+            'results': results,
         })
 
 

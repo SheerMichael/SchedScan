@@ -9,6 +9,10 @@ DAY_PATTERN = re.compile(r"M|TH|T|W|F|S")
 TIME_FORMAT = "%I:%M%p"
 SUBJECT_CODE_ALLOWED = re.compile(r"^[A-Z0-9\-\s]{1,50}$")
 
+# Sentinel used when no day token is present (handwritten/informal COR documents
+# often omit the day column entirely).
+_DAY_ABSENT = ''
+
 
 def _parse_time(value: str) -> datetime:
     return datetime.strptime(value.strip().upper(), TIME_FORMAT)
@@ -68,9 +72,6 @@ def validate_candidates(courses: List[Dict[str, Any]], max_duration_hours: int =
         if not end_time_raw:
             errors.append(f"Course[{idx}] missing required field: end_time")
             continue
-        if not day_raw:
-            errors.append(f"Course[{idx}] missing required field: day")
-            continue
 
         if not SUBJECT_CODE_ALLOWED.match(subject_code):
             errors.append(f"Course[{idx}] invalid subject_code format: {subject_code}")
@@ -93,6 +94,32 @@ def validate_candidates(courses: List[Dict[str, Any]], max_duration_hours: int =
                 continue
         except ValueError:
             errors.append(f"Course[{idx}] invalid time format (expected HH:MMPM): {start_time_raw}-{end_time_raw}")
+            continue
+
+        # ── Day field (soft-required) ─────────────────────────────────────
+        # An empty day is accepted — it means the schedule day is not visible
+        # in the source document (common with handwritten/informal COR images).
+        # The course is stored with day='' rather than being dropped entirely.
+        if not day_raw:
+            # No day token — store the course as a single TBD row
+            normalized_course = {
+                **course,
+                "subject_code": subject_code,
+                "start_time": _normalize_time(start_time_raw),
+                "end_time": _normalize_time(end_time_raw),
+                "day": _DAY_ABSENT,
+                "location": location,
+            }
+            dedupe_key = (
+                normalized_course.get("subject_code", ""),
+                _DAY_ABSENT,
+                normalized_course.get("start_time", ""),
+                normalized_course.get("end_time", ""),
+                normalized_course.get("location", ""),
+            )
+            existing = dedupe.get(dedupe_key)
+            if not existing or _course_confidence(normalized_course) >= _course_confidence(existing):
+                dedupe[dedupe_key] = normalized_course
             continue
 
         day_tokens = _expand_days(day_raw)

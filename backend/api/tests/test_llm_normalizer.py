@@ -1,10 +1,16 @@
 import json
+import os
+import tempfile
 from unittest.mock import Mock, patch
 
 import requests
 from django.test import SimpleTestCase, override_settings
 
-from api.utils.extraction.llm_normalizer import normalize_with_llm, parse_with_llm
+from api.utils.extraction.llm_normalizer import (
+    normalize_with_llm,
+    parse_document_with_llm_vision,
+    parse_with_llm,
+)
 
 
 class LLMNormalizerTestCase(SimpleTestCase):
@@ -74,11 +80,17 @@ class LLMNormalizerTestCase(SimpleTestCase):
         EXTRACTION_LLM_MODEL_NAME='llama3.2:3b',
     )
     @patch('api.utils.extraction.llm_normalizer.requests.post')
-    def test_unknown_keys_fail_closed(self, mock_post):
+    def test_unknown_keys_are_ignored(self, mock_post):
         mock_response = Mock()
         mock_response.raise_for_status.return_value = None
         mock_response.json.return_value = {
-            'response': '{"courses": [{"subject_code": "CS101"}], "hacked": true}'
+            'response': (
+                '{"courses": ['
+                '{"subject_code": "CS101", "subject_name": "Intro to CS", '
+                '"day": "M", "start_time": "08:00AM", '
+                '"end_time": "09:00AM", "location": "R1"}'
+                '], "hacked": true}'
+            )
         }
         mock_post.return_value = mock_response
 
@@ -87,9 +99,10 @@ class LLMNormalizerTestCase(SimpleTestCase):
             seed_courses=self.seed_courses,
         )
 
-        self.assertEqual(courses, self.seed_courses)
+        self.assertEqual(len(courses), 1)
+        self.assertEqual(courses[0]['subject_code'], 'CS101')
         self.assertTrue(telemetry['llm_used'])
-        self.assertFalse(telemetry['llm_parse_success'])
+        self.assertTrue(telemetry['llm_parse_success'])
 
     @override_settings(
         EXTRACTION_LLM_NORMALIZATION_ENABLED=True,
@@ -322,18 +335,39 @@ class ParseWithLLMTestCase(SimpleTestCase):
 
     @override_settings(**FULL_PARSE_SETTINGS)
     @patch('api.utils.extraction.llm_normalizer.requests.post')
-    def test_unknown_top_level_keys_fail_closed(self, mock_post):
-        """parse_with_llm rejects response with unexpected top-level keys."""
-        bad = json.dumps({'courses': [], 'doc_metadata': {}, 'injected': True})
-        mock_post.return_value = self._make_mock_response(bad)
+    def test_unknown_top_level_keys_logs_and_continues(self, mock_post):
+        """parse_with_llm logs unknown top-level keys but still processes valid courses.
+
+        Policy change (Fix 4): unknown extra keys are tolerated — the LLM may emit
+        harmless metadata keys like 'notes' or 'summary'. Discarding the entire response
+        for one unexpected key was too aggressive and caused real extractions to fail.
+        """
+        # Response has a valid 'courses' list plus an unexpected 'injected' key
+        response_with_extra_key = json.dumps({
+            'courses': [
+                {
+                    'subject_code': 'OS',
+                    'subject_name': '',
+                    'day': 'M',
+                    'start_time': '01:00PM',
+                    'end_time': '03:00PM',
+                    'location': 'LR1',
+                }
+            ],
+            'doc_metadata': {'student_number': '2022-01191', 'semester': '1ST', 'school_year': '2025-2026'},
+            'injected': True,   # ← unknown key — should be ignored, not fatal
+        })
+        mock_post.return_value = self._make_mock_response(response_with_extra_key)
 
         courses, meta, telemetry = parse_with_llm(
             raw_text='some raw text',
             upload_type='student',
         )
 
-        self.assertEqual(courses, [])
-        self.assertFalse(telemetry['llm_parse_success'])
+        # The valid course data must still be extracted
+        self.assertTrue(telemetry['llm_parse_success'])
+        self.assertEqual(len(courses), 1)
+        self.assertEqual(courses[0]['subject_code'], 'OS')
 
     @override_settings(**FULL_PARSE_SETTINGS)
     @patch('api.utils.extraction.llm_normalizer.requests.post')
@@ -365,4 +399,116 @@ class ParseWithLLMTestCase(SimpleTestCase):
         # Verify the prompt contained 'FACULTY'
         sent_prompt = mock_post.call_args.kwargs.get('json', {}).get('prompt', '')
         self.assertIn('FACULTY', sent_prompt)
+
+class NormalizeWithLLMUnknownKeyToleranceTestCase(SimpleTestCase):
+    @override_settings(
+        EXTRACTION_LLM_NORMALIZATION_ENABLED=True,
+        EXTRACTION_LLM_MODEL_NAME='llama3.2:3b',
+        EXTRACTION_LLM_BASE_URL='http://localhost:11434',
+        EXTRACTION_LLM_TIMEOUT_SECONDS=2,
+        EXTRACTION_LLM_REQUIRE_PINNED_MODEL=True,
+        EXTRACTION_LLM_REQUIRE_MODEL_DIGEST=False,
+        EXTRACTION_LLM_MODEL_DIGEST='',
+    )
+    @patch('api.utils.extraction.llm_normalizer.requests.post')
+    @patch('api.utils.extraction.llm_normalizer.requests.get')
+    def test_unknown_top_level_keys_are_ignored(self, mock_get, mock_post):
+        mock_get.return_value = Mock(status_code=200)
+        mock_get.return_value.raise_for_status = Mock()
+        mock_get.return_value.json.return_value = {
+            'models': [{'name': 'llama3.2:3b', 'digest': 'abc'}]
+        }
+
+        payload = {
+            'courses': [
+                {
+                    'subject_code': 'OS',
+                    'subject_name': '',
+                    'day': '',
+                    'start_time': '01:00PM',
+                    'end_time': '03:00PM',
+                    'location': 'LR1',
+                }
+            ],
+            'notes': 'extra key from model',
+        }
+        mock_post.return_value = Mock(status_code=200)
+        mock_post.return_value.raise_for_status = Mock()
+        mock_post.return_value.json.return_value = {'response': json.dumps(payload)}
+
+        courses, telemetry = normalize_with_llm(
+            extracted_text='OS 1:00 pm - 3:00 pm LR1',
+            seed_courses=[],
+        )
+
+        self.assertTrue(telemetry['llm_parse_success'])
+        self.assertEqual(len(courses), 1)
+        self.assertEqual(courses[0]['subject_code'], 'OS')
+
+
+class ParseDocumentWithLLMVisionTestCase(SimpleTestCase):
+    @override_settings(
+        EXTRACTION_LLM_VISION_PARSE_ENABLED=False,
+        EXTRACTION_LLM_NORMALIZATION_ENABLED=True,
+        EXTRACTION_LLM_MODEL_NAME='granite3.2-vision:2b',
+    )
+    def test_disabled_flag_returns_empty(self):
+        courses, meta, telemetry = parse_document_with_llm_vision(
+            file_path='/tmp/does-not-matter.png',
+            upload_type='student',
+        )
+        self.assertEqual(courses, [])
+        self.assertFalse(telemetry['llm_used'])
+        self.assertFalse(telemetry['llm_parse_success'])
+
+    @override_settings(
+        EXTRACTION_LLM_VISION_PARSE_ENABLED=True,
+        EXTRACTION_LLM_NORMALIZATION_ENABLED=True,
+        EXTRACTION_LLM_MODEL_NAME='granite3.2-vision:2b',
+        EXTRACTION_LLM_VISION_MODEL_NAME='granite3.2-vision:2b',
+        EXTRACTION_LLM_REQUIRE_PINNED_MODEL=False,
+        EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL=False,
+    )
+    @patch('api.utils.extraction.llm_normalizer.requests.post')
+    def test_success_parses_image_document(self, mock_post):
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+            tmp.write(b'fake-image-bytes')
+            tmp_path = tmp.name
+
+        try:
+            payload = json.dumps({
+                'doc_metadata': {
+                    'student_number': '2022-01191',
+                    'semester': '1ST',
+                    'school_year': '2025-2026',
+                },
+                'courses': [
+                    {
+                        'subject_code': 'OS',
+                        'subject_name': '',
+                        'day': '',
+                        'start_time': '01:00PM',
+                        'end_time': '03:00PM',
+                        'location': 'LR1',
+                    }
+                ],
+            })
+            mock_post.return_value = Mock(status_code=200)
+            mock_post.return_value.raise_for_status = Mock()
+            mock_post.return_value.json.return_value = {'response': payload}
+
+            courses, meta, telemetry = parse_document_with_llm_vision(
+                file_path=tmp_path,
+                upload_type='student',
+            )
+
+            self.assertTrue(telemetry['llm_used'])
+            self.assertTrue(telemetry['llm_parse_success'])
+            self.assertEqual(len(courses), 1)
+            self.assertEqual(meta['student_number'], '2022-01191')
+            sent_payload = mock_post.call_args.kwargs.get('json', {})
+            self.assertEqual(sent_payload.get('model'), 'granite3.2-vision:2b')
+            self.assertTrue(bool(sent_payload.get('images')))
+        finally:
+            os.unlink(tmp_path)
 

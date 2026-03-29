@@ -335,9 +335,8 @@ ENABLE_SERVER_CLASS_REMINDERS = os.getenv('ENABLE_SERVER_CLASS_REMINDERS', 'Fals
 # Extraction pipeline flags (Phase 1)
 EXTRACTION_V2_ENABLED = os.getenv('EXTRACTION_V2_ENABLED', 'True') == 'True'
 EXTRACTION_LLM_NORMALIZATION_ENABLED = os.getenv('EXTRACTION_LLM_NORMALIZATION_ENABLED', 'False') == 'True'
-# When True, Ollama is promoted to a first-class parser: if regex yields no courses
-# (or fewer than the retry threshold), the LLM parses raw OCR text directly.
-# Requires EXTRACTION_LLM_NORMALIZATION_ENABLED=True and a running Ollama model.
+# Legacy text-LLM full-parse flag. Runtime orchestration is vision-only; this
+# is retained only for backward compatibility and isolated testing.
 EXTRACTION_LLM_FULL_PARSE_ENABLED = os.getenv('EXTRACTION_LLM_FULL_PARSE_ENABLED', 'False') == 'True'
 EXTRACTION_ACCEPT_THRESHOLD = float(os.getenv('EXTRACTION_ACCEPT_THRESHOLD', '0.85'))
 EXTRACTION_RETRY_THRESHOLD = float(os.getenv('EXTRACTION_RETRY_THRESHOLD', '0.60'))
@@ -348,9 +347,17 @@ EXTRACTION_SCORE_VERSION = os.getenv('EXTRACTION_SCORE_VERSION', 'v1')
 EXTRACTION_RULE_VERSION = os.getenv('EXTRACTION_RULE_VERSION', 'v1')
 EXTRACTION_LLM_MODEL_NAME = os.getenv('EXTRACTION_LLM_MODEL_NAME', '')
 EXTRACTION_LLM_MODEL_DIGEST = os.getenv('EXTRACTION_LLM_MODEL_DIGEST', '')
+EXTRACTION_LLM_VISION_PARSE_ENABLED = os.getenv('EXTRACTION_LLM_VISION_PARSE_ENABLED', 'False') == 'True'
+EXTRACTION_LLM_DIRECT_FILE_PARSE_ENABLED = os.getenv('EXTRACTION_LLM_DIRECT_FILE_PARSE_ENABLED', 'False') == 'True'
+EXTRACTION_LLM_VISION_MODEL_NAME = os.getenv('EXTRACTION_LLM_VISION_MODEL_NAME', '')
+EXTRACTION_LLM_VISION_MODEL_DIGEST = os.getenv('EXTRACTION_LLM_VISION_MODEL_DIGEST', '')
+EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL = os.getenv('EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL', 'True') == 'True'
+EXTRACTION_LLM_VISION_REQUIRE_MODEL_DIGEST = os.getenv('EXTRACTION_LLM_VISION_REQUIRE_MODEL_DIGEST', 'False') == 'True'
+EXTRACTION_LLM_VISION_MAX_PAGES = int(os.getenv('EXTRACTION_LLM_VISION_MAX_PAGES', '2'))
 EXTRACTION_LLM_BASE_URL = os.getenv('EXTRACTION_LLM_BASE_URL', 'http://127.0.0.1:11434')
 EXTRACTION_LLM_TIMEOUT_SECONDS = int(os.getenv('EXTRACTION_LLM_TIMEOUT_SECONDS', '12'))
 EXTRACTION_LLM_MAX_INPUT_CHARS = int(os.getenv('EXTRACTION_LLM_MAX_INPUT_CHARS', '6000'))
+# Legacy text-model settings kept for backward compatibility.
 EXTRACTION_LLM_REQUIRE_PINNED_MODEL = os.getenv('EXTRACTION_LLM_REQUIRE_PINNED_MODEL', 'True') == 'True'
 EXTRACTION_LLM_REQUIRE_MODEL_DIGEST = os.getenv('EXTRACTION_LLM_REQUIRE_MODEL_DIGEST', 'False') == 'True'
 EXTRACTION_LLM_STARTUP_CHECK_ENABLED = os.getenv('EXTRACTION_LLM_STARTUP_CHECK_ENABLED', 'False') == 'True'
@@ -367,6 +374,9 @@ EXTRACTION_LLM_API_KEY = os.getenv('EXTRACTION_LLM_API_KEY', '')
 # Optional override for parser priors used by composite confidence scoring.
 EXTRACTION_PARSER_RELIABILITY_PRIOR = {
     'pdf_text': float(os.getenv('EXTRACTION_PRIOR_PDF_TEXT', '0.92')),
+    'llm_vision_parse': float(os.getenv('EXTRACTION_PRIOR_LLM_VISION_PARSE', '0.93')),
+    'llm_full_parse': float(os.getenv('EXTRACTION_PRIOR_LLM_FULL_PARSE', '0.90')),
+    'llm_normalize': float(os.getenv('EXTRACTION_PRIOR_LLM_NORMALIZE', '0.85')),
     'ocr': float(os.getenv('EXTRACTION_PRIOR_OCR', '0.74')),
     'ocr_fallback': float(os.getenv('EXTRACTION_PRIOR_OCR_FALLBACK', '0.68')),
     'pdf_text_only': float(os.getenv('EXTRACTION_PRIOR_PDF_TEXT_ONLY', '0.60')),

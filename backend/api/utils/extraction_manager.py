@@ -24,7 +24,9 @@ from .extraction import (
     validate_candidates,
 )
 from .extraction.fallbacks import should_use_fallback
-from .extraction.llm_normalizer import normalize_with_llm, parse_with_llm
+from .extraction.llm_normalizer import (
+    parse_document_with_llm_vision,
+)
 
 # Try to import OCR module - uses pytesseract (lightweight)
 try:
@@ -83,7 +85,91 @@ class ExtractionManager:
                 return float(scoped)
         return float(getattr(settings, 'EXTRACTION_RETRY_THRESHOLD', 0.60))
 
-    def _finalize_result(self, result: Dict, attempts: List[str], upload_type: str) -> Dict:
+    def _finalize_result(
+        self,
+        result: Dict,
+        attempts: List[str],
+        upload_type: str,
+        source_file_path: str = '',
+    ) -> Dict:
+        """
+        Vision-first orchestration (vision LLM is primary, regex is fallback):
+
+        Stage 0: Vision direct-file parser (primary).
+            - Runs first on every upload when vision is enabled.
+            - On success + score >= accept_threshold: early return.
+            - On failure/low-confidence: keep as candidate and continue.
+
+        Stage 1: Regex extraction scoring.
+            - Scores whatever regex/OCR extraction produced.
+
+        Stage 2: Best-candidate arbitration for low-confidence cases.
+            - If both regex and vision are below threshold, keep the higher score.
+        """
+        accept_threshold = self._accept_threshold(upload_type)
+        retry_threshold = self._retry_threshold(upload_type)
+
+        llm_used = False
+        llm_parse_success = False
+
+        _vision_stage_result = None
+
+        # ====================================================================
+        # Stage 0: Vision direct-file parser (optional, primary when enabled)
+        # ====================================================================
+        if source_file_path:
+            v_courses, v_meta, v_telemetry = parse_document_with_llm_vision(
+                file_path=source_file_path,
+                upload_type=upload_type,
+            )
+            llm_used = llm_used or bool(v_telemetry.get('llm_used', False))
+
+            if v_telemetry.get('llm_parse_success') and v_courses:
+                llm_parse_success = True
+                v_attempts = attempts + ['llm_vision_parse']
+                v_validation = validate_candidates(normalize_candidates(v_courses))
+                v_score = score_candidates(
+                    v_validation.courses,
+                    v_validation.errors,
+                    v_attempts,
+                    upload_type=upload_type,
+                )
+
+                if v_score.confidence >= accept_threshold:
+                    logger.info(
+                        'Stage 0 (LLM vision) succeeded: %d courses, confidence=%.2f',
+                        len(v_validation.courses), v_score.confidence,
+                    )
+                    for key in ('student_number', 'semester', 'school_year'):
+                        if v_meta.get(key):
+                            result[key] = v_meta[key]
+                    attempts[:] = v_attempts
+                    result['extraction_method'] = 'llm_vision_parse'
+                    result['courses'] = v_validation.courses
+                    result['confidence'] = v_score.confidence
+                    result['validator_errors'] = v_validation.errors
+                    result['score_breakdown'] = v_score.breakdown
+                    result['failure_category'] = 'none'
+                    result['llm_used'] = llm_used
+                    result['llm_parse_success'] = True
+                    result['score_policy_upload_type'] = (upload_type or '').lower() or 'student'
+                    result['schema_version'] = str(getattr(settings, 'EXTRACTION_SCHEMA_VERSION', 'v1'))
+                    result['score_version'] = str(getattr(settings, 'EXTRACTION_SCORE_VERSION', 'v1'))
+                    result['rule_version'] = str(getattr(settings, 'EXTRACTION_RULE_VERSION', 'v1'))
+                    result['accepted'] = True
+                    return result
+
+                _vision_stage_result = {
+                    'courses': v_validation.courses,
+                    'score': v_score,
+                    'validation': v_validation,
+                    'meta': v_meta,
+                    'attempts': v_attempts,
+                }
+
+        # ====================================================================
+        # Stage 1: Score regex/OCR output
+        # ====================================================================
         normalized_courses = normalize_candidates(result.get('courses', []))
         validation = validate_candidates(normalized_courses)
         score = score_candidates(
@@ -92,70 +178,34 @@ class ExtractionManager:
             attempts,
             upload_type=upload_type,
         )
-        llm_used = False
-        llm_parse_success = False
 
-        accept_threshold = self._accept_threshold(upload_type)
-        retry_threshold = self._retry_threshold(upload_type)
+        # ====================================================================
+        # Stage 2: If below retry threshold, prefer best low-confidence candidate
+        # ====================================================================
+        if score.confidence < retry_threshold:
+            best_stage = None
+            if _vision_stage_result:
+                best_stage = _vision_stage_result
 
-        # --- Stage A: LLM normalizer (corrects low-confidence regex output) ---
-        if retry_threshold <= score.confidence < accept_threshold:
-            llm_courses, llm_meta = normalize_with_llm(
-                extracted_text=str(result.get('raw_text', '')),
-                seed_courses=validation.courses,
-            )
-            llm_used = bool(llm_meta.get('llm_used', False))
-            llm_parse_success = bool(llm_meta.get('llm_parse_success', False))
-            if llm_parse_success:
-                llm_attempts = attempts + ['llm_normalize']
-                validation = validate_candidates(normalize_candidates(llm_courses))
-                score = score_candidates(
-                    validation.courses,
-                    validation.errors,
-                    llm_attempts,
-                    upload_type=upload_type,
-                )
-                attempts[:] = llm_attempts
-
-        # --- Stage B: LLM full parse (regex found nothing / low confidence) ---
-        # Activated when: courses == [] OR confidence still below retry_threshold.
-        # The LLM reads raw OCR text directly, bypassing regex entirely.
-        should_full_parse = (
-            not validation.courses
-            or score.confidence < retry_threshold
-        )
-        if should_full_parse:
-            raw_text = str(result.get('raw_text', ''))
-            fp_courses, fp_meta, fp_telemetry = parse_with_llm(
-                raw_text=raw_text,
-                upload_type=upload_type,
-            )
-            llm_used = llm_used or bool(fp_telemetry.get('llm_used', False))
-            if fp_telemetry.get('llm_parse_success') and fp_courses:
-                llm_parse_success = True
-                fp_attempts = attempts + ['llm_full_parse']
-                validation = validate_candidates(normalize_candidates(fp_courses))
-                score = score_candidates(
-                    validation.courses,
-                    validation.errors,
-                    fp_attempts,
-                    upload_type=upload_type,
-                )
-                attempts[:] = fp_attempts
-                result['extraction_method'] = 'llm_full_parse'
-                # Merge doc metadata extracted by the LLM (overrides empty regex metadata)
-                for key in ('student_number', 'semester', 'school_year'):
-                    if fp_meta.get(key):
-                        result[key] = fp_meta[key]
+            if best_stage and best_stage['score'].confidence > score.confidence:
                 logger.info(
-                    'Stage B (LLM full-parse) succeeded: %d courses, method=llm_full_parse',
-                    len(validation.courses),
+                    'Stage 2: using vision stage result (%.2f) over regex (%.2f)',
+                    best_stage['score'].confidence, score.confidence,
                 )
-            else:
-                logger.info('Stage B (LLM full-parse) did not improve results — keeping regex output')
+                for key in ('student_number', 'semester', 'school_year'):
+                    if best_stage['meta'].get(key):
+                        result[key] = best_stage['meta'][key]
+                validation = best_stage['validation']
+                score = best_stage['score']
+                attempts[:] = best_stage['attempts']
+                result['extraction_method'] = attempts[-1] if attempts else 'none'
+                llm_parse_success = True
 
+        # ====================================================================
+        # Finalize result
+        # ====================================================================
         confidence = score.confidence
-        if validation.errors:
+        if validation.errors and not validation.courses:
             failure_category = 'parse_error'
         elif confidence < retry_threshold:
             failure_category = 'low_confidence'
@@ -200,18 +250,64 @@ class ExtractionManager:
         logger.info(f"Starting extraction for {upload_type} COR: {file_path}")
         logger.info(f"File extension: {file_extension}")
         
-        orchestrator = StagedExtractionOrchestrator(
-            extract_pdf=self._extract_from_pdf,
-            extract_image=self._extract_from_image,
-        )
-        result = orchestrator.run(
-            file_path=file_path,
-            upload_type=upload_type,
-            force_ocr_fallback=force_ocr_fallback,
-        )
-        attempts = result.get('attempts', [])
+        direct_file_parse_enabled = bool(getattr(settings, 'EXTRACTION_LLM_DIRECT_FILE_PARSE_ENABLED', False))
+        if direct_file_parse_enabled:
+            # Vision-first mode: bypass OCR/pdf text extraction entirely.
+            result = {
+                'courses': [],
+                'extraction_method': 'none',
+                'confidence': 0.0,
+                'semester': '',
+                'school_year': '',
+                'student_number': '',
+                'raw_text': '',
+            }
+            attempts = []
+        else:
+            orchestrator = StagedExtractionOrchestrator(
+                extract_pdf=self._extract_from_pdf,
+                extract_image=self._extract_from_image,
+            )
+            result = orchestrator.run(
+                file_path=file_path,
+                upload_type=upload_type,
+                force_ocr_fallback=force_ocr_fallback,
+            )
+            attempts = result.get('attempts', [])
 
-        result = self._finalize_result(result, attempts, upload_type)
+        # ── Fix 5: raw_text safety net ────────────────────────────────────────
+        # If the extraction path did not populate raw_text, try a direct pdfplumber
+        # read so the LLM primary parser always has text to work with.
+        if (
+            not direct_file_parse_enabled
+            and not result.get('raw_text')
+            and file_path.lower().endswith('.pdf')
+        ):
+            try:
+                import pdfplumber as _pdfplumber
+                with _pdfplumber.open(file_path) as _pdf:
+                    _pages_text = [
+                        page.extract_text() or ''
+                        for page in _pdf.pages
+                    ]
+                fallback_text = '\n'.join(t for t in _pages_text if t).strip()
+                if fallback_text:
+                    result['raw_text'] = fallback_text
+                    logger.info(
+                        'extract_schedule: raw_text populated via pdfplumber safety-net '
+                        '(%d chars)', len(fallback_text)
+                    )
+            except Exception as _exc:
+                logger.warning(
+                    'extract_schedule: raw_text safety-net pdfplumber read failed: %s', _exc
+                )
+
+        result = self._finalize_result(
+            result,
+            attempts,
+            upload_type,
+            source_file_path=file_path,
+        )
 
         # Add processing time
         processing_time = time.time() - start_time
@@ -456,6 +552,32 @@ def run_extraction_job(job_id) -> None:
         accepted = result.get('accepted', False)
 
         if accepted and courses_data:
+            # ── Fix 6: Student number ownership re-check (async path) ────────
+            # The sync ownership check happened before job creation. Re-verify
+            # that the student number the LLM extracted still matches the
+            # authenticated user before writing any Course rows.
+            if job.upload_type == 'student':
+                extracted_sn = (result.get('student_number', '') or '').strip()
+                user_sn = (getattr(job.user, 'student_number', '') or '').strip()
+                if extracted_sn and user_sn and extracted_sn != user_sn:
+                    logger.warning(
+                        "run_extraction_job: student number mismatch — "
+                        "extracted=%r, user=%r, job=%s. Failing job.",
+                        extracted_sn, user_sn, job_id,
+                    )
+                    job.status = 'failed'
+                    job.failure_category = 'ownership_mismatch'
+                    job.error_message = (
+                        f"Extracted student number ({extracted_sn}) does not match "
+                        f"the authenticated user ({user_sn})."
+                    )
+                    job.confidence = result.get('confidence')
+                    job._temp_file_path = ''
+                    job.save()
+                    _write_extraction_log_for_job(job, result, success=False)
+                    _send_extraction_job_notification(job, success=False)
+                    return
+
             # ── 3a. Success: write Course rows ───────────────────────────────
             from django.db import transaction
             with transaction.atomic():
@@ -472,10 +594,14 @@ def run_extraction_job(job_id) -> None:
 
             # Determine extraction_method for job record
             raw_method = result.get('extraction_method', 'none')
-            if 'llm_full_parse' in result.get('attempts', []) or raw_method == 'llm_full_parse':
+            if (
+                'llm_vision_parse' in result.get('attempts', [])
+                or raw_method == 'llm_vision_parse'
+                or 'llm_full_parse' in result.get('attempts', [])
+                or raw_method == 'llm_full_parse'
+                or 'llm_normalize' in result.get('attempts', [])
+            ):
                 job_method = 'llm'
-            elif 'llm_normalize' in result.get('attempts', []):
-                job_method = 'llm_normalization'
             else:
                 job_method = 'regex_fallback' if 'ocr_fallback' in result.get('attempts', []) else 'none'
 

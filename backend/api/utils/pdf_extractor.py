@@ -29,8 +29,17 @@ DAY_CODE_EXPANSION = {
     'MW': ['M', 'W'],
     'MTH': ['M', 'TH'],
     'TTH': ['T', 'TH'],
+    'WS': ['W', 'S'],
+    'FS': ['F', 'S'],
+    'THS': ['TH', 'S'],
     # Three-day combinations
     'MWF': ['M', 'W', 'F'],
+    'MFS': ['M', 'F', 'S'],
+    'WFS': ['W', 'F', 'S'],
+    'TFS': ['T', 'F', 'S'],
+    'TTHS': ['T', 'TH', 'S'],   # Tue + Thu + Sat (WMSU SUMMER schedule)
+    'MTHS': ['M', 'TH', 'S'],
+    'MTTHS': ['M', 'T', 'TH', 'S'],
     # Four-day combinations
     'MTWTH': ['M', 'T', 'W', 'TH'],
     # Five-day combinations
@@ -216,7 +225,10 @@ class StudentPDFExtractor(BasePDFExtractor):
     # Regex patterns for parsing
     SUBJECT_CODE_PATTERN = re.compile(r'^[A-Z]{4,}\d{5,}$')
     TIME_PATTERN = re.compile(r'(\d{1,2}:\d{2}\s*[AP]M)', re.IGNORECASE)
-    DAY_PATTERN = re.compile(r'\b(M|T|W|TH|F|S|TF|MW|MWF|MTH|TTH|MTWTH|MTWTHF)\b', re.IGNORECASE)
+    DAY_PATTERN = re.compile(
+        r'\b(MTWTHF|MTWTH|MTTHS|TTHS|MWF|MFS|WFS|TFS|THS|FS|TTH|TF|MW|MTH|WS|M|T|W|TH|F|S)\b',
+        re.IGNORECASE
+    )
     LOCATION_PATTERN = re.compile(r'\b(LR\d*|LAB\d*|CLA\d*|COM\s*LAB\d*|ROOM\s*\d+|GYM|FIELD)\b', re.IGNORECASE)
     TIME_RANGE_PATTERN = re.compile(r'(\d{1,2}:\d{2}\s*[AP]M)\s*-\s*(\d{1,2}:\d{2}\s*[AP]M)', re.IGNORECASE)
     

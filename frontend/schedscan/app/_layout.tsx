@@ -37,14 +37,14 @@ export default function RootLayout() {
   }, [appIsReady]);
 
   useEffect(() => {
-    const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
-      const data = response.notification.request.content.data as Record<string, any>;
+    const handleExtractionNotification = (rawData: unknown) => {
+      const data = (rawData ?? {}) as Record<string, any>;
 
       if (data?.type !== 'extraction_job') {
         return;
       }
 
-      // Scanner has its own in-flight polling completion logic.
+      // Scanner owns active extraction UX and polling lifecycle.
       if (pathname === '/Home/scanner') {
         return;
       }
@@ -52,9 +52,18 @@ export default function RootLayout() {
       if (data?.status === 'done') {
         router.push('/Home/schedules');
       }
+    };
+
+    const receivedSub = Notifications.addNotificationReceivedListener((notification) => {
+      handleExtractionNotification(notification.request.content.data);
+    });
+
+    const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
+      handleExtractionNotification(response.notification.request.content.data);
     });
 
     return () => {
+      receivedSub.remove();
       responseSub.remove();
     };
   }, [pathname, router]);

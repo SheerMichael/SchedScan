@@ -724,6 +724,61 @@ class AsyncExtractionJobTestCase(TestCase):
         self.assertFalse(os.path.exists(temp_path))
 
     @patch('api.utils.extraction_manager._send_extraction_job_notification')
+    @patch('api.utils.extraction_manager._write_extraction_log_for_job')
+    @patch('api.utils.extraction_manager.ExtractionManager')
+    def test_run_extraction_job_student_ownership_mismatch_fails(self, mock_manager_class, mock_log, mock_notify):
+        """Accepted extraction must fail if extracted student number does not match job user."""
+        import tempfile, os
+        from api.models import ExtractionJob
+        from api.utils.extraction_manager import run_extraction_job
+
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as f:
+            f.write(b'fake pdf')
+            temp_path = f.name
+
+        job = ExtractionJob.objects.create(
+            user=self.user,
+            upload_type='student',
+            file_name='test.pdf',
+            status='pending',
+            _temp_file_path=temp_path,
+        )
+
+        mock_manager = Mock()
+        mock_manager.extract_schedule.return_value = {
+            'courses': [
+                {
+                    'subject_code': 'BSCS101',
+                    'subject_name': 'Programming',
+                    'start_time': '08:00AM',
+                    'end_time': '10:00AM',
+                    'day': 'M',
+                    'location': 'LR1',
+                }
+            ],
+            'extraction_method': 'llm_full_parse',
+            'confidence': 0.95,
+            'processing_time': 0.3,
+            'attempts': ['llm_full_parse'],
+            'student_number': '2022-00001',
+            'failure_category': 'none',
+            'validator_errors': [],
+            'score_breakdown': {},
+            'accepted': True,
+        }
+        mock_manager_class.return_value = mock_manager
+
+        run_extraction_job(job.job_id)
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, 'failed')
+        self.assertEqual(job.failure_category, 'ownership_mismatch')
+        self.assertIn('does not match', job.error_message)
+        mock_log.assert_called_once_with(job, mock_manager.extract_schedule.return_value, success=False)
+        mock_notify.assert_called_once_with(job, success=False)
+        self.assertFalse(os.path.exists(temp_path))
+
+    @patch('api.utils.extraction_manager._send_extraction_job_notification')
     @patch('api.utils.extraction_manager.ExtractionManager')
     def test_run_extraction_job_exception_sets_failed(self, mock_manager_class, mock_notify):
         """

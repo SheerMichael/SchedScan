@@ -7,6 +7,9 @@ from .types import ScoreResult
 
 DEFAULT_RELIABILITY_PRIOR = {
     "pdf_text": 0.92,
+    "llm_vision_parse": 0.93,
+    "llm_full_parse": 0.90,   # LLM primary parser — high reliability prior
+    "llm_normalize": 0.85,    # LLM normalization pass
     "ocr": 0.74,
     "ocr_fallback": 0.68,
     "pdf_text_only": 0.6,
@@ -40,11 +43,18 @@ def _completeness_score(courses: List[Dict[str, Any]]) -> float:
 def _consistency_score(courses: List[Dict[str, Any]]) -> float:
     if not courses:
         return 0.0
-    consistent = 0
+    consistent = 0.0
     for course in courses:
-        has_required = all(str(course.get(f, "")).strip() for f in ("subject_code", "day", "start_time", "end_time"))
-        if has_required:
-            consistent += 1
+        # Soft-day policy: a row can still be internally consistent without a day
+        # token when source docs omit day columns (handwritten/summer formats).
+        has_core = all(
+            str(course.get(f, "")).strip()
+            for f in ("subject_code", "start_time", "end_time")
+        )
+        if not has_core:
+            continue
+        has_day = bool(str(course.get("day", "")).strip())
+        consistent += 1.0 if has_day else 0.8
     return consistent / len(courses)
 
 

@@ -1,12 +1,19 @@
 # SchedScan Extraction Pipeline — Master Update Log
 
-**Last updated:** 2026-03-25 (14:32 PHT)
+**Last updated:** 2026-03-29 (23:20 PHT)
 
 ---
 
 ## Executive Summary
 
-The extraction pipeline has been fully migrated to a **LLM-primary, async** architecture. The LLM (Ollama on DigitalOcean) is the main processor — it reads raw OCR/PDF text and intelligently identifies student numbers, subjects, schedules, and locations. Regex parsers are retained as a silent automatic fallback. Processing runs asynchronously: uploads return a `202 Accepted` immediately, jobs run in background threads, push notifications and a polling endpoint are wired to inform the frontend when extraction completes.
+The extraction pipeline is now **vision-only, LLM-primary, async**.
+
+- Primary mode: a vision-capable LLM interprets uploaded files directly (images and PDF page renders).
+- Legacy OCR/pdfplumber paths are no longer required for normal processing when direct-file mode is enabled.
+- Text LLM parsing paths were removed from runtime orchestration to reduce complexity.
+- Validation, scoring, ownership checks, async jobs, polling, and push notifications remain in place as reliability guardrails.
+
+Recommended production model for current infrastructure: `granite3.2-vision:2b`.
 
 ---
 
@@ -16,10 +23,7 @@ The extraction pipeline has been fully migrated to a **LLM-primary, async** arch
 File upload
     │
     ▼
-Text extraction (OCR / pdfplumber)
-    │
-    ├── Student COR: sync ownership check (student_number must match user)
-    │       └── fails → 403/422 (synchronous, no thread launched)
+Direct file understanding (Vision LLM)
     │
     ├── 202 Accepted immediately (user continues using app)
     │
@@ -29,8 +33,11 @@ Text extraction (OCR / pdfplumber)
          ExtractionJob status → 'processing'
              │
              ▼
-         LLM (Ollama — PRIMARY): llama3.2:3b
-         identifies: student_number, subjects, schedule, location
+       LLM Vision Parser (Ollama — PRIMARY): granite3.2-vision:2b
+       identifies: student_number, subjects, schedule, location from file visuals
+         │
+         ├── score >= threshold → accepted
+         └── score < threshold → regex fallback path
              │
              ├── accepted → write Course rows → status: 'done'
              └── rejected / error → status: 'failed'
@@ -45,15 +52,17 @@ Text extraction (OCR / pdfplumber)
 
 | Component | Old Role | New Role |
 |---|---|---|
-| Regex (`StudentCORExtractor` etc.) | Primary parser | **Silent fallback only** |
-| LLM `parse_with_llm()` | Last-resort fallback | **Primary parser — runs first** |
+| OCR / pdfplumber | Primary preprocessing | **Optional fallback path only** |
+| Vision LLM `parse_document_with_llm_vision()` | N/A | **Primary parser — runs first** |
+| Text LLM `parse_with_llm()` | Primary parser | **Removed from runtime orchestration** |
+| Regex (`StudentCORExtractor` etc.) | Primary parser | **Last fallback safety net** |
 | Processing mode | Synchronous (blocks request) | **Async — 202 + polling + push notification** |
 
 ---
 
-## What the LLM Extracts
+## What the Vision LLM Extracts
 
-- `student_number` (required for student COR)
+- `student_number` (required for student COR ownership checks)
 - `subject_code`, `subject_name`
 - `day`, `start_time`, `end_time`
 - `location` (room)
@@ -96,8 +105,8 @@ Text extraction (OCR / pdfplumber)
 | Private IP | `10.104.0.2` |
 | VPC | `default-sgp1` / `10.104.0.0/20` |
 | OS | Ubuntu 24.04 LTS |
-| Model | `llama3.2:3b` |
-| Model digest | `a80c4f17acd55265feec403c7aef86be0c25983ab279d83f3bcd3abbcb5b8b72` |
+| Primary Vision Model (target) | `granite3.2-vision:2b` |
+| Text Model | Not used (vision-only policy) |
 
 ### Ollama nginx Proxy
 
@@ -145,13 +154,18 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/api/tags \
 |---|---|
 | `EXTRACTION_LLM_BASE_URL` | `http://209.97.172.45:8080` |
 | `EXTRACTION_LLM_NORMALIZATION_ENABLED` | `True` |
-| `EXTRACTION_LLM_FULL_PARSE_ENABLED` | `True` ← **must be set** |
+| `EXTRACTION_LLM_VISION_PARSE_ENABLED` | `True` |
+| `EXTRACTION_LLM_DIRECT_FILE_PARSE_ENABLED` | `True` |
+| `EXTRACTION_LLM_VISION_MODEL_NAME` | `granite3.2-vision:2b` |
+| `EXTRACTION_LLM_VISION_MAX_PAGES` | `2` |
+| `EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL` | `True` |
+| `EXTRACTION_LLM_FULL_PARSE_ENABLED` | `False` *(legacy path, not used by runtime orchestration)* |
 | `EXTRACTION_LLM_STARTUP_CHECK_ENABLED` | `True` |
 | `EXTRACTION_LLM_STARTUP_CHECK_STRICT` | `False` |
-| `EXTRACTION_LLM_MODEL_NAME` | `llama3.2:3b` |
+| `EXTRACTION_LLM_MODEL_NAME` | *(optional, legacy only)* |
 | `EXTRACTION_LLM_API_KEY` | `<redacted-secret-in-do-app-platform>` |
-| `EXTRACTION_LLM_MODEL_DIGEST` | `a80c4f17acd55265feec403c7aef86be0c25983ab279d83f3bcd3abbcb5b8b72` |
-| `EXTRACTION_LLM_REQUIRE_MODEL_DIGEST` | `False` *(enable after stable burn-in)* |
+| `EXTRACTION_LLM_MODEL_DIGEST` | *(optional, legacy only)* |
+| `EXTRACTION_LLM_REQUIRE_MODEL_DIGEST` | `False` *(legacy only)* |
 | `EXTRACTION_LLM_TIMEOUT_SECONDS` | `45` |
 
 #### Quality Gate Settings
@@ -164,6 +178,48 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/api/tags \
 ---
 
 ## Session History
+
+### 2026-03-29 (Session 4) — Vision-Only Runtime Cutover ✅ IMPLEMENTED
+
+**Goal:** Remove text-LLM runtime dependency and keep extraction path vision-first + regex fallback only.
+
+#### Code Changes
+
+| File | What Changed |
+|---|---|
+| `backend/api/utils/extraction_manager.py` | Removed runtime calls to `parse_with_llm()` and `normalize_with_llm()`; kept vision parser as only LLM execution path; retained regex fallback scoring path. |
+| `backend/api/utils/extraction/llm_normalizer.py` | Startup health check now validates the vision model (`EXTRACTION_LLM_VISION_MODEL_NAME`) and vision pinning/digest policy. Vision parser no longer falls back to text model name. |
+| `backend/api/utils/extraction_manager.py` | Async job method attribution now treats `llm_vision_parse` as canonical LLM method. |
+
+#### Validation
+
+```
+Ran 60 tests in ~13s — OK (0 failures)
+```
+
+Suites run: `api.tests.test_llm_normalizer`, `api.tests.test_extraction`.
+
+### 2026-03-29 (Session 3) — Vision-First Direct File Parse ✅ IMPLEMENTED
+
+**Goal:** Remove OCR/pdfplumber dependency from normal extraction path and let the model interpret document contents directly.
+
+#### Code Changes
+
+| File | What Changed |
+|---|---|
+| `backend/api/utils/extraction/llm_normalizer.py` | Added `parse_document_with_llm_vision()` for direct document-image parsing using Ollama multimodal requests (`images` payload). |
+| `backend/api/utils/extraction_manager.py` | Added Stage 0 vision parse; wired vision-first scoring; added direct-file bypass mode to skip OCR/pdfplumber orchestration. |
+| `backend/core/settings.py` | Added vision/direct-file flags and model settings: `EXTRACTION_LLM_VISION_PARSE_ENABLED`, `EXTRACTION_LLM_DIRECT_FILE_PARSE_ENABLED`, `EXTRACTION_LLM_VISION_MODEL_NAME`, `EXTRACTION_LLM_VISION_MAX_PAGES`, etc. |
+| `backend/api/utils/extraction/scoring.py` | Added reliability prior for `llm_vision_parse`. |
+| `backend/api/tests/test_llm_normalizer.py` | Added coverage for vision parser success/disabled behavior. |
+
+#### Validation
+
+```
+Ran 60 tests in ~13s — OK (0 failures)
+```
+
+Covered suites include async extraction lifecycle and llm normalizer/vision parse tests.
 
 ### 2026-03-25 (Session 2) — Async Pipeline: Steps 2–5 ✅ COMPLETE
 
@@ -276,8 +332,8 @@ New tests covering:
 |---|---|
 | Phase 1: Quality Gates & Telemetry | ✅ Complete |
 | Phase 2: Staged Orchestration | ✅ Complete |
-| Phase 3: LLM Normalization (Stage A) | ✅ Live and secured |
-| Phase 3B: LLM Full Parser (Stage B — primary) | ✅ Implemented |
+| Phase 3: Vision LLM Parser (primary) | ✅ Live |
+| Legacy text LLM parser paths | ⚪ Disabled in runtime orchestration |
 | `ExtractionJob` model + migrations | ✅ Done |
 | `run_extraction_job()` background runner | ✅ Done |
 | Upload views return 202 + launch thread | ✅ Done |
@@ -286,9 +342,10 @@ New tests covering:
 | Security — Ollama port hardened | ✅ Complete |
 | Faculty OCR time disambiguation | ✅ Fixed |
 | Student COR handwritten extraction | ✅ Fixed |
-| **Frontend: Upload flow → poll → show result** | 🔴 Not yet implemented |
-| **Frontend: Handle push notification → stop polling** | 🔴 Not yet implemented |
-| **Frontend: Admin dashboard — job visibility** | 🟡 Optional / future |
+| Frontend: Upload flow → poll → show result | ✅ Implemented |
+| Frontend: Handle push notification → stop polling | ✅ Implemented |
+| Backend: Admin extraction jobs API | ✅ Implemented (`GET /api/admin/extraction/jobs/`) |
+| Frontend: Admin dashboard — job visibility | 🟡 Pending UI integration |
 | `EXTRACTION_LLM_REQUIRE_MODEL_DIGEST=True` | 🟡 Pending burn-in telemetry |
 | Confidence threshold recalibration | 🟡 Pending real-world LLM telemetry |
 
@@ -296,31 +353,23 @@ New tests covering:
 
 ## Clear Next Steps
 
-### Step 6 — Frontend: Async Upload UX (mobile)
+### Step 6 — Productionize Vision-First Mode
 
-**Files:** `frontend/schedscan/services/courseService.ts`, scan screen(s), `_layout.tsx`
-
-1. **Upload call** — after `POST /api/upload-cor/student/`, read `job_id` from the 202 response instead of reading courses directly.
-2. **Polling loop** — implement a polling function in `courseService.ts`:
-   ```ts
-   async function pollExtractionJob(jobId: string, maxAttempts = 10): Promise<JobResult> {
-     for (let i = 0; i < maxAttempts; i++) {
-       await sleep(3000);
-       const res = await api.get(`/extraction-jobs/${jobId}/`);
-       if (res.data.status === 'done' || res.data.status === 'failed') return res.data;
-     }
-     return { status: 'timeout' };
-   }
-   ```
-3. **UI states** — show a loading/spinner state while polling. On `done`, navigate to schedule. On `failed`, show the `message` with a retry button. On `timeout`, show "We'll notify you when done".
-4. **Push notification handler** — when a `data.type === 'extraction_job'` notification arrives, cancel any active poll and navigate to schedule if `status === 'done'`. Use `expo-notifications` `addNotificationResponseReceivedListener`.
+1. Set production env flags:
+  - `EXTRACTION_LLM_VISION_PARSE_ENABLED=True`
+  - `EXTRACTION_LLM_DIRECT_FILE_PARSE_ENABLED=True`
+  - `EXTRACTION_LLM_VISION_MODEL_NAME=granite3.2-vision:2b`
+  - `EXTRACTION_LLM_VISION_MAX_PAGES=2`
+2. Keep legacy text flags disabled to enforce vision-only runtime:
+  - `EXTRACTION_LLM_FULL_PARSE_ENABLED=False`
+3. Monitor p50/p95 latency and failure categories for 1 week.
 
 ### Step 7 — Frontend: Admin Dashboard Job Visibility (optional)
 
 Add an `ExtractionJob` list to the admin dashboard so admins can monitor stuck/failed jobs.
 
-- Backend: add `GET /api/admin/extraction-jobs/` (filter by status, user, date)
-- Frontend: new admin page showing pending/processing/done/failed breakdown
+- Backend: `GET /api/admin/extraction/jobs/` is already implemented (filters: status, user, date, search)
+- Frontend: add dashboard tab/table for pending/processing/done/failed breakdown and drill-down
 
 ### Step 8 — Threshold Recalibration
 
@@ -332,9 +381,9 @@ After 2–4 weeks of real-world LLM extraction traffic:
 
 ### Step 9 — Model Digest Lock
 
-Once Ollama is confirmed stable on `llama3.2:3b` for 48h+:
+Once Ollama is confirmed stable on `granite3.2-vision:2b` for 48h+:
 ```
-EXTRACTION_LLM_REQUIRE_MODEL_DIGEST = True
+EXTRACTION_LLM_VISION_REQUIRE_MODEL_DIGEST = True
 ```
 This prevents silent model upgrades from breaking extraction quality.
 
@@ -344,6 +393,8 @@ This prevents silent model upgrades from breaking extraction quality.
 
 ### Disable LLM primary parser (instant, no redeploy)
 ```
+EXTRACTION_LLM_VISION_PARSE_ENABLED = False
+EXTRACTION_LLM_DIRECT_FILE_PARSE_ENABLED = False
 EXTRACTION_LLM_FULL_PARSE_ENABLED = False
 ```
 Pipeline falls back to regex-only synchronous extraction.
@@ -364,9 +415,9 @@ In `upload_views.py`, comment out the thread launch block and restore a direct `
 | Risk | Severity | Mitigation | Status |
 |---|---|---|---|
 | LLM timeout on large documents | Medium | 45s timeout; regex fallback runs automatically | ✅ Mitigated |
-| Ollama Droplet goes down | Low | Regex fallback runs for all jobs — no disruption | ✅ Mitigated |
+| Ollama Droplet goes down | Low | Regex fallback runs for all jobs | ✅ Mitigated |
 | Async thread dies silently | **High** | `except Exception` safety net always marks job `failed` + notifies user | ✅ **Fixed** |
-| Frontend not updated to handle 202 | Medium | App will receive 202 without courses — treat as error | 🔴 **Open — Step 6** |
+| Vision parse latency spikes on multi-page PDFs | Medium | Limit pages (`EXTRACTION_LLM_VISION_MAX_PAGES`), keep async UX and fallback | 🟡 Monitoring |
 | Confidence too strict after LLM parse | Medium | Recalibrate after telemetry data — see Step 8 | 🟡 Pending |
-| Digest mismatch after model update | Low | `REQUIRE_MODEL_DIGEST=False` currently — enable after burn-in | 🟡 Pending |
-| Jobs stuck in `processing` if server restarts | Low | On restart, scan for `processing` jobs older than 5min and mark `failed` | 🔴 Not yet implemented |
+| Digest mismatch after model update | Low | `VISION_REQUIRE_MODEL_DIGEST=False` currently — enable after burn-in | 🟡 Pending |
+| Jobs stuck in `processing` if server restarts | Low | Startup recovery marks stale `processing` jobs as `failed` and notifies users | ✅ Fixed |

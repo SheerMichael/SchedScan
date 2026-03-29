@@ -101,3 +101,26 @@ class ExtractionScoringTestCase(TestCase):
         faculty = score_candidates(upload_type="faculty", **shared_input)
 
         self.assertNotEqual(student.confidence, faculty.confidence)
+
+    @override_settings(
+        EXTRACTION_PARSER_RELIABILITY_PRIOR={"llm_full_parse": 0.90}
+    )
+    def test_dayless_row_can_still_pass_with_llm_prior(self):
+        result = score_candidates(
+            courses=[
+                {
+                    "subject_code": "OS",
+                    "subject_name": "",
+                    "day": "",
+                    "start_time": "01:00PM",
+                    "end_time": "03:00PM",
+                    "location": "LR1",
+                }
+            ],
+            validator_errors=[],
+            attempts=["llm_full_parse"],
+            upload_type="student",
+        )
+
+        self.assertGreaterEqual(result.breakdown["consistency"], 0.8)
+        self.assertGreaterEqual(result.confidence, 0.85)

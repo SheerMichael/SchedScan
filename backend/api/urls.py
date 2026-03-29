@@ -143,6 +143,7 @@ urlpatterns = [
     path('admin/extraction/analytics/', views.AdminExtractionAnalyticsView.as_view(), name='admin_extraction_analytics'),
     path('admin/extraction/analytics/chart/', views.AdminExtractionChartView.as_view(), name='admin_extraction_chart'),
     path('admin/extraction/failed/', views.AdminFailedExtractionListView.as_view(), name='admin_failed_extractions'),
+    path('admin/extraction/jobs/', views.AdminExtractionJobListView.as_view(), name='admin_extraction_jobs'),
 
     # Incident reports (admin)
     path('admin/incidents/', views.AdminIncidentReportListView.as_view(), name='admin_incident_list'),

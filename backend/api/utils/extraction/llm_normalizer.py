@@ -1,5 +1,8 @@
 import json
 import logging
+import base64
+import os
+from io import BytesIO
 from json import JSONDecodeError
 from typing import Any, Dict, List, Tuple
 
@@ -120,10 +123,23 @@ def _verify_model_digest(*, base_url: str, model_name: str, required_digest: str
     return False
 
 
-def _validate_runtime_policy(*, base_url: str, model_name: str, timeout_seconds: int) -> Tuple[bool, str]:
-    require_pinned_model = bool(getattr(settings, 'EXTRACTION_LLM_REQUIRE_PINNED_MODEL', True))
-    require_model_digest = bool(getattr(settings, 'EXTRACTION_LLM_REQUIRE_MODEL_DIGEST', False))
-    required_digest = str(getattr(settings, 'EXTRACTION_LLM_MODEL_DIGEST', '')).strip()
+def _validate_runtime_policy(
+    *,
+    base_url: str,
+    model_name: str,
+    timeout_seconds: int,
+    require_pinned_model: bool | None = None,
+    require_model_digest: bool | None = None,
+    required_digest: str | None = None,
+) -> Tuple[bool, str]:
+    if require_pinned_model is None:
+        require_pinned_model = bool(getattr(settings, 'EXTRACTION_LLM_REQUIRE_PINNED_MODEL', True))
+    if require_model_digest is None:
+        require_model_digest = bool(getattr(settings, 'EXTRACTION_LLM_REQUIRE_MODEL_DIGEST', False))
+    if required_digest is None:
+        required_digest = str(getattr(settings, 'EXTRACTION_LLM_MODEL_DIGEST', '')).strip()
+    else:
+        required_digest = str(required_digest).strip()
 
     if require_pinned_model and not _is_model_name_pinned(model_name):
         return False, 'EXTRACTION_LLM_MODEL_NAME must include an explicit non-latest tag (e.g., model:version).'
@@ -168,14 +184,16 @@ def run_llm_startup_health_check() -> None:
         return
     if not bool(getattr(settings, 'EXTRACTION_LLM_NORMALIZATION_ENABLED', False)):
         return
+    if not bool(getattr(settings, 'EXTRACTION_LLM_VISION_PARSE_ENABLED', False)):
+        return
 
-    model_name = str(getattr(settings, 'EXTRACTION_LLM_MODEL_NAME', '')).strip()
+    model_name = str(getattr(settings, 'EXTRACTION_LLM_VISION_MODEL_NAME', '')).strip()
     base_url = str(getattr(settings, 'EXTRACTION_LLM_BASE_URL', 'http://127.0.0.1:11434')).rstrip('/')
     timeout_seconds = int(getattr(settings, 'EXTRACTION_LLM_STARTUP_CHECK_TIMEOUT_SECONDS', 2))
     strict = bool(getattr(settings, 'EXTRACTION_LLM_STARTUP_CHECK_STRICT', False))
 
     if not model_name:
-        message = 'LLM startup check failed: EXTRACTION_LLM_MODEL_NAME is empty.'
+        message = 'LLM startup check failed: EXTRACTION_LLM_VISION_MODEL_NAME is empty.'
         if strict:
             raise RuntimeError(message)
         logger.warning(message)
@@ -206,6 +224,9 @@ def run_llm_startup_health_check() -> None:
             base_url=base_url,
             model_name=model_name,
             timeout_seconds=timeout_seconds,
+            require_pinned_model=bool(getattr(settings, 'EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL', True)),
+            require_model_digest=bool(getattr(settings, 'EXTRACTION_LLM_VISION_REQUIRE_MODEL_DIGEST', False)),
+            required_digest=str(getattr(settings, 'EXTRACTION_LLM_VISION_MODEL_DIGEST', '')).strip(),
         )
         if not policy_ok:
             if strict:
@@ -255,7 +276,8 @@ def _validate_normalized_courses(courses: List[Dict[str, Any]]) -> bool:
             return False
         unknown = set(row.keys()) - ALLOWED_KEYS
         if unknown:
-            return False
+            # Log but do not reject — LLM may emit extra keys we don't need
+            logger.debug('LLM course row has unknown keys (ignored): %s', sorted(unknown))
         if len(str(row.get('subject_code', ''))) > 50:
             return False
         if len(str(row.get('subject_name', ''))) > 255:
@@ -347,7 +369,6 @@ def normalize_with_llm(
         unknown_top_level = set(parsed.keys()) - {'courses'}
         if unknown_top_level:
             logger.warning('LLM normalization response had unknown top-level keys: %s', sorted(unknown_top_level))
-            return seed_courses, telemetry
         if not isinstance(parsed, dict) or 'courses' not in parsed:
             return seed_courses, telemetry
         courses = parsed.get('courses')
@@ -443,6 +464,194 @@ def _validate_doc_metadata(value: Any) -> bool:
     return True
 
 
+_VISION_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff'}
+
+
+def _build_vision_parse_prompt(upload_type: str) -> str:
+    if upload_type == 'faculty':
+        format_hint = (
+            'Faculty IDP documents usually contain day labels (MON..SAT), '
+            'subject/class codes, time ranges, and room/location. '
+            'Set student_number to null for faculty documents.'
+        )
+    else:
+        format_hint = (
+            'Student COR documents may be typed, scanned, or handwritten and can '
+            'contain student number, semester/school year, subject rows, time, day, and room.'
+        )
+
+    return (
+        'You are a precise schedule extractor. Analyze the attached document image(s) '
+        f'for a {upload_type.upper()} schedule and return ONLY valid JSON in this schema:\n'
+        '{\n'
+        '  "doc_metadata": {\n'
+        '    "student_number": "<YYYY-NNNNN or null>",\n'
+        '    "semester": "<1ST|2ND|SUMMER or null>",\n'
+        '    "school_year": "<YYYY-YYYY or null>"\n'
+        '  },\n'
+        '  "courses": [\n'
+        '    {\n'
+        '      "subject_code": "<code>",\n'
+        '      "subject_name": "<name or empty string>",\n'
+        '      "day": "<M|T|W|TH|F|S or empty>",\n'
+        '      "start_time": "<HH:MMAM or HH:MMPM>",\n'
+        '      "end_time": "<HH:MMAM or HH:MMPM>",\n'
+        '      "location": "<room or empty string>"\n'
+        '    }\n'
+        '  ]\n'
+        '}\n\n'
+        f'Format context: {format_hint}\n'
+        'Rules:\n'
+        '- Use only data visible in the document.\n'
+        '- Normalize times to HH:MMAM/PM.\n'
+        '- Keep unknown fields empty instead of guessing.\n'
+        '- No markdown, no prose, JSON only.'
+    )
+
+
+def _load_document_images_for_vision(file_path: str, max_pages: int) -> List[str]:
+    extension = os.path.splitext(file_path)[1].lower()
+
+    if extension == '.pdf':
+        try:
+            from pdf2image import convert_from_path
+        except ImportError:
+            logger.warning('LLM vision parse skipped: pdf2image is not installed')
+            return []
+
+        images_b64: List[str] = []
+        pages = convert_from_path(file_path, dpi=220, first_page=1, last_page=max_pages, fmt='jpeg')
+        for page in pages:
+            buffer = BytesIO()
+            page.save(buffer, format='JPEG', quality=85)
+            images_b64.append(base64.b64encode(buffer.getvalue()).decode('ascii'))
+        return images_b64
+
+    if extension in _VISION_IMAGE_EXTENSIONS:
+        with open(file_path, 'rb') as infile:
+            return [base64.b64encode(infile.read()).decode('ascii')]
+
+    logger.warning('LLM vision parse skipped: unsupported file extension %s', extension)
+    return []
+
+
+def parse_document_with_llm_vision(
+    *,
+    file_path: str,
+    upload_type: str,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
+    """
+    Parse document images directly with a vision-capable LLM via Ollama.
+
+    This bypasses OCR/pdf text extraction and asks the model to interpret the
+    source document pixels directly.
+    """
+    empty_meta: Dict[str, Any] = {'student_number': '', 'semester': '', 'school_year': ''}
+    telemetry: Dict[str, Any] = {
+        'llm_used': False,
+        'llm_parse_success': False,
+        'llm_model': '',
+        'llm_timeout_seconds': int(getattr(settings, 'EXTRACTION_LLM_TIMEOUT_SECONDS', 12)),
+        'stage': 'llm_vision_parse',
+    }
+
+    if not bool(getattr(settings, 'EXTRACTION_LLM_VISION_PARSE_ENABLED', False)):
+        return [], empty_meta, telemetry
+    if not bool(getattr(settings, 'EXTRACTION_LLM_NORMALIZATION_ENABLED', False)):
+        return [], empty_meta, telemetry
+
+    model_name = str(
+        getattr(settings, 'EXTRACTION_LLM_VISION_MODEL_NAME', '')
+    ).strip()
+    telemetry['llm_model'] = model_name
+    telemetry['llm_used'] = True
+
+    if not model_name:
+        logger.warning('LLM vision parse enabled but no vision model name is configured')
+        return [], empty_meta, telemetry
+
+    timeout_seconds = int(getattr(settings, 'EXTRACTION_LLM_TIMEOUT_SECONDS', 12))
+    max_pages = int(getattr(settings, 'EXTRACTION_LLM_VISION_MAX_PAGES', 2))
+    base_url = str(getattr(settings, 'EXTRACTION_LLM_BASE_URL', 'http://127.0.0.1:11434')).rstrip('/')
+    generate_url = f'{base_url}{OLLAMA_GENERATE_PATH}'
+
+    policy_ok, policy_error = _validate_runtime_policy(
+        base_url=base_url,
+        model_name=model_name,
+        timeout_seconds=timeout_seconds,
+        require_pinned_model=bool(getattr(settings, 'EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL', True)),
+        require_model_digest=bool(getattr(settings, 'EXTRACTION_LLM_VISION_REQUIRE_MODEL_DIGEST', False)),
+        required_digest=str(getattr(settings, 'EXTRACTION_LLM_VISION_MODEL_DIGEST', '')).strip(),
+    )
+    if not policy_ok:
+        logger.warning('LLM vision parse policy check failed: %s', policy_error)
+        return [], empty_meta, telemetry
+
+    images_b64 = _load_document_images_for_vision(file_path, max_pages=max_pages)
+    if not images_b64:
+        return [], empty_meta, telemetry
+
+    try:
+        request_payload = {
+            'model': model_name,
+            'prompt': _build_vision_parse_prompt(upload_type),
+            'images': images_b64,
+            'stream': False,
+            'format': 'json',
+            'options': {'temperature': 0},
+        }
+        response = requests.post(
+            generate_url,
+            json=request_payload,
+            timeout=timeout_seconds,
+            headers=_build_ollama_headers(content_type=True),
+        )
+        response.raise_for_status()
+        ollama_payload = response.json()
+        llm_output = _extract_response_text(ollama_payload)
+        if not llm_output:
+            logger.warning('LLM vision parse returned empty response')
+            return [], empty_meta, telemetry
+
+        parsed = _parse_llm_json(llm_output)
+        unknown_top = set(parsed.keys()) - {'courses', 'doc_metadata'}
+        if unknown_top:
+            logger.warning(
+                'LLM vision parse response had unknown top-level keys (ignored): %s',
+                sorted(unknown_top),
+            )
+
+        courses = parsed.get('courses')
+        if not isinstance(courses, list):
+            logger.warning('LLM vision parse: "courses" is not a list')
+            return [], empty_meta, telemetry
+        if not _validate_normalized_courses(courses):
+            logger.warning('LLM vision parse: course schema validation failed')
+            return [], empty_meta, telemetry
+
+        raw_doc_meta = parsed.get('doc_metadata', {})
+        if not _validate_doc_metadata(raw_doc_meta):
+            logger.warning('LLM vision parse: doc_metadata schema validation failed')
+            raw_doc_meta = {}
+
+        doc_metadata: Dict[str, Any] = {
+            'student_number': str(raw_doc_meta.get('student_number') or '').strip(),
+            'semester': str(raw_doc_meta.get('semester') or '').strip().upper(),
+            'school_year': str(raw_doc_meta.get('school_year') or '').strip(),
+        }
+        telemetry['llm_parse_success'] = True
+        return courses, doc_metadata, telemetry
+    except requests.Timeout:
+        logger.warning('LLM vision parse timed out after %ss', timeout_seconds)
+        return [], empty_meta, telemetry
+    except requests.RequestException:
+        logger.exception('LLM vision parse request failed')
+        return [], empty_meta, telemetry
+    except (JSONDecodeError, ValueError):
+        logger.warning('LLM vision parse output was not valid JSON')
+        return [], empty_meta, telemetry
+
+
 def parse_with_llm(
     *,
     raw_text: str,
@@ -530,11 +739,13 @@ def parse_with_llm(
 
         parsed = _parse_llm_json(llm_output)
 
-        # Validate top-level keys
+        # Validate top-level keys — log unknown keys but do NOT discard the response
         unknown_top = set(parsed.keys()) - {'courses', 'doc_metadata'}
         if unknown_top:
-            logger.warning('LLM full-parse response had unknown top-level keys: %s', sorted(unknown_top))
-            return [], empty_meta, telemetry
+            logger.warning(
+                'LLM full-parse response had unknown top-level keys (ignored): %s',
+                sorted(unknown_top),
+            )
 
         # Extract and validate courses
         courses = parsed.get('courses')
