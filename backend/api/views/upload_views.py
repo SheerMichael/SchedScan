@@ -34,7 +34,40 @@ class BaseCORUploadView(APIView):
     upload_type = None  # Must be set by subclass ('student' or 'faculty')
 
     _student_number_pattern = re.compile(r"\b(\d{4})-(\d)(\d{1,5})(\d)\b")
+    _student_number_flexible_pattern = re.compile(r"\b(\d{4})[-\s]?(\d{5})\b")
+    _student_number_digits_pattern = re.compile(r"\b(\d{9})\b")
     _email_pattern = re.compile(r"\b([A-Za-z0-9._%+-])([A-Za-z0-9._%+-]*)([A-Za-z0-9._%+-])@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b")
+
+    def _normalize_student_number(self, value: str) -> str:
+        text = str(value or '').strip()
+        if not text:
+            return ''
+
+        flexible = self._student_number_flexible_pattern.search(text)
+        if flexible:
+            return f"{flexible.group(1)}-{flexible.group(2)}"
+
+        digits_only = ''.join(ch for ch in text if ch.isdigit())
+        if len(digits_only) == 9:
+            return f"{digits_only[:4]}-{digits_only[4:]}"
+
+        return text.upper()
+
+    def _extract_student_number_from_text(self, value: str) -> str:
+        text = str(value or '')
+        if not text:
+            return ''
+
+        flexible = self._student_number_flexible_pattern.search(text)
+        if flexible:
+            return f"{flexible.group(1)}-{flexible.group(2)}"
+
+        contiguous = self._student_number_digits_pattern.search(text)
+        if contiguous:
+            digits = contiguous.group(1)
+            return f"{digits[:4]}-{digits[4:]}"
+
+        return ''
 
     def _redact_text(self, value: str) -> str:
         text = (value or "")
@@ -283,7 +316,7 @@ class BaseCORUploadView(APIView):
                 result = manager.extract_schedule(temp_file_path, self.upload_type)
 
                 courses_data = result['courses']
-                extracted_student_number = result.get('student_number', '')
+                extracted_student_number = self._normalize_student_number(result.get('student_number', ''))
                 extraction_metadata = {
                     'method': result['extraction_method'],
                     'confidence': result['confidence'],
@@ -316,7 +349,9 @@ class BaseCORUploadView(APIView):
                         self.upload_type,
                         force_ocr_fallback=True,
                     )
-                    extracted_student_number = stronger_fallback_result.get('student_number', '')
+                    extracted_student_number = self._normalize_student_number(
+                        stronger_fallback_result.get('student_number', '')
+                    )
                     if extracted_student_number:
                         result = stronger_fallback_result
                         courses_data = result['courses']
@@ -332,6 +367,13 @@ class BaseCORUploadView(APIView):
                             'score_breakdown': result.get('score_breakdown', {}),
                         })
                         redacted_preview = self._build_raw_text_preview(uploaded_file, result)
+
+                if not extracted_student_number:
+                    extracted_student_number = self._extract_student_number_from_text(
+                        result.get('raw_text', '')
+                    )
+                    if extracted_student_number:
+                        extraction_metadata['student_number_recovered_from_raw_text'] = True
 
                 strict_ownership_mode = bool(getattr(settings, 'EXTRACTION_STRICT_OWNERSHIP_MODE', False))
                 if not extracted_student_number:
@@ -379,7 +421,9 @@ class BaseCORUploadView(APIView):
                     }
                     return Response(payload, status=final_status)
 
-                user_student_number = getattr(request.user, 'student_number', None)
+                user_student_number = self._normalize_student_number(
+                    getattr(request.user, 'student_number', None)
+                )
                 if user_student_number and extracted_student_number != user_student_number:
                     logger.warning(
                         f"COR verification failed for user {request.user.id}: "

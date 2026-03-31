@@ -103,3 +103,21 @@ class RedactionTestCase(SimpleTestCase):
         text = 'Schedule for Monday: CC 102 02:30PM-04:00PM LR3'
         result = self.view._redact_text(text)
         self.assertEqual(result, text)
+
+    # ------------------------------------------------------------------ #
+    # Student number normalization/extraction                              #
+    # ------------------------------------------------------------------ #
+
+    def test_normalize_student_number_accepts_hyphen_and_compact(self):
+        self.assertEqual(self.view._normalize_student_number('2023-20243'), '2023-20243')
+        self.assertEqual(self.view._normalize_student_number('202320243'), '2023-20243')
+        self.assertEqual(self.view._normalize_student_number('2023 20243'), '2023-20243')
+
+    def test_extract_student_number_from_text_supports_common_formats(self):
+        text_a = 'Student Number: 2023-20243 Registered'
+        text_b = 'Student Number 202320243 is valid'
+        text_c = 'Student Number 2023 20243'
+
+        self.assertEqual(self.view._extract_student_number_from_text(text_a), '2023-20243')
+        self.assertEqual(self.view._extract_student_number_from_text(text_b), '2023-20243')
+        self.assertEqual(self.view._extract_student_number_from_text(text_c), '2023-20243')
