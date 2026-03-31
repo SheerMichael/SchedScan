@@ -30,9 +30,10 @@ const STATUS_COLORS = {
   resolved: 'bg-emerald-100 text-emerald-800 border-emerald-300',
 };
 
-const TAB_KEYS = ['analytics', 'failed', 'incidents'];
+const TAB_KEYS = ['analytics', 'jobs', 'failed', 'incidents'];
 const TAB_LABELS = {
   analytics: 'Extraction Analytics',
+  jobs: 'Extraction Jobs',
   failed: 'Failed Extractions',
   incidents: 'Incident Reports',
 };
@@ -80,6 +81,7 @@ export default function ExtractionHealthScreen() {
       {/* Tab Content */}
       <div className="p-8 max-w-350 mx-auto">
         {activeTab === 'analytics' && <AnalyticsTab refreshKey={refreshKey} />}
+        {activeTab === 'jobs' && <ExtractionJobsTab refreshKey={refreshKey} />}
         {activeTab === 'failed' && <FailedExtractionsTab refreshKey={refreshKey} />}
         {activeTab === 'incidents' && <IncidentReportsTab refreshKey={refreshKey} />}
       </div>
@@ -261,7 +263,286 @@ function BreakdownCard({ title, data, labels }) {
 }
 
 // ==========================================================================
-// TAB 2: Failed Extractions
+// TAB 2: Extraction Jobs
+// ==========================================================================
+function ExtractionJobsTab({ refreshKey }) {
+  const [jobs, setJobs] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [uploadTypeFilter, setUploadTypeFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [breakdown, setBreakdown] = useState({ pending: 0, processing: 0, done: 0, failed: 0 });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [previewJob, setPreviewJob] = useState(null);
+  const requestVersionRef = useRef(0);
+
+  const fetchJobs = useCallback(() => {
+    const requestVersion = requestVersionRef.current + 1;
+    requestVersionRef.current = requestVersion;
+
+    setLoading(true);
+    setError(null);
+
+    extractionApi.jobs({
+      search,
+      status: statusFilter,
+      upload_type: uploadTypeFilter,
+      date_from: dateFrom,
+      date_to: dateTo,
+      page,
+      page_size: 15,
+    })
+      .then((res) => {
+        if (requestVersion !== requestVersionRef.current) return;
+        setJobs(res.data.results || []);
+        setTotal(res.data.count || 0);
+        setTotalPages(res.data.total_pages || 1);
+        setBreakdown(res.data.status_breakdown || { pending: 0, processing: 0, done: 0, failed: 0 });
+      })
+      .catch((err) => {
+        if (requestVersion !== requestVersionRef.current) return;
+        setError(parseApiError(err).message);
+      })
+      .finally(() => {
+        if (requestVersion !== requestVersionRef.current) return;
+        setLoading(false);
+      });
+  }, [search, statusFilter, uploadTypeFilter, dateFrom, dateTo, page, refreshKey]);
+
+  useEffect(() => {
+    fetchJobs();
+  }, [fetchJobs]);
+
+  const statusBadge = (status) => {
+    if (status === 'done') return 'bg-emerald-100 text-emerald-800 border-emerald-300';
+    if (status === 'failed') return 'bg-red-100 text-red-800 border-red-300';
+    if (status === 'processing') return 'bg-blue-100 text-blue-800 border-blue-300';
+    return 'bg-amber-100 text-amber-800 border-amber-300';
+  };
+
+  const formatConfidence = (value) => {
+    if (value === null || value === undefined) return '—';
+    return `${(Number(value) * 100).toFixed(1)}%`;
+  };
+
+  return (
+    <>
+      {/* Filters */}
+      <div className="flex flex-col gap-4 mb-6">
+        <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
+          <div className="relative w-full md:w-112.5">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-900" size={18} />
+            <input
+              type="text"
+              placeholder="SEARCH JOB ID, FILE, OR USER EMAIL…"
+              className="w-full pl-12 pr-4 py-3.5 bg-white border-2 border-slate-900 rounded-none shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] focus:outline-none focus:translate-x-0.5 focus:translate-y-0.5 focus:shadow-none transition-all font-bold text-xs tracking-widest placeholder:text-slate-300"
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            />
+          </div>
+
+          <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+            {total} {total === 1 ? 'job' : 'jobs'}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {['', 'pending', 'processing', 'done', 'failed'].map((status) => (
+            <button
+              key={status || 'all-statuses'}
+              onClick={() => { setStatusFilter(status); setPage(1); }}
+              className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest border-2 transition-all ${
+                statusFilter === status
+                  ? 'bg-slate-900 text-white border-slate-900'
+                  : 'bg-white text-slate-400 border-slate-200 hover:border-slate-400'
+              }`}
+            >
+              {status || 'All Statuses'}
+            </button>
+          ))}
+
+          <div className="h-6 w-px bg-slate-200 mx-1" />
+
+          {['', 'student', 'faculty'].map((type) => (
+            <button
+              key={type || 'all-upload-types'}
+              onClick={() => { setUploadTypeFilter(type); setPage(1); }}
+              className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest border-2 transition-all ${
+                uploadTypeFilter === type
+                  ? 'bg-slate-900 text-white border-slate-900'
+                  : 'bg-white text-slate-400 border-slate-200 hover:border-slate-400'
+              }`}
+            >
+              {type || 'All Types'}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">From</label>
+            <input
+              type="date"
+              className="px-3 py-2 border-2 border-slate-200 text-xs font-semibold text-slate-700 focus:border-slate-900 focus:outline-none"
+              value={dateFrom}
+              onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">To</label>
+            <input
+              type="date"
+              className="px-3 py-2 border-2 border-slate-200 text-xs font-semibold text-slate-700 focus:border-slate-900 focus:outline-none"
+              value={dateTo}
+              onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+            />
+          </div>
+          <button
+            onClick={() => {
+              setSearch('');
+              setStatusFilter('');
+              setUploadTypeFilter('');
+              setDateFrom('');
+              setDateTo('');
+              setPage(1);
+            }}
+            className="px-4 py-2 text-[10px] font-black uppercase tracking-widest border-2 border-slate-200 text-slate-500 hover:border-slate-400 transition-all"
+          >
+            Clear Filters
+          </button>
+        </div>
+      </div>
+
+      {/* Status breakdown */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <MiniStatusCard label="Pending" value={breakdown.pending || 0} tone="amber" icon={<Clock size={14} />} />
+        <MiniStatusCard label="Processing" value={breakdown.processing || 0} tone="blue" icon={<Loader2 size={14} className="animate-spin" />} />
+        <MiniStatusCard label="Done" value={breakdown.done || 0} tone="green" icon={<CheckCircle2 size={14} />} />
+        <MiniStatusCard label="Failed" value={breakdown.failed || 0} tone="red" icon={<XCircle size={14} />} />
+      </div>
+
+      {error && (
+        <div className="mb-6 flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded p-3">
+          <AlertCircle size={16} className="shrink-0" /> {error}
+        </div>
+      )}
+
+      {/* Table */}
+      <div className="bg-white border-2 border-slate-900 shadow-[8px_8px_0px_0px_rgba(185,28,28,0.08)] overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-800 text-white border-b-2 border-primary-900">
+                <th className="px-5 py-4 text-[10px] font-black uppercase tracking-[0.15em]">Job</th>
+                <th className="px-5 py-4 text-[10px] font-black uppercase tracking-[0.15em]">User</th>
+                <th className="px-5 py-4 text-[10px] font-black uppercase tracking-[0.15em]">Status</th>
+                <th className="px-5 py-4 text-[10px] font-black uppercase tracking-[0.15em]">Upload Type</th>
+                <th className="px-5 py-4 text-[10px] font-black uppercase tracking-[0.15em]">Confidence</th>
+                <th className="px-5 py-4 text-[10px] font-black uppercase tracking-[0.15em]">Courses</th>
+                <th className="px-5 py-4 text-[10px] font-black uppercase tracking-[0.15em]">Duration</th>
+                <th className="px-5 py-4 text-[10px] font-black uppercase tracking-[0.15em] text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y-2 divide-slate-100">
+              {loading ? (
+                <tr><td colSpan={8} className="text-center py-12 text-slate-400"><Loader2 size={20} className="animate-spin inline mr-2" />Loading…</td></tr>
+              ) : jobs.length === 0 ? (
+                <tr><td colSpan={8} className="text-center py-12 text-slate-400 font-bold text-sm">No extraction jobs found</td></tr>
+              ) : (
+                jobs.map((job) => (
+                  <tr key={job.job_id} className="hover:bg-primary-50/30 transition-colors">
+                    <td className="px-5 py-4">
+                      <p className="font-bold text-slate-900 text-xs truncate max-w-56">{job.file_name || 'Unknown file'}</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5 font-mono">{job.job_id}</p>
+                    </td>
+                    <td className="px-5 py-4">
+                      <p className="text-[11px] font-bold text-slate-700">{job.user_email || 'Unknown'}</p>
+                      <p className="text-[10px] text-slate-400">ID: {job.user_id || '—'}</p>
+                    </td>
+                    <td className="px-5 py-4">
+                      <span className={`px-2 py-0.5 border text-[10px] font-black uppercase tracking-wider ${statusBadge(job.status)}`}>
+                        {job.status}
+                      </span>
+                    </td>
+                    <td className="px-5 py-4 text-[11px] font-bold text-slate-500 uppercase">{job.upload_type}</td>
+                    <td className="px-5 py-4 text-[11px] font-bold text-slate-500">{formatConfidence(job.confidence)}</td>
+                    <td className="px-5 py-4 text-[11px] font-bold text-slate-500">{job.total_courses ?? 0}</td>
+                    <td className="px-5 py-4 text-[11px] font-bold text-slate-500">{job.duration_seconds ? `${job.duration_seconds}s` : '—'}</td>
+                    <td className="px-5 py-4 text-right">
+                      <button
+                        onClick={() => setPreviewJob(job)}
+                        className="p-2 border-2 border-slate-200 text-slate-400 hover:border-slate-900 hover:text-slate-900 transition-all"
+                        title="View job details"
+                      >
+                        <Eye size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <Pagination page={page} totalPages={totalPages} total={total} label="jobs" onPrev={() => setPage(p => p - 1)} onNext={() => setPage(p => p + 1)} />
+      </div>
+
+      {/* Detail modal */}
+      {previewJob && (
+        <Modal onClose={() => setPreviewJob(null)} title="Extraction Job Detail">
+          <div className="space-y-4 text-sm">
+            <Field label="Job ID" value={previewJob.job_id} />
+            <Field label="Status" value={previewJob.status} />
+            <Field label="File" value={previewJob.file_name || '—'} />
+            <Field label="User" value={previewJob.user_email || 'Unknown'} />
+            <Field label="Upload Type" value={previewJob.upload_type} />
+            <Field label="Extraction Method" value={previewJob.extraction_method || '—'} />
+            <Field label="Confidence" value={formatConfidence(previewJob.confidence)} />
+            <Field label="Failure Category" value={previewJob.failure_category || '—'} />
+            <Field label="Courses Extracted" value={String(previewJob.total_courses ?? 0)} />
+            <Field label="Duration" value={previewJob.duration_seconds ? `${previewJob.duration_seconds}s` : '—'} />
+            <Field label="Created" value={previewJob.created_at ? new Date(previewJob.created_at).toLocaleString() : '—'} />
+            <Field label="Updated" value={previewJob.updated_at ? new Date(previewJob.updated_at).toLocaleString() : '—'} />
+
+            {previewJob.error_message ? (
+              <div>
+                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">Error Message</span>
+                <p className="text-red-600 font-medium text-xs whitespace-pre-wrap bg-red-50 p-3 border border-red-200 rounded">{previewJob.error_message}</p>
+              </div>
+            ) : null}
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+function MiniStatusCard({ label, value, tone, icon }) {
+  const toneClasses = {
+    amber: 'bg-amber-50 border-amber-200 text-amber-800',
+    blue: 'bg-blue-50 border-blue-200 text-blue-800',
+    green: 'bg-emerald-50 border-emerald-200 text-emerald-800',
+    red: 'bg-red-50 border-red-200 text-red-800',
+  };
+
+  return (
+    <div className={`border-2 p-4 ${toneClasses[tone] || toneClasses.amber}`}>
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] font-black uppercase tracking-widest">{label}</span>
+        {icon}
+      </div>
+      <p className="text-2xl font-black mt-2">{value}</p>
+    </div>
+  );
+}
+
+// ==========================================================================
+// TAB 3: Failed Extractions
 // ==========================================================================
 function FailedExtractionsTab({ refreshKey }) {
   const [logs, setLogs] = useState([]);
@@ -415,7 +696,7 @@ function FailedExtractionsTab({ refreshKey }) {
 }
 
 // ==========================================================================
-// TAB 3: Incident Reports
+// TAB 4: Incident Reports
 // ==========================================================================
 function IncidentReportsTab({ refreshKey }) {
   const [reports, setReports] = useState([]);

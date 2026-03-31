@@ -394,6 +394,13 @@ export const extractionApi = {
    */
   failed: (params = {}) =>
     apiClient.get("/admin/extraction/failed/", { params }),
+
+  /**
+   * Paginated list of extraction jobs for queue visibility.
+   * params: { search, status, upload_type, user_id, date_from, date_to, page, page_size }
+   */
+  jobs: (params = {}) =>
+    apiClient.get("/admin/extraction/jobs/", { params }),
 };
 
 // ---------------------------------------------------------------------------
