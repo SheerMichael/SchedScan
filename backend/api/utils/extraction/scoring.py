@@ -29,21 +29,49 @@ def _bounded(value: float) -> float:
     return round(max(0.0, min(1.0, value)), 4)
 
 
-def _completeness_score(courses: List[Dict[str, Any]]) -> float:
+def _field_weights(upload_type: str) -> Dict[str, float]:
+    kind = (upload_type or '').lower()
+    if kind == 'faculty':
+        return {
+            'subject_code': 0.28,
+            'start_time': 0.22,
+            'end_time': 0.22,
+            'day': 0.15,
+            'location': 0.10,
+            'subject_name': 0.03,
+        }
+
+    # Student CORs often omit day/subject_name in handwritten formats, so keep
+    # those as low-impact fields to avoid false low-confidence rejections.
+    return {
+        'subject_code': 0.30,
+        'start_time': 0.25,
+        'end_time': 0.25,
+        'day': 0.05,
+        'location': 0.10,
+        'subject_name': 0.05,
+    }
+
+
+def _completeness_score(courses: List[Dict[str, Any]], upload_type: str) -> float:
     if not courses:
         return 0.0
-    fields = ["subject_code", "day", "start_time", "end_time", "subject_name", "location"]
+    weights = _field_weights(upload_type)
     score_sum = 0.0
     for course in courses:
-        present = sum(1 for f in fields if str(course.get(f, "")).strip())
-        score_sum += present / len(fields)
+        row_score = 0.0
+        for field_name, field_weight in weights.items():
+            if str(course.get(field_name, '')).strip():
+                row_score += field_weight
+        score_sum += row_score
     return score_sum / len(courses)
 
 
-def _consistency_score(courses: List[Dict[str, Any]]) -> float:
+def _consistency_score(courses: List[Dict[str, Any]], upload_type: str) -> float:
     if not courses:
         return 0.0
     consistent = 0.0
+    kind = (upload_type or '').lower()
     for course in courses:
         # Soft-day policy: a row can still be internally consistent without a day
         # token when source docs omit day columns (handwritten/summer formats).
@@ -54,7 +82,12 @@ def _consistency_score(courses: List[Dict[str, Any]]) -> float:
         if not has_core:
             continue
         has_day = bool(str(course.get("day", "")).strip())
-        consistent += 1.0 if has_day else 0.8
+        if has_day:
+            consistent += 1.0
+        elif kind == 'faculty':
+            consistent += 0.7
+        else:
+            consistent += 0.85
     return consistent / len(courses)
 
 
@@ -106,9 +139,9 @@ def score_candidates(
     weights = _resolve_weights(upload_type)
 
     breakdown = {
-        "completeness": _bounded(_completeness_score(courses)),
+        "completeness": _bounded(_completeness_score(courses, upload_type)),
         "validity": _bounded(_validity_score(validator_errors)),
-        "consistency": _bounded(_consistency_score(courses)),
+        "consistency": _bounded(_consistency_score(courses, upload_type)),
         "parser_reliability": _bounded(_prior_score(attempts)),
         "agreement": _bounded(_agreement_score(attempts)),
     }

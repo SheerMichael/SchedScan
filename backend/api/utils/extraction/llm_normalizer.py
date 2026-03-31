@@ -253,7 +253,15 @@ def _strip_markdown_fence(value: str) -> str:
 
 def _parse_llm_json(value: str) -> Dict[str, Any]:
     cleaned = _strip_markdown_fence(value)
-    parsed = json.loads(cleaned)
+    try:
+        parsed = json.loads(cleaned)
+    except JSONDecodeError:
+        # Some models wrap JSON with extra prose; recover the first object.
+        start = cleaned.find('{')
+        end = cleaned.rfind('}')
+        if start == -1 or end == -1 or end <= start:
+            raise
+        parsed = json.loads(cleaned[start:end + 1])
     if not isinstance(parsed, dict):
         raise ValueError('LLM response must be a JSON object')
     return parsed
@@ -268,6 +276,68 @@ def _validate_course_metadata(value: Any) -> bool:
     if unknown:
         return False
     return True
+
+
+def _sanitize_course_metadata(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+
+    sanitized: Dict[str, Any] = {}
+
+    parser = value.get('parser')
+    if isinstance(parser, str):
+        sanitized['parser'] = parser[:50].strip()
+
+    evidence = value.get('evidence')
+    if isinstance(evidence, str):
+        sanitized['evidence'] = evidence[:500].strip()
+
+    field_confidence = value.get('field_confidence')
+    if isinstance(field_confidence, dict):
+        normalized_confidence: Dict[str, float] = {}
+        for key, confidence_value in field_confidence.items():
+            if not isinstance(key, str):
+                continue
+            if not isinstance(confidence_value, (int, float)):
+                continue
+            normalized_confidence[key[:40]] = max(0.0, min(1.0, float(confidence_value)))
+        if normalized_confidence:
+            sanitized['field_confidence'] = normalized_confidence
+
+    return sanitized
+
+
+def _sanitize_course_row(value: Any) -> Dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+
+    normalized: Dict[str, Any] = {
+        'subject_code': str(value.get('subject_code') or '').strip()[:50],
+        'subject_name': str(value.get('subject_name') or '').strip()[:255],
+        'day': str(value.get('day') or '').strip()[:20],
+        'start_time': str(value.get('start_time') or '').strip()[:20],
+        'end_time': str(value.get('end_time') or '').strip()[:20],
+        'location': str(value.get('location') or '').strip()[:100],
+    }
+
+    metadata = _sanitize_course_metadata(value.get('metadata'))
+    if metadata:
+        normalized['metadata'] = metadata
+
+    return normalized
+
+
+def _coerce_courses(value: Any) -> List[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+
+    normalized_courses: List[Dict[str, Any]] = []
+    for item in value:
+        normalized_row = _sanitize_course_row(item)
+        if normalized_row is None:
+            continue
+        normalized_courses.append(normalized_row)
+    return normalized_courses
 
 
 def _validate_normalized_courses(courses: List[Dict[str, Any]]) -> bool:
@@ -371,8 +441,12 @@ def normalize_with_llm(
             logger.warning('LLM normalization response had unknown top-level keys: %s', sorted(unknown_top_level))
         if not isinstance(parsed, dict) or 'courses' not in parsed:
             return seed_courses, telemetry
-        courses = parsed.get('courses')
-        if not isinstance(courses, list):
+        courses_raw = parsed.get('courses')
+        courses = _coerce_courses(courses_raw)
+        if not isinstance(courses_raw, list):
+            return seed_courses, telemetry
+        if not courses and courses_raw:
+            logger.warning('LLM normalization response had unusable courses after sanitization')
             return seed_courses, telemetry
         if not _validate_normalized_courses(courses):
             return seed_courses, telemetry
@@ -394,6 +468,17 @@ def normalize_with_llm(
 # ---------------------------------------------------------------------------
 
 ALLOWED_DOC_METADATA_KEYS = {'student_number', 'semester', 'school_year'}
+
+
+def _sanitize_doc_metadata(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        value = {}
+
+    return {
+        'student_number': str(value.get('student_number') or '').strip(),
+        'semester': str(value.get('semester') or '').strip().upper(),
+        'school_year': str(value.get('school_year') or '').strip(),
+    }
 
 
 def _build_full_parse_prompt(raw_text: str, upload_type: str) -> str:
@@ -621,24 +706,22 @@ def parse_document_with_llm_vision(
                 sorted(unknown_top),
             )
 
-        courses = parsed.get('courses')
-        if not isinstance(courses, list):
+        courses_raw = parsed.get('courses')
+        courses = _coerce_courses(courses_raw)
+        if not isinstance(courses_raw, list):
             logger.warning('LLM vision parse: "courses" is not a list')
+            return [], empty_meta, telemetry
+        if not courses and courses_raw:
+            logger.warning('LLM vision parse: unusable courses after sanitization')
             return [], empty_meta, telemetry
         if not _validate_normalized_courses(courses):
             logger.warning('LLM vision parse: course schema validation failed')
             return [], empty_meta, telemetry
 
         raw_doc_meta = parsed.get('doc_metadata', {})
-        if not _validate_doc_metadata(raw_doc_meta):
+        if raw_doc_meta and not _validate_doc_metadata(raw_doc_meta):
             logger.warning('LLM vision parse: doc_metadata schema validation failed')
-            raw_doc_meta = {}
-
-        doc_metadata: Dict[str, Any] = {
-            'student_number': str(raw_doc_meta.get('student_number') or '').strip(),
-            'semester': str(raw_doc_meta.get('semester') or '').strip().upper(),
-            'school_year': str(raw_doc_meta.get('school_year') or '').strip(),
-        }
+        doc_metadata: Dict[str, Any] = _sanitize_doc_metadata(raw_doc_meta)
         telemetry['llm_parse_success'] = True
         return courses, doc_metadata, telemetry
     except requests.Timeout:
@@ -748,9 +831,13 @@ def parse_with_llm(
             )
 
         # Extract and validate courses
-        courses = parsed.get('courses')
-        if not isinstance(courses, list):
+        courses_raw = parsed.get('courses')
+        courses = _coerce_courses(courses_raw)
+        if not isinstance(courses_raw, list):
             logger.warning('LLM full-parse: "courses" is not a list')
+            return [], empty_meta, telemetry
+        if not courses and courses_raw:
+            logger.warning('LLM full-parse: unusable courses after sanitization')
             return [], empty_meta, telemetry
         if not _validate_normalized_courses(courses):
             logger.warning('LLM full-parse: course schema validation failed')
@@ -758,15 +845,9 @@ def parse_with_llm(
 
         # Extract and validate doc_metadata
         raw_doc_meta = parsed.get('doc_metadata', {})
-        if not _validate_doc_metadata(raw_doc_meta):
+        if raw_doc_meta and not _validate_doc_metadata(raw_doc_meta):
             logger.warning('LLM full-parse: doc_metadata schema validation failed')
-            raw_doc_meta = {}
-
-        doc_metadata: Dict[str, Any] = {
-            'student_number': str(raw_doc_meta.get('student_number') or '').strip(),
-            'semester': str(raw_doc_meta.get('semester') or '').strip().upper(),
-            'school_year': str(raw_doc_meta.get('school_year') or '').strip(),
-        }
+        doc_metadata: Dict[str, Any] = _sanitize_doc_metadata(raw_doc_meta)
 
         telemetry['llm_parse_success'] = True
         logger.info(

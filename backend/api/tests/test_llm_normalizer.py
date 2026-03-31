@@ -335,6 +335,53 @@ class ParseWithLLMTestCase(SimpleTestCase):
 
     @override_settings(**FULL_PARSE_SETTINGS)
     @patch('api.utils.extraction.llm_normalizer.requests.post')
+    def test_wrapped_json_payload_is_recovered(self, mock_post):
+        wrapped = (
+            'Here is the extracted JSON:\n'
+            + self.VALID_LLM_RESPONSE
+            + '\nDone.'
+        )
+        mock_post.return_value = self._make_mock_response(wrapped)
+
+        courses, meta, telemetry = parse_with_llm(
+            raw_text='Student number 2022-01191\nOS 1:00 pm - 3:00 pm LR1',
+            upload_type='student',
+        )
+
+        self.assertTrue(telemetry['llm_parse_success'])
+        self.assertGreaterEqual(len(courses), 1)
+        self.assertEqual(meta['student_number'], '2022-01191')
+
+    @override_settings(**FULL_PARSE_SETTINGS)
+    @patch('api.utils.extraction.llm_normalizer.requests.post')
+    def test_course_unknown_keys_are_ignored_by_sanitizer(self, mock_post):
+        payload = json.dumps({
+            'doc_metadata': {'student_number': '2022-01191', 'semester': '1ST', 'school_year': '2025-2026'},
+            'courses': [
+                {
+                    'subject_code': 'OS',
+                    'subject_name': '',
+                    'day': 'M',
+                    'start_time': '01:00PM',
+                    'end_time': '03:00PM',
+                    'location': 'LR1',
+                    'extra_field': 'should be dropped',
+                }
+            ],
+        })
+        mock_post.return_value = self._make_mock_response(payload)
+
+        courses, _, telemetry = parse_with_llm(
+            raw_text='OS 1:00 pm - 3:00 pm LR1',
+            upload_type='student',
+        )
+
+        self.assertTrue(telemetry['llm_parse_success'])
+        self.assertEqual(len(courses), 1)
+        self.assertNotIn('extra_field', courses[0])
+
+    @override_settings(**FULL_PARSE_SETTINGS)
+    @patch('api.utils.extraction.llm_normalizer.requests.post')
     def test_unknown_top_level_keys_logs_and_continues(self, mock_post):
         """parse_with_llm logs unknown top-level keys but still processes valid courses.
 
