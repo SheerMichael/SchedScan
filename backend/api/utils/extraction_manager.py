@@ -568,7 +568,7 @@ def run_extraction_job(job_id) -> None:
 
     # Local imports to avoid circular imports at module level
     from django.contrib.auth import get_user_model
-    from api.models import ExtractionJob, Course, ExtractionLog, Notification
+    from api.models import ExtractionJob, Course, ExtractionLog, Notification, Schedule
     from api.utils.notification_service import NotificationService
 
     logger.info("run_extraction_job: starting job %s", job_id)
@@ -632,19 +632,8 @@ def run_extraction_job(job_id) -> None:
 
             # ── 3a. Success: write Course rows ───────────────────────────────
             from django.db import transaction
-            with transaction.atomic():
-                for course_dict in courses_data:
-                    Course.objects.create(
-                        user=job.user,
-                        subject_code=course_dict.get('subject_code', ''),
-                        subject_name=course_dict.get('subject_name', ''),
-                        start_time=course_dict.get('start_time', ''),
-                        end_time=course_dict.get('end_time', ''),
-                        day=course_dict.get('day', ''),
-                        location=course_dict.get('location', ''),
-                    )
-
-            # Determine extraction_method for job record
+            
+            # Determine extraction_method EARLY (before transaction) so we always have it
             raw_method = result.get('extraction_method', 'none')
             if (
                 'llm_vision_parse' in result.get('attempts', [])
@@ -656,6 +645,68 @@ def run_extraction_job(job_id) -> None:
                 job_method = 'llm'
             else:
                 job_method = 'regex_fallback' if 'ocr_fallback' in result.get('attempts', []) else 'none'
+            
+            # Write schedule + courses with error tracking
+            written_count = 0
+            try:
+                with transaction.atomic():
+                    semester = str(result.get('semester') or '').strip()
+                    school_year = str(result.get('school_year') or '').strip()
+                    title_parts = [job.upload_type.title(), 'Schedule']
+                    if semester:
+                        title_parts.append(semester)
+                    if school_year:
+                        title_parts.append(school_year)
+                    created_stamp = timezone.localtime(timezone.now()).strftime('%Y-%m-%d %H:%M')
+                    auto_title = f"{' '.join(title_parts)} ({created_stamp})"
+
+                    saved_schedule = Schedule.objects.create(
+                        user=job.user,
+                        title=auto_title,
+                        upload_type=job.upload_type,
+                        semester=semester,
+                        school_year=school_year,
+                        is_active=False,
+                    )
+
+                    for course_dict in courses_data:
+                        Course.objects.create(
+                            user=job.user,
+                            schedule=saved_schedule,
+                            subject_code=course_dict.get('subject_code', ''),
+                            subject_name=course_dict.get('subject_name', ''),
+                            start_time=course_dict.get('start_time', ''),
+                            end_time=course_dict.get('end_time', ''),
+                            day=course_dict.get('day', ''),
+                            location=course_dict.get('location', ''),
+                            source_type=job.upload_type,
+                        )
+                        written_count += 1
+                
+                logger.info(
+                    "run_extraction_job: wrote %d courses for job %s into schedule %s (method=%s)",
+                    written_count, job_id, saved_schedule.id, job_method
+                )
+            except Exception as course_write_error:
+                logger.error(
+                    "run_extraction_job: CRITICAL - failed to write %d courses for job %s: %s",
+                    len(courses_data), job_id, str(course_write_error),
+                    exc_info=True
+                )
+                # Still fail the job but preserve the error context
+                job.status = 'failed'
+                job.extraction_method = job_method
+                job.courses = []  # Clear courses since they weren't written
+                job.confidence = result.get('confidence')
+                job.failure_category = 'system_error'
+                job.error_message = f"Extracted {len(courses_data)} courses but database write failed: {str(course_write_error)[:500]}"
+                job.llm_failure_reason = ''
+                job._temp_file_path = ''
+                job.save()
+                
+                _write_extraction_log_for_job(job, result, success=False)
+                _send_extraction_job_notification(job, success=False)
+                return
 
             job.status = 'done'
             job.extraction_method = job_method
@@ -670,8 +721,8 @@ def run_extraction_job(job_id) -> None:
             job.save()
 
             logger.info(
-                "run_extraction_job: job %s → done (%d courses, confidence=%.2f)",
-                job_id, len(courses_data), result.get('confidence', 0.0),
+                "run_extraction_job: job %s → done (%d courses written, confidence=%.2f, method=%s)",
+                job_id, written_count, result.get('confidence', 0.0), job_method,
             )
 
             # ── Telemetry ────────────────────────────────────────────────────

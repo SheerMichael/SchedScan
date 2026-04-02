@@ -42,6 +42,8 @@ export default function Scanner() {
   const [incidentDetails, setIncidentDetails] = useState('');
   const [uploadError, setUploadError] = useState('');
   const [processingSubtitle, setProcessingSubtitle] = useState('Extracting course data...');
+  const [showBehindScenesModal, setShowBehindScenesModal] = useState(false);
+  const [backgroundJobId, setBackgroundJobId] = useState('');
   const activePollRef = useRef<ActivePollState | null>(null);
 
   // Faculty mode unlock modal
@@ -93,7 +95,24 @@ export default function Scanner() {
     }
 
     setIsUploading(false);
-    setShowTitleModal(true);
+    setShowBehindScenesModal(false);
+    Alert.alert(
+      'Schedule Saved',
+      'Extraction completed and your schedule has been saved automatically. You can review it in Schedules.',
+      [
+        {
+          text: 'View Schedules',
+          onPress: () => {
+            resetScanner();
+            router.push('/Home/schedules');
+          },
+        },
+        {
+          text: 'Stay Here',
+          style: 'cancel',
+        },
+      ]
+    );
   }, [user?.id]);
 
   const finalizeJobFromPush = useCallback(async (activePoll: ActivePollState) => {
@@ -111,6 +130,7 @@ export default function Scanner() {
       }
 
       if (jobStatus.status === 'failed') {
+        setShowBehindScenesModal(false);
         setIsUploading(false);
         setUploadError(jobStatus.message || 'Extraction failed. Please try again.');
         setReportModal(true);
@@ -118,7 +138,7 @@ export default function Scanner() {
       }
 
       setIsUploading(false);
-      Alert.alert('Still Processing', "We'll notify you when done.");
+      setShowBehindScenesModal(true);
     } catch (error) {
       setIsUploading(false);
       Alert.alert('Status Check Failed', 'Unable to fetch extraction result. Please check your schedules shortly.');
@@ -294,7 +314,11 @@ export default function Scanner() {
           cancelToken,
         };
 
-        setProcessingSubtitle('Processing your schedule...');
+        setBackgroundJobId(response.job_id);
+        setIsUploading(false);
+        setShowBehindScenesModal(true);
+        setProcessingSubtitle('Extraction is running in the background...');
+
         const result = await courseService.pollExtractionJob(response.job_id, {
           maxAttempts: 10,
           intervalMs: 3000,
@@ -308,6 +332,7 @@ export default function Scanner() {
         activePollRef.current = null;
 
         if (result.status === 'done') {
+          setShowBehindScenesModal(false);
           await handleExtractionSuccess(result, uploadType, {
             isRetry,
             alreadyRecorded: true,
@@ -319,8 +344,7 @@ export default function Scanner() {
           throw new Error(result.message || 'Extraction failed. Please try again.');
         }
 
-        setIsUploading(false);
-        Alert.alert('Still Processing', "We'll notify you when done.");
+        setShowBehindScenesModal(true);
         return;
       }
 
@@ -421,6 +445,8 @@ export default function Scanner() {
     setUploadedCourses([]);
     setUploadedSemester('');
     setUploadedSchoolYear('');
+    setShowBehindScenesModal(false);
+    setBackgroundJobId('');
   };
 
   const canRetryExtraction = Boolean(selectedFile && selectedRole);
@@ -559,9 +585,57 @@ export default function Scanner() {
             <ActivityIndicator size="large" color="#B88080" />
             <Text className="mt-4 text-lg font-bold text-gray-800">Processing</Text>
             <Text className="text-sm text-gray-500 mt-1">{processingSubtitle}</Text>
+            <Text className="text-xs text-gray-400 mt-2 text-center">
+              We will continue this in the background after upload is accepted.
+            </Text>
           </View>
         </View>
       )}
+
+      <Modal
+        visible={showBehindScenesModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowBehindScenesModal(false)}
+      >
+        <View className="flex-1 bg-black/60 justify-center items-center px-6">
+          <View className="bg-white rounded-2xl p-6 w-full shadow-lg">
+            <Text className="text-xl font-bold text-gray-900 mb-2">Extraction Running in Background</Text>
+            <Text className="text-sm text-gray-600 leading-5 mb-3">
+              Your file is accepted and being processed on our server. You can safely leave this page and keep using the app.
+            </Text>
+            <Text className="text-sm text-gray-600 leading-5 mb-4">
+              We will send a notification when your schedule is extracted and saved.
+            </Text>
+
+            {backgroundJobId ? (
+              <View className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 mb-4">
+                <Text className="text-xs text-gray-500">Job ID</Text>
+                <Text className="text-xs text-gray-700 mt-1">{backgroundJobId}</Text>
+              </View>
+            ) : null}
+
+            <View className="gap-3">
+              <TouchableOpacity
+                className="bg-[#B88080] py-3 rounded-xl"
+                onPress={() => {
+                  setShowBehindScenesModal(false);
+                  router.replace('/Home/home');
+                }}
+              >
+                <Text className="text-center font-bold text-white">Continue Using App</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                className="bg-gray-100 py-3 rounded-xl"
+                onPress={() => setShowBehindScenesModal(false)}
+              >
+                <Text className="text-center font-semibold text-gray-700">Stay Here</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Title Input Modal */}
       <Modal

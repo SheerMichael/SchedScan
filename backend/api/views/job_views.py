@@ -91,7 +91,7 @@ class ExtractionJobStatusView(APIView):
                     "extraction_method": job.extraction_method or 'unknown',
                     "semester": job.semester or '',
                     "school_year": job.school_year or '',
-                    "message": "Your schedule has been successfully extracted.",
+                    "message": "Your schedule has been successfully extracted and saved.",
                 },
                 status=status.HTTP_200_OK,
             )

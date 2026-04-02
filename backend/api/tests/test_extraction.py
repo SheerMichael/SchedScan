@@ -702,7 +702,7 @@ class AsyncExtractionJobTestCase(TestCase):
     def test_run_extraction_job_success(self, mock_manager_class, mock_log, mock_notify):
         """run_extraction_job() sets status=done and writes courses on success."""
         import tempfile, os
-        from api.models import ExtractionJob
+        from api.models import ExtractionJob, Schedule, Course
         from api.utils.extraction_manager import run_extraction_job
 
         # Create a real temp file
@@ -747,6 +747,11 @@ class AsyncExtractionJobTestCase(TestCase):
         job.refresh_from_db()
         self.assertEqual(job.status, 'done')
         self.assertEqual(len(job.courses), 1)
+        self.assertEqual(Schedule.objects.filter(user=self.user, upload_type='student').count(), 1)
+        saved_schedule = Schedule.objects.filter(user=self.user, upload_type='student').latest('id')
+        linked_courses = Course.objects.filter(schedule=saved_schedule, user=self.user)
+        self.assertEqual(linked_courses.count(), 1)
+        self.assertEqual(linked_courses.first().subject_code, 'BSCS101')
         mock_notify.assert_called_once_with(job, success=True)
         # Temp file should be cleaned up
         self.assertFalse(os.path.exists(temp_path))
