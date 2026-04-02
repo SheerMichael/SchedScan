@@ -1,6 +1,6 @@
 # SchedScan Extraction Pipeline — Master Update Log
 
-**Last updated:** 2026-03-29 (23:20 PHT)
+**Last updated:** 2026-03-31 (23:30 PHT)
 
 ---
 
@@ -14,6 +14,33 @@ The extraction pipeline is now **vision-only, LLM-primary, async**.
 - Validation, scoring, ownership checks, async jobs, polling, and push notifications remain in place as reliability guardrails.
 
 Recommended production model for current infrastructure: `granite3.2-vision:2b`.
+
+### Critical Reality Check (2026-03-31)
+
+We made real progress, but rollout readiness was delayed by configuration drift and access-control debugging.
+
+**What we actually accomplished during the deployment hardening cycle:**
+
+- Restored Droplet SSH access after connectivity and console handshake issues.
+- Identified the root cause of repeated nginx `403` responses: mismatched key testing (`placeholder`/empty variable values vs enforced nginx key).
+- Confirmed nginx API-key gate behavior now works as intended: no-key requests return `403`, correct key returns `200`.
+- Updated App Platform extraction flags to vision-only runtime settings.
+
+**What we confirmed during runtime triage (late-session):**
+
+- Model and gateway are healthy at rest (`ollama list` includes `granite3.2-vision:2b`; nginx key gate returns expected `403/200`).
+- Primary production failure was **runtime memory pressure** on the 4GB Ollama Droplet during model runner startup:
+  - Ollama logs showed `llama runner process has terminated: signal: killed` and `timed out waiting for llama runner to start`.
+- Mitigations were applied on the Droplet:
+  - 6GB swap file enabled and persisted in `/etc/fstab`.
+  - Ollama service constrained to single-model/single-parallel execution (`OLLAMA_NUM_PARALLEL=1`, `OLLAMA_MAX_LOADED_MODELS=1`, `OLLAMA_KEEP_ALIVE=5m`).
+  - Post-mitigation `curl /api/generate` with API key returned successful JSON response.
+
+**What is still required before calling rollout complete:**
+
+- Run end-to-end production smoke tests (upload -> `202` -> polling terminal state -> DB write + push behavior) after the memory fix.
+- Apply upload-type threshold overrides in App Platform (faculty currently over-rejected by global threshold).
+- Capture burn-in telemetry window (confidence and failure categories) before digest lock.
 
 ---
 
@@ -159,14 +186,35 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/api/tags \
 | `EXTRACTION_LLM_VISION_MODEL_NAME` | `granite3.2-vision:2b` |
 | `EXTRACTION_LLM_VISION_MAX_PAGES` | `2` |
 | `EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL` | `True` |
+| `EXTRACTION_LLM_VISION_REQUIRE_MODEL_DIGEST` | `False` *(enable after burn-in)* |
+| `EXTRACTION_LLM_VISION_MODEL_DIGEST` | *(optional until digest lock)* |
 | `EXTRACTION_LLM_FULL_PARSE_ENABLED` | `False` *(legacy path, not used by runtime orchestration)* |
 | `EXTRACTION_LLM_STARTUP_CHECK_ENABLED` | `True` |
 | `EXTRACTION_LLM_STARTUP_CHECK_STRICT` | `False` |
+| `EXTRACTION_LLM_STARTUP_CHECK_TIMEOUT_SECONDS` | `2` |
 | `EXTRACTION_LLM_MODEL_NAME` | *(optional, legacy only)* |
 | `EXTRACTION_LLM_API_KEY` | `<redacted-secret-in-do-app-platform>` |
 | `EXTRACTION_LLM_MODEL_DIGEST` | *(optional, legacy only)* |
 | `EXTRACTION_LLM_REQUIRE_MODEL_DIGEST` | `False` *(legacy only)* |
 | `EXTRACTION_LLM_TIMEOUT_SECONDS` | `45` |
+
+#### Scoring / Threshold Overrides (recommended for current rollout)
+
+| Key | Value | Notes |
+|---|---|---|
+| `EXTRACTION_ACCEPT_THRESHOLD_STUDENT` | `0.85` | Keep strict ownership/student quality guard |
+| `EXTRACTION_RETRY_THRESHOLD_STUDENT` | `0.60` | Existing student retry floor |
+| `EXTRACTION_ACCEPT_THRESHOLD_FACULTY` | `0.72` | Reduces false low-confidence rejects on faculty files |
+| `EXTRACTION_RETRY_THRESHOLD_FACULTY` | `0.50` | Keeps fallback behavior without over-rejecting |
+
+#### Ollama Droplet Runtime Overrides (systemd)
+
+| Setting | Value |
+|---|---|
+| `OLLAMA_NUM_PARALLEL` | `1` |
+| `OLLAMA_MAX_LOADED_MODELS` | `1` |
+| `OLLAMA_KEEP_ALIVE` | `5m` |
+| Swap | `6GB /swapfile` enabled |
 
 #### Quality Gate Settings
 
@@ -178,6 +226,89 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/api/tags \
 ---
 
 ## Session History
+
+### 2026-03-31 (Session 7) — Production Runtime Stability + Ownership Hotfix ✅ IMPLEMENTED
+
+**Goal:** Resolve persistent production failures after deployment (`low_confidence`, `student_number missing`) and complete high-signal diagnostics.
+
+#### Runtime Findings
+
+- Ollama runtime was reachable but model runner frequently died under load on the 4GB Droplet (`signal: killed`).
+- This produced downstream symptoms in app flows:
+  - faculty uploads ending as `low_confidence`,
+  - student uploads failing ownership gate with `STUDENT_NUMBER_MISSING`.
+
+#### Infrastructure Mitigations Applied
+
+- Added and activated `6GB` swap.
+- Added Ollama systemd overrides to reduce memory spikes:
+  - `OLLAMA_NUM_PARALLEL=1`
+  - `OLLAMA_MAX_LOADED_MODELS=1`
+  - `OLLAMA_KEEP_ALIVE=5m`
+- Restarted Ollama and validated direct generate call success via nginx key-gated endpoint.
+
+#### Code Hotfixes Pushed to `main`
+
+- Commit `f633159`:
+  - LLM JSON parse recovery for wrapped outputs.
+  - Schema-safe sanitization before validation.
+  - Reduced brittle scoring penalties for optional fields.
+  - Day/time validation hardening for real faculty formats.
+- Commit `8e97d2d`:
+  - Student number normalization and raw-text recovery fallback during synchronous ownership verification.
+  - Supports compact and spaced formats (`YYYYNNNNN`, `YYYY NNNNN`, `YYYY-NNNNN`).
+
+#### Validation
+
+```bash
+39 targeted tests passed (validators + llm normalizer + redaction + ownership helpers)
+```
+
+### 2026-03-31 (Session 6) — Admin Visibility Integration ✅ IMPLEMENTED
+
+**Goal:** Complete admin-side operational visibility for async extraction jobs.
+
+#### Code Changes
+
+- Commit `b79325e`:
+  - Added admin API client support for `GET /api/admin/extraction/jobs/`.
+  - Added Extraction Jobs tab to admin health screen with:
+    - status/upload-type/date filters,
+    - queue breakdown cards,
+    - paginated table,
+    - per-job detail modal.
+
+#### Validation
+
+```bash
+Admin production build succeeded (Vite build OK)
+```
+
+### 2026-03-31 (Session 5) — Deployment Hardening + Config Drift Fixes ✅ IN PROGRESS
+
+**Goal:** Complete production readiness for vision-only runtime after infra and auth-key troubleshooting.
+
+#### Accomplishments
+
+- Restored administrative access path to Droplet (SSH + operational console workflow).
+- Validated network path: public proxy port `8080` reachable while SSH required targeted recovery.
+- Corrected nginx/API-key verification process and confirmed expected gate behavior:
+  - Missing key -> `403`
+  - Correct key -> `200`
+- Reconciled App Platform extraction env vars to vision-first settings (`VISION_PARSE=True`, `DIRECT_FILE_PARSE=True`, `FULL_PARSE=False`).
+
+#### Root Cause of Delay
+
+- Repeated `403` checks were caused by key mismatch during manual tests:
+  - placeholder values used in curl headers,
+  - silent `read -s` usage with empty variable in some attempts,
+  - nginx enforcing a different key than the one being tested.
+
+#### Remaining Operational Work
+
+- Confirm vision model presence on Droplet (`granite3.2-vision:2b`).
+- Perform full production smoke test cycle.
+- Rotate key again and keep it synchronized across nginx + App Platform.
 
 ### 2026-03-29 (Session 4) — Vision-Only Runtime Cutover ✅ IMPLEMENTED
 
@@ -332,7 +463,7 @@ New tests covering:
 |---|---|
 | Phase 1: Quality Gates & Telemetry | ✅ Complete |
 | Phase 2: Staged Orchestration | ✅ Complete |
-| Phase 3: Vision LLM Parser (primary) | ✅ Live |
+| Phase 3: Vision LLM Parser (primary) | 🟡 Code complete; production validation in progress |
 | Legacy text LLM parser paths | ⚪ Disabled in runtime orchestration |
 | `ExtractionJob` model + migrations | ✅ Done |
 | `run_extraction_job()` background runner | ✅ Done |
@@ -345,15 +476,55 @@ New tests covering:
 | Frontend: Upload flow → poll → show result | ✅ Implemented |
 | Frontend: Handle push notification → stop polling | ✅ Implemented |
 | Backend: Admin extraction jobs API | ✅ Implemented (`GET /api/admin/extraction/jobs/`) |
-| Frontend: Admin dashboard — job visibility | 🟡 Pending UI integration |
+| Nginx `X-Api-Key` gate verification | ✅ Fixed (403 without key, 200 with correct key) |
+| SSH / Droplet ops access stability | ✅ Recovered |
+| Vision model installed on Droplet | ✅ Confirmed (`granite3.2-vision:2b`) |
+| Frontend: Admin dashboard — job visibility | ✅ Implemented and pushed (`b79325e`) |
+| Ollama runtime memory stabilization | ✅ Swap + single-runner constraints applied |
+| Student ownership fallback for missing ID formats | ✅ Implemented and pushed (`8e97d2d`) |
 | `EXTRACTION_LLM_REQUIRE_MODEL_DIGEST=True` | 🟡 Pending burn-in telemetry |
-| Confidence threshold recalibration | 🟡 Pending real-world LLM telemetry |
+| Confidence threshold recalibration | 🟡 Pending upload-type threshold rollout + telemetry |
 
 ---
 
 ## Clear Next Steps
 
-### Step 6 — Productionize Vision-First Mode
+### Step 6 — Complete Productionization (Post-Runtime-Stabilization)
+
+1. Keep runtime stability controls in place on Droplet:
+  - ensure `/swapfile` remains active after reboot (`swapon --show`)
+  - ensure Ollama service override env vars are loaded (`systemctl show ollama --property=Environment`)
+2. Re-validate key gate quickly:
+  - no key -> `403`
+  - correct key -> `200`
+3. Confirm production env flags:
+  - `EXTRACTION_LLM_VISION_PARSE_ENABLED=True`
+  - `EXTRACTION_LLM_DIRECT_FILE_PARSE_ENABLED=True`
+  - `EXTRACTION_LLM_VISION_MODEL_NAME=granite3.2-vision:2b`
+  - `EXTRACTION_LLM_VISION_MAX_PAGES=1` (temporary stabilization mode)
+  - `EXTRACTION_LLM_FULL_PARSE_ENABLED=False`
+4. Apply upload-type thresholds:
+  - `EXTRACTION_ACCEPT_THRESHOLD_FACULTY=0.72`
+  - `EXTRACTION_RETRY_THRESHOLD_FACULTY=0.50`
+5. Run smoke tests (student + faculty uploads) and record outcomes.
+
+### Step 7 — End-to-End Production Verification (required)
+
+Run and log at least 5 representative files:
+
+1. 2 clean PDFs
+2. 1 image-based upload
+3. 1 low-quality/noisy input
+4. 1 failure-path sample
+
+Acceptance criteria:
+
+- Upload endpoint returns `202` consistently.
+- Polling endpoint reaches terminal state (`done` or `failed`) without hanging.
+- Successful runs write expected course rows.
+- Failure runs provide actionable `failure_category`.
+
+### Step 8 — Frontend: Admin Dashboard Job Visibility (optional)
 
 1. Set production env flags:
   - `EXTRACTION_LLM_VISION_PARSE_ENABLED=True`
@@ -364,14 +535,12 @@ New tests covering:
   - `EXTRACTION_LLM_FULL_PARSE_ENABLED=False`
 3. Monitor p50/p95 latency and failure categories for 1 week.
 
-### Step 7 — Frontend: Admin Dashboard Job Visibility (optional)
-
 Add an `ExtractionJob` list to the admin dashboard so admins can monitor stuck/failed jobs.
 
 - Backend: `GET /api/admin/extraction/jobs/` is already implemented (filters: status, user, date, search)
 - Frontend: add dashboard tab/table for pending/processing/done/failed breakdown and drill-down
 
-### Step 8 — Threshold Recalibration
+### Step 9 — Threshold Recalibration
 
 After 2–4 weeks of real-world LLM extraction traffic:
 1. Pull `ExtractionLog` records where `llm_parse_success=True`
@@ -379,7 +548,7 @@ After 2–4 weeks of real-world LLM extraction traffic:
 3. Adjust `EXTRACTION_ACCEPT_THRESHOLD` (currently `0.85`) if LLM results are consistently rejected due to scoring model mismatch
 4. Enable `EXTRACTION_LLM_REQUIRE_MODEL_DIGEST=True` once model version is confirmed stable
 
-### Step 9 — Model Digest Lock
+### Step 10 — Model Digest Lock
 
 Once Ollama is confirmed stable on `granite3.2-vision:2b` for 48h+:
 ```
@@ -418,6 +587,7 @@ In `upload_views.py`, comment out the thread launch block and restore a direct `
 | Ollama Droplet goes down | Low | Regex fallback runs for all jobs | ✅ Mitigated |
 | Async thread dies silently | **High** | `except Exception` safety net always marks job `failed` + notifies user | ✅ **Fixed** |
 | Vision parse latency spikes on multi-page PDFs | Medium | Limit pages (`EXTRACTION_LLM_VISION_MAX_PAGES`), keep async UX and fallback | 🟡 Monitoring |
-| Confidence too strict after LLM parse | Medium | Recalibrate after telemetry data — see Step 8 | 🟡 Pending |
+| Confidence too strict after LLM parse (faculty) | Medium | Upload-type thresholds + telemetry recalibration | 🟡 In progress |
 | Digest mismatch after model update | Low | `VISION_REQUIRE_MODEL_DIGEST=False` currently — enable after burn-in | 🟡 Pending |
 | Jobs stuck in `processing` if server restarts | Low | Startup recovery marks stale `processing` jobs as `failed` and notifies users | ✅ Fixed |
+| Ollama runner OOM on 4GB host | High | 6GB swap + single parallel/loaded model constraints | ✅ Mitigated |

@@ -1,8 +1,60 @@
 # SchedScan: Schedule Extraction Pipeline — Implementation Reference
 
-> **Status:** Active development.
-> Last updated: 2026-03-29
+> **Status:** Active deployment validation with runtime stabilization applied.
+> Last updated: 2026-03-31 (23:30 PHT)
 > Architecture: Vision-only LLM-primary, async, regex fallback.
+
+## 0. Deployment Reality Check (2026-03-31)
+
+### Confirmed Accomplished
+
+- Vision-only runtime orchestration is implemented in code.
+- Legacy text parser runtime path is disabled (`EXTRACTION_LLM_FULL_PARSE_ENABLED=False`).
+- Nginx API-key gate behavior is confirmed working (`403` without key, `200` with correct key).
+- App Platform variables are aligned to vision-first settings.
+- Admin extraction jobs visibility UI is implemented and deployed.
+- LLM parser/validator/scoring robustness fixes have been pushed to `main`.
+- Student ownership check now normalizes and recovers student number from raw text when metadata misses it.
+
+### What Was Blocking Progress
+
+- Operational debugging drift: multiple `403` tests were performed with placeholder keys, empty shell variables, or key mismatches between nginx and App Platform.
+- SSH/console access issues delayed rollout validation and model verification tasks.
+
+### Still Required for a Production-Complete Claim
+
+- Execute and document end-to-end production smoke tests.
+- Apply upload-type threshold overrides for faculty confidence behavior.
+- Gather burn-in telemetry before enabling strict digest lock.
+
+### Runtime Incident and Mitigation (Late Session)
+
+Observed production symptom pattern:
+
+- Faculty uploads failing with low confidence despite readable files.
+- Student uploads intermittently failing ownership gate (`student number missing`).
+
+Root cause identified in Ollama logs:
+
+- `llama runner process has terminated: signal: killed`
+- `timed out waiting for llama runner to start`
+
+Interpretation:
+
+- This is a memory-pressure/OOM condition on the `s-2vcpu-4gb` Droplet, not a pure parser prompt problem.
+
+Mitigations applied:
+
+- Enabled `6GB` swap and persisted in `/etc/fstab`.
+- Added Ollama service constraints:
+  - `OLLAMA_NUM_PARALLEL=1`
+  - `OLLAMA_MAX_LOADED_MODELS=1`
+  - `OLLAMA_KEEP_ALIVE=5m`
+- Revalidated direct generate call success through nginx key-gated endpoint.
+
+Result:
+
+- Runtime now consistently reaches model response on direct health/generate probes.
 
 ---
 
@@ -77,7 +129,7 @@ POST /api/upload-cor/{student|faculty}/
                 │
         ┌───────┴───────┐
         │               │
-   confidence ≥ 0.85   confidence < 0.85
+  confidence ≥ threshold(upload_type)   confidence < threshold(upload_type)
         │               │
         ▼               ▼
      Save ✅         Reject 422 ❌
@@ -135,7 +187,7 @@ pending → processing → done
                     └─► failed (regex fallback ran, or full rejection)
 ```
 
-### ExtractionJob Model (to add to models.py)
+### ExtractionJob Model (implemented in models.py)
 
 ```python
 class ExtractionJob(models.Model):
@@ -300,6 +352,8 @@ Composite score computed after validation:
 | `EXTRACTION_LLM_DIRECT_FILE_PARSE_ENABLED` | `True` | Bypasses OCR/pdfplumber orchestration |
 | `EXTRACTION_LLM_VISION_MODEL_NAME` | `granite3.2-vision:2b` | Primary vision model |
 | `EXTRACTION_LLM_VISION_MAX_PAGES` | `2` | Limits rendered PDF pages sent to model |
+| `EXTRACTION_LLM_VISION_REQUIRE_MODEL_DIGEST` | `False` | Keep disabled during burn-in; enable once stable |
+| `EXTRACTION_LLM_VISION_MODEL_DIGEST` | *(optional)* | Required only when digest lock is enabled |
 | `EXTRACTION_LLM_FULL_PARSE_ENABLED` | `False` | Legacy text parser flag (not used by runtime orchestration) |
 | `EXTRACTION_LLM_MODEL_NAME` | *(optional)* | Legacy text model config (not used by runtime orchestration) |
 | `EXTRACTION_LLM_BASE_URL` | `http://209.97.172.45:8080` | Ollama on DigitalOcean Droplet |
@@ -307,7 +361,30 @@ Composite score computed after validation:
 | `EXTRACTION_LLM_TIMEOUT_SECONDS` | `45` | Hard timeout per LLM call |
 | `EXTRACTION_LLM_MAX_INPUT_CHARS` | `6000` | Legacy text-parser input bound (not used in runtime orchestration) |
 | `EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL` | `True` | Reject `:latest` tags for vision model |
+| `EXTRACTION_LLM_STARTUP_CHECK_ENABLED` | `True` | Validate runtime/model availability on startup |
+| `EXTRACTION_LLM_STARTUP_CHECK_STRICT` | `False` | Warn-only startup behavior during rollout |
+| `EXTRACTION_LLM_STARTUP_CHECK_TIMEOUT_SECONDS` | `2` | Startup check request timeout |
 | `EXTRACTION_ACCEPT_THRESHOLD` | `0.85` | Minimum to accept & save |
+
+### Recommended Threshold Overrides (App Platform)
+
+These values preserve strict student ownership quality while reducing false negatives for faculty docs:
+
+| Setting | Value | Rationale |
+|---|---|---|
+| `EXTRACTION_ACCEPT_THRESHOLD_STUDENT` | `0.85` | Keep current strict student gate |
+| `EXTRACTION_RETRY_THRESHOLD_STUDENT` | `0.60` | Existing student retry floor |
+| `EXTRACTION_ACCEPT_THRESHOLD_FACULTY` | `0.72` | Faculty formats are more variable; reduce over-rejection |
+| `EXTRACTION_RETRY_THRESHOLD_FACULTY` | `0.50` | Maintain fallback window without dropping too many valid rows |
+
+### Ollama Runtime Overrides (Droplet systemd)
+
+| Setting | Value | Purpose |
+|---|---|---|
+| `OLLAMA_NUM_PARALLEL` | `1` | Prevent concurrent runner memory spikes |
+| `OLLAMA_MAX_LOADED_MODELS` | `1` | Avoid multi-model memory contention |
+| `OLLAMA_KEEP_ALIVE` | `5m` | Keep one warm model, reduce churn |
+| Swap | `6GB` | Buffer against runner startup OOM on 4GB RAM |
 
 ---
 
@@ -390,3 +467,31 @@ Key test classes:
 | `LLMNormalizerTestCase` | Legacy text normalizer helper coverage (schema, API key, timeout) |
 | `ExtractionManagerTestCase` | Orchestration, async job lifecycle |
 | `FacultyOCRDayRecoveryTestCase` | Regex fallback — OCR noise in day tokens |
+| `RedactionTestCase` | PII masking and student-number normalization/recovery helpers |
+
+### Recent Validation Runs
+
+```bash
+32 tests passed (llm_normalizer + scoring + validators)
+39 tests passed (redaction + llm_normalizer + validators)
+```
+
+### Recent Production Commits
+
+| Commit | Scope |
+|---|---|
+| `b79325e` | Admin extraction jobs tab + API wiring |
+| `f633159` | LLM parse/sanitization robustness + validator/scoring hardening |
+| `8e97d2d` | Student ownership fallback: normalize/extract student ID from raw text |
+
+### Operational Validation Checklist (not covered by unit tests)
+
+1. Nginx auth gate:
+  - `curl http://localhost:8080/api/tags` -> `403`
+  - `curl -H "X-Api-Key: <valid>" http://localhost:8080/api/tags` -> `200`
+2. Model availability:
+  - `ollama list` includes `granite3.2-vision:2b`
+3. Production E2E:
+  - upload returns `202`
+  - polling transitions to terminal state
+  - success writes courses and failure returns actionable category

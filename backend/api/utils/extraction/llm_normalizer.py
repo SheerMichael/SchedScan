@@ -635,14 +635,18 @@ def parse_document_with_llm_vision(
     telemetry: Dict[str, Any] = {
         'llm_used': False,
         'llm_parse_success': False,
+        'llm_failure_reason': '',
         'llm_model': '',
         'llm_timeout_seconds': int(getattr(settings, 'EXTRACTION_LLM_TIMEOUT_SECONDS', 12)),
+        'llm_retry_count': 0,
         'stage': 'llm_vision_parse',
     }
 
     if not bool(getattr(settings, 'EXTRACTION_LLM_VISION_PARSE_ENABLED', False)):
+        telemetry['llm_failure_reason'] = 'schema_reject'
         return [], empty_meta, telemetry
     if not bool(getattr(settings, 'EXTRACTION_LLM_NORMALIZATION_ENABLED', False)):
+        telemetry['llm_failure_reason'] = 'schema_reject'
         return [], empty_meta, telemetry
 
     model_name = str(
@@ -653,10 +657,20 @@ def parse_document_with_llm_vision(
 
     if not model_name:
         logger.warning('LLM vision parse enabled but no vision model name is configured')
+        telemetry['llm_failure_reason'] = 'schema_reject'
         return [], empty_meta, telemetry
 
     timeout_seconds = int(getattr(settings, 'EXTRACTION_LLM_TIMEOUT_SECONDS', 12))
     max_pages = int(getattr(settings, 'EXTRACTION_LLM_VISION_MAX_PAGES', 2))
+    retry_count = max(0, int(getattr(settings, 'EXTRACTION_LLM_VISION_RETRY_COUNT', 1)))
+    retry_timeout_seconds = max(
+        timeout_seconds,
+        int(getattr(settings, 'EXTRACTION_LLM_VISION_RETRY_TIMEOUT_SECONDS', timeout_seconds)),
+    )
+    retry_max_pages = max(
+        max_pages,
+        int(getattr(settings, 'EXTRACTION_LLM_VISION_RETRY_MAX_PAGES', max(max_pages, 2))),
+    )
     base_url = str(getattr(settings, 'EXTRACTION_LLM_BASE_URL', 'http://127.0.0.1:11434')).rstrip('/')
     generate_url = f'{base_url}{OLLAMA_GENERATE_PATH}'
 
@@ -670,69 +684,103 @@ def parse_document_with_llm_vision(
     )
     if not policy_ok:
         logger.warning('LLM vision parse policy check failed: %s', policy_error)
+        telemetry['llm_failure_reason'] = 'schema_reject'
         return [], empty_meta, telemetry
 
-    images_b64 = _load_document_images_for_vision(file_path, max_pages=max_pages)
-    if not images_b64:
-        return [], empty_meta, telemetry
+    retryable_reasons = {'timeout', 'empty_courses'}
 
-    try:
-        request_payload = {
-            'model': model_name,
-            'prompt': _build_vision_parse_prompt(upload_type),
-            'images': images_b64,
-            'stream': False,
-            'format': 'json',
-            'options': {'temperature': 0},
-        }
-        response = requests.post(
-            generate_url,
-            json=request_payload,
-            timeout=timeout_seconds,
-            headers=_build_ollama_headers(content_type=True),
-        )
-        response.raise_for_status()
-        ollama_payload = response.json()
-        llm_output = _extract_response_text(ollama_payload)
-        if not llm_output:
-            logger.warning('LLM vision parse returned empty response')
+    for attempt_index in range(retry_count + 1):
+        telemetry['llm_retry_count'] = attempt_index
+        is_retry = attempt_index > 0
+        attempt_timeout_seconds = retry_timeout_seconds if is_retry else timeout_seconds
+        attempt_max_pages = retry_max_pages if is_retry else max_pages
+
+        images_b64 = _load_document_images_for_vision(file_path, max_pages=attempt_max_pages)
+        if not images_b64:
+            telemetry['llm_failure_reason'] = 'empty_courses'
             return [], empty_meta, telemetry
 
-        parsed = _parse_llm_json(llm_output)
-        unknown_top = set(parsed.keys()) - {'courses', 'doc_metadata'}
-        if unknown_top:
-            logger.warning(
-                'LLM vision parse response had unknown top-level keys (ignored): %s',
-                sorted(unknown_top),
+        try:
+            request_payload = {
+                'model': model_name,
+                'prompt': _build_vision_parse_prompt(upload_type),
+                'images': images_b64,
+                'stream': False,
+                'format': 'json',
+                'options': {'temperature': 0},
+            }
+            response = requests.post(
+                generate_url,
+                json=request_payload,
+                timeout=attempt_timeout_seconds,
+                headers=_build_ollama_headers(content_type=True),
             )
+            response.raise_for_status()
+            ollama_payload = response.json()
+            llm_output = _extract_response_text(ollama_payload)
+            if not llm_output:
+                telemetry['llm_failure_reason'] = 'empty_courses'
+                logger.warning('LLM vision parse returned empty response')
+                if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
+                    return [], empty_meta, telemetry
+                continue
 
-        courses_raw = parsed.get('courses')
-        courses = _coerce_courses(courses_raw)
-        if not isinstance(courses_raw, list):
-            logger.warning('LLM vision parse: "courses" is not a list')
+            parsed = _parse_llm_json(llm_output)
+            unknown_top = set(parsed.keys()) - {'courses', 'doc_metadata'}
+            if unknown_top:
+                logger.warning(
+                    'LLM vision parse response had unknown top-level keys (ignored): %s',
+                    sorted(unknown_top),
+                )
+
+            courses_raw = parsed.get('courses')
+            if not isinstance(courses_raw, list):
+                telemetry['llm_failure_reason'] = 'schema_reject'
+                logger.warning('LLM vision parse: "courses" is not a list')
+                return [], empty_meta, telemetry
+
+            courses = _coerce_courses(courses_raw)
+            if not courses and courses_raw:
+                telemetry['llm_failure_reason'] = 'schema_reject'
+                logger.warning('LLM vision parse: unusable courses after sanitization')
+                return [], empty_meta, telemetry
+
+            if not _validate_normalized_courses(courses):
+                telemetry['llm_failure_reason'] = 'schema_reject'
+                logger.warning('LLM vision parse: course schema validation failed')
+                return [], empty_meta, telemetry
+
+            if not courses:
+                telemetry['llm_failure_reason'] = 'empty_courses'
+                logger.warning('LLM vision parse returned zero courses')
+                if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
+                    return [], empty_meta, telemetry
+                continue
+
+            raw_doc_meta = parsed.get('doc_metadata', {})
+            if raw_doc_meta and not _validate_doc_metadata(raw_doc_meta):
+                logger.warning('LLM vision parse: doc_metadata schema validation failed')
+
+            doc_metadata: Dict[str, Any] = _sanitize_doc_metadata(raw_doc_meta)
+            telemetry['llm_parse_success'] = True
+            telemetry['llm_failure_reason'] = ''
+            return courses, doc_metadata, telemetry
+        except requests.Timeout:
+            telemetry['llm_failure_reason'] = 'timeout'
+            logger.warning('LLM vision parse timed out after %ss', attempt_timeout_seconds)
+            if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
+                return [], empty_meta, telemetry
+            continue
+        except requests.RequestException:
+            telemetry['llm_failure_reason'] = 'schema_reject'
+            logger.exception('LLM vision parse request failed')
             return [], empty_meta, telemetry
-        if not courses and courses_raw:
-            logger.warning('LLM vision parse: unusable courses after sanitization')
-            return [], empty_meta, telemetry
-        if not _validate_normalized_courses(courses):
-            logger.warning('LLM vision parse: course schema validation failed')
+        except (JSONDecodeError, ValueError):
+            telemetry['llm_failure_reason'] = 'invalid_json'
+            logger.warning('LLM vision parse output was not valid JSON')
             return [], empty_meta, telemetry
 
-        raw_doc_meta = parsed.get('doc_metadata', {})
-        if raw_doc_meta and not _validate_doc_metadata(raw_doc_meta):
-            logger.warning('LLM vision parse: doc_metadata schema validation failed')
-        doc_metadata: Dict[str, Any] = _sanitize_doc_metadata(raw_doc_meta)
-        telemetry['llm_parse_success'] = True
-        return courses, doc_metadata, telemetry
-    except requests.Timeout:
-        logger.warning('LLM vision parse timed out after %ss', timeout_seconds)
-        return [], empty_meta, telemetry
-    except requests.RequestException:
-        logger.exception('LLM vision parse request failed')
-        return [], empty_meta, telemetry
-    except (JSONDecodeError, ValueError):
-        logger.warning('LLM vision parse output was not valid JSON')
-        return [], empty_meta, telemetry
+    return [], empty_meta, telemetry
 
 
 def parse_with_llm(

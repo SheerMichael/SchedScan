@@ -1292,6 +1292,15 @@ class ExtractionLog(models.Model):
         default=False,
         help_text="Whether LLM output passed schema parsing",
     )
+    llm_failure_reason = models.CharField(
+        max_length=40,
+        blank=True,
+        default='',
+        help_text=(
+            "Structured LLM failure reason when parse fails "
+            "(e.g. timeout, invalid_json, schema_reject, empty_courses)"
+        ),
+    )
     score_breakdown = models.JSONField(
         default=dict,
         blank=True,
@@ -1629,6 +1638,15 @@ class ExtractionJob(models.Model):
         blank=True,
         default='',
         help_text="Internal error details (not shown to user, used for debugging)",
+    )
+    llm_failure_reason = models.CharField(
+        max_length=40,
+        blank=True,
+        default='',
+        help_text=(
+            "Structured LLM failure reason for this job when relevant "
+            "(timeout, invalid_json, schema_reject, empty_courses)"
+        ),
     )
 
     _temp_file_path = models.TextField(

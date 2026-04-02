@@ -111,6 +111,7 @@ class ExtractionManager:
 
         llm_used = False
         llm_parse_success = False
+        llm_failure_reason = ''
 
         _vision_stage_result = None
 
@@ -123,6 +124,7 @@ class ExtractionManager:
                 upload_type=upload_type,
             )
             llm_used = llm_used or bool(v_telemetry.get('llm_used', False))
+            llm_failure_reason = str(v_telemetry.get('llm_failure_reason') or '').strip()
 
             if v_telemetry.get('llm_parse_success') and v_courses:
                 llm_parse_success = True
@@ -152,6 +154,7 @@ class ExtractionManager:
                     result['failure_category'] = 'none'
                     result['llm_used'] = llm_used
                     result['llm_parse_success'] = True
+                    result['llm_failure_reason'] = ''
                     result['score_policy_upload_type'] = (upload_type or '').lower() or 'student'
                     result['schema_version'] = str(getattr(settings, 'EXTRACTION_SCHEMA_VERSION', 'v1'))
                     result['score_version'] = str(getattr(settings, 'EXTRACTION_SCORE_VERSION', 'v1'))
@@ -221,6 +224,7 @@ class ExtractionManager:
         result['failure_category'] = failure_category
         result['llm_used'] = llm_used
         result['llm_parse_success'] = llm_parse_success
+        result['llm_failure_reason'] = llm_failure_reason
         result['score_policy_upload_type'] = (upload_type or '').lower() or 'student'
         result['schema_version'] = str(getattr(settings, 'EXTRACTION_SCHEMA_VERSION', 'v1'))
         result['score_version'] = str(getattr(settings, 'EXTRACTION_SCORE_VERSION', 'v1'))
@@ -250,7 +254,13 @@ class ExtractionManager:
         logger.info(f"Starting extraction for {upload_type} COR: {file_path}")
         logger.info(f"File extension: {file_extension}")
         
-        direct_file_parse_enabled = bool(getattr(settings, 'EXTRACTION_LLM_DIRECT_FILE_PARSE_ENABLED', False))
+        # force_ocr_fallback is used by the student ownership gate to recover
+        # metadata (especially student number) when direct vision parsing does
+        # not return it. In that recovery path, bypass direct-file mode.
+        direct_file_parse_enabled = (
+            bool(getattr(settings, 'EXTRACTION_LLM_DIRECT_FILE_PARSE_ENABLED', False))
+            and not force_ocr_fallback
+        )
         if direct_file_parse_enabled:
             # Vision-first mode: bypass OCR/pdf text extraction entirely.
             result = {
@@ -308,6 +318,47 @@ class ExtractionManager:
             upload_type,
             source_file_path=file_path,
         )
+
+        # If direct-file vision mode produced no accepted result, recover by
+        # running staged extraction (pdf_text/ocr). This avoids repeated
+        # low-confidence "none" outcomes when the vision call fails closed
+        # (timeout, policy gate, model cold-start, etc.).
+        llm_failure_reason = str(result.get('llm_failure_reason') or '').strip()
+        if (
+            direct_file_parse_enabled
+            and not result.get('accepted', False)
+            and not result.get('courses')
+            and llm_failure_reason in {'timeout', 'empty_courses'}
+        ):
+            logger.warning(
+                'Direct-file vision produced no accepted courses (%s); falling back to staged extraction '
+                '(file=%s, upload_type=%s)',
+                llm_failure_reason,
+                file_path,
+                upload_type,
+            )
+
+            orchestrator = StagedExtractionOrchestrator(
+                extract_pdf=self._extract_from_pdf,
+                extract_image=self._extract_from_image,
+            )
+            fallback_result = orchestrator.run(
+                file_path=file_path,
+                upload_type=upload_type,
+                force_ocr_fallback=force_ocr_fallback,
+            )
+            fallback_attempts = fallback_result.get('attempts', [])
+
+            # Re-score fallback output without re-running stage-0 vision again.
+            result = self._finalize_result(
+                fallback_result,
+                fallback_attempts,
+                upload_type,
+                source_file_path='',
+            )
+            result['llm_failure_reason'] = llm_failure_reason
+            attempts = fallback_attempts
+            result['fallback_triggered'] = True
 
         # Add processing time
         processing_time = time.time() - start_time
@@ -572,6 +623,7 @@ def run_extraction_job(job_id) -> None:
                         f"the authenticated user ({user_sn})."
                     )
                     job.confidence = result.get('confidence')
+                    job.llm_failure_reason = str(result.get('llm_failure_reason') or '')[:40]
                     job._temp_file_path = ''
                     job.save()
                     _write_extraction_log_for_job(job, result, success=False)
@@ -613,6 +665,7 @@ def run_extraction_job(job_id) -> None:
             job.school_year = result.get('school_year', '')
             job.confidence = result.get('confidence')
             job.failure_category = 'none'
+            job.llm_failure_reason = ''
             job._temp_file_path = ''
             job.save()
 
@@ -639,6 +692,7 @@ def run_extraction_job(job_id) -> None:
                 f"courses={len(courses_data)}, "
                 f"accepted={accepted}"
             )
+            job.llm_failure_reason = str(result.get('llm_failure_reason') or '')[:40]
             job._temp_file_path = ''
             job.save()
 
@@ -661,6 +715,7 @@ def run_extraction_job(job_id) -> None:
                 job.status = 'failed'
                 job.failure_category = 'system_error'
                 job.error_message = tb[:4000]
+                job.llm_failure_reason = ''
                 job._temp_file_path = ''
                 job.save()
                 _send_extraction_job_notification(job, success=False)
@@ -707,6 +762,7 @@ def _write_extraction_log_for_job(job, result: dict, *, success: bool) -> None:
             score_breakdown=result.get('score_breakdown', {}),
             llm_used=result.get('llm_used', False),
             llm_parse_success=result.get('llm_parse_success', False),
+            llm_failure_reason=str(result.get('llm_failure_reason') or '')[:40],
             raw_text_preview='',  # Not exposed for async path (text not stored in job)
         )
     except Exception:

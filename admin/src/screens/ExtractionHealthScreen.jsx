@@ -421,7 +421,12 @@ function ExtractionJobsTab({ refreshKey }) {
       {/* Status breakdown */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <MiniStatusCard label="Pending" value={breakdown.pending || 0} tone="amber" icon={<Clock size={14} />} />
-        <MiniStatusCard label="Processing" value={breakdown.processing || 0} tone="blue" icon={<Loader2 size={14} className="animate-spin" />} />
+        <MiniStatusCard
+          label="Processing"
+          value={breakdown.processing || 0}
+          tone="blue"
+          icon={<Loader2 size={14} className={(breakdown.processing || 0) > 0 ? 'animate-spin' : ''} />}
+        />
         <MiniStatusCard label="Done" value={breakdown.done || 0} tone="green" icon={<CheckCircle2 size={14} />} />
         <MiniStatusCard label="Failed" value={breakdown.failed || 0} tone="red" icon={<XCircle size={14} />} />
       </div>
@@ -504,6 +509,7 @@ function ExtractionJobsTab({ refreshKey }) {
             <Field label="Extraction Method" value={previewJob.extraction_method || '—'} />
             <Field label="Confidence" value={formatConfidence(previewJob.confidence)} />
             <Field label="Failure Category" value={previewJob.failure_category || '—'} />
+            <Field label="LLM Failure Reason" value={previewJob.llm_failure_reason || '—'} />
             <Field label="Courses Extracted" value={String(previewJob.total_courses ?? 0)} />
             <Field label="Duration" value={previewJob.duration_seconds ? `${previewJob.duration_seconds}s` : '—'} />
             <Field label="Created" value={previewJob.created_at ? new Date(previewJob.created_at).toLocaleString() : '—'} />

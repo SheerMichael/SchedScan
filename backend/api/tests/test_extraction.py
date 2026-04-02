@@ -5,7 +5,7 @@ Tests PDF extraction, OCR fallback, extraction manager, and quality validation.
 Run with: python manage.py test api.tests.test_extraction
 """
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from unittest.mock import Mock, patch, MagicMock
@@ -324,6 +324,34 @@ class ExtractionManagerTestCase(TestCase):
         
         self.assertEqual(result['extraction_method'], 'ocr_fallback')
         self.assertIn('pdf_text', result['attempts'])
+        self.assertIn('ocr_fallback', result['attempts'])
+
+    @override_settings(EXTRACTION_LLM_DIRECT_FILE_PARSE_ENABLED=True)
+    @patch('api.utils.extraction_manager.StagedExtractionOrchestrator')
+    def test_force_ocr_fallback_bypasses_direct_file_mode(self, mock_orchestrator_class):
+        """force_ocr_fallback must disable direct-file vision shortcut."""
+        mock_orchestrator = Mock()
+        mock_orchestrator.run.return_value = {
+            'courses': [
+                {
+                    'subject_code': 'BSCS101',
+                    'start_time': '08:00AM',
+                    'end_time': '10:00AM',
+                    'day': 'M',
+                }
+            ],
+            'extraction_method': 'ocr_fallback',
+            'confidence': 0.9,
+            'attempts': ['pdf_text', 'ocr_fallback'],
+            'raw_text': 'Student Number 2023-20243',
+        }
+        mock_orchestrator_class.return_value = mock_orchestrator
+
+        manager = ExtractionManager()
+        result = manager.extract_schedule('/fake/path.pdf', 'student', force_ocr_fallback=True)
+
+        mock_orchestrator.run.assert_called_once()
+        self.assertEqual(result['extraction_method'], 'ocr_fallback')
         self.assertIn('ocr_fallback', result['attempts'])
 
 

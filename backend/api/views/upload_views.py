@@ -124,6 +124,7 @@ class BaseCORUploadView(APIView):
         review_required=False,
         llm_used=False,
         llm_parse_success=False,
+        llm_failure_reason='',
         raw_text_preview='',
         score_policy_upload_type='',
         schema_version='v1',
@@ -159,6 +160,7 @@ class BaseCORUploadView(APIView):
                 review_required=review_required,
                 llm_used=llm_used,
                 llm_parse_success=llm_parse_success,
+                llm_failure_reason=str(llm_failure_reason or '')[:40],
             )
         except Exception:
             logger.exception("Failed to write ExtractionLog")
@@ -322,6 +324,7 @@ class BaseCORUploadView(APIView):
                     'confidence': result['confidence'],
                     'processing_time_seconds': result['processing_time'],
                     'attempts': result.get('attempts', []),
+                    'llm_failure_reason': result.get('llm_failure_reason', ''),
                     'semester': result.get('semester', ''),
                     'school_year': result.get('school_year', ''),
                     'failure_category': result.get('failure_category', 'none'),
@@ -360,6 +363,7 @@ class BaseCORUploadView(APIView):
                             'confidence': result['confidence'],
                             'processing_time_seconds': result['processing_time'],
                             'attempts': result.get('attempts', []),
+                            'llm_failure_reason': result.get('llm_failure_reason', ''),
                             'semester': result.get('semester', ''),
                             'school_year': result.get('school_year', ''),
                             'failure_category': result.get('failure_category', 'none'),
@@ -394,6 +398,7 @@ class BaseCORUploadView(APIView):
                         review_required=True,
                         llm_used=result.get('llm_used', False),
                         llm_parse_success=result.get('llm_parse_success', False),
+                        llm_failure_reason=result.get('llm_failure_reason', ''),
                         raw_text_preview=redacted_preview,
                         score_policy_upload_type=result.get('score_policy_upload_type', self.upload_type),
                         schema_version=extraction_metadata.get('schema_version', 'v1'),
@@ -450,6 +455,7 @@ class BaseCORUploadView(APIView):
                         review_required=True,
                         llm_used=result.get('llm_used', False),
                         llm_parse_success=result.get('llm_parse_success', False),
+                        llm_failure_reason=result.get('llm_failure_reason', ''),
                         raw_text_preview=redacted_preview,
                         score_policy_upload_type=result.get('score_policy_upload_type', self.upload_type),
                         schema_version=extraction_metadata.get('schema_version', 'v1'),
