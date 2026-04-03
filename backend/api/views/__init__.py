@@ -27,6 +27,7 @@ from .upload_views import (
 # Extraction job polling view
 from .job_views import (
     ExtractionJobStatusView,
+    ExtractionJobRecentView,
 )
 
 # Schedule views

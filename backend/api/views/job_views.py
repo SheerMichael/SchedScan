@@ -14,6 +14,7 @@ Frontend polling strategy (recommended):
 """
 import logging
 import uuid
+from django.utils import timezone
 
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -140,6 +141,86 @@ class ExtractionJobStatusView(APIView):
                 "job_id": str(job.job_id),
                 "status": job_status,
                 "message": "Unknown job state. Please contact support.",
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ExtractionJobRecentView(APIView):
+    """
+    GET /api/extraction-jobs/recent/?limit=5&upload_type=student
+
+    Returns recent extraction jobs for the authenticated user.
+    Used by mobile to recover when upload POST times out but backend job continues.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        raw_limit = request.query_params.get('limit', '5')
+        try:
+            limit = int(raw_limit)
+        except (TypeError, ValueError):
+            limit = 5
+        limit = max(1, min(limit, 20))
+
+        upload_type = (request.query_params.get('upload_type') or '').strip().lower()
+        allowed_upload_types = {'student', 'faculty'}
+        if upload_type and upload_type not in allowed_upload_types:
+            return Response(
+                {"error": "Invalid upload_type. Expected 'student' or 'faculty'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        qs = ExtractionJob.objects.filter(user=request.user)
+        if upload_type:
+            qs = qs.filter(upload_type=upload_type)
+        jobs = qs.order_by('-created_at')[:limit]
+
+        serialized = []
+        for job in jobs:
+            entry = {
+                "job_id": str(job.job_id),
+                "status": job.status,
+                "upload_type": job.upload_type,
+                "file_name": job.file_name,
+                "confidence": job.confidence,
+                "extraction_method": job.extraction_method or '',
+                "failure_category": job.failure_category or '',
+                "created_at": timezone.localtime(job.created_at).isoformat(),
+                "updated_at": timezone.localtime(job.updated_at).isoformat(),
+            }
+
+            if job.status == 'done':
+                entry.update(
+                    {
+                        "courses": job.courses or [],
+                        "total_courses": len(job.courses) if job.courses else 0,
+                        "semester": job.semester or '',
+                        "school_year": job.school_year or '',
+                        "message": "Your schedule has been successfully extracted and saved.",
+                    }
+                )
+            elif job.status == 'failed':
+                entry.update(
+                    {
+                        "message": "Extraction failed. Please try re-uploading your document.",
+                        "retryable": (job.failure_category or '') != 'metadata_mismatch',
+                    }
+                )
+            else:
+                entry.update(
+                    {
+                        "message": "Your schedule is being processed.",
+                    }
+                )
+
+            serialized.append(entry)
+
+        return Response(
+            {
+                "count": len(serialized),
+                "jobs": serialized,
             },
             status=status.HTTP_200_OK,
         )

@@ -593,6 +593,59 @@ class AsyncExtractionJobTestCase(TestCase):
         # Thread should have been started
         mock_thread.start.assert_called_once()
 
+    @patch('api.utils.extraction_manager._send_extraction_job_notification')
+    @patch('api.utils.extraction_manager._write_extraction_log_for_job')
+    @patch('api.utils.extraction_manager.ExtractionManager')
+    def test_run_extraction_job_student_missing_number_fails(self, mock_manager_class, mock_log, mock_notify):
+        """Async student jobs must fail when student number is missing and ownership cannot be verified."""
+        import tempfile
+        from api.models import ExtractionJob
+        from api.utils.extraction_manager import run_extraction_job
+
+        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as f:
+            f.write(b'fake image')
+            temp_path = f.name
+
+        job = ExtractionJob.objects.create(
+            user=self.user,
+            upload_type='student',
+            file_name='student_image.jpg',
+            status='pending',
+            _temp_file_path=temp_path,
+        )
+
+        mock_manager = Mock()
+        mock_manager.extract_schedule.return_value = {
+            'courses': [
+                {
+                    'subject_code': 'BSCS101',
+                    'subject_name': 'Programming',
+                    'start_time': '08:00AM',
+                    'end_time': '10:00AM',
+                    'day': 'M',
+                    'location': 'LR1',
+                }
+            ],
+            'extraction_method': 'llm_vision_parse',
+            'confidence': 0.90,
+            'processing_time': 1.0,
+            'attempts': ['llm_vision_parse'],
+            'student_number': '',
+            'failure_category': 'none',
+            'validator_errors': [],
+            'score_breakdown': {},
+            'accepted': True,
+        }
+        mock_manager_class.return_value = mock_manager
+
+        run_extraction_job(job.job_id)
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, 'failed')
+        self.assertEqual(job.failure_category, 'metadata_mismatch')
+        self.assertIn('Unable to verify ownership', job.error_message)
+        mock_notify.assert_called_once_with(job, success=False)
+
     @patch('api.views.upload_views.ExtractionManager')
     def test_faculty_upload_returns_202_without_ownership_check(self, mock_manager_class):
         """Faculty COR upload skips ownership check and returns 202 directly."""
@@ -619,6 +672,52 @@ class AsyncExtractionJobTestCase(TestCase):
         self.assertEqual(response.status_code, 202)
         self.assertIn('job_id', response.data)
         # ExtractionManager should NOT have been instantiated for faculty
+        mock_manager_class.assert_not_called()
+
+    @patch('api.views.upload_views.ExtractionManager')
+    def test_student_image_upload_defers_sync_ownership_and_returns_202(self, mock_manager_class):
+        """Student image upload defers sync ownership check and should return 202 quickly."""
+        image_file = SimpleUploadedFile(
+            'student_schedule.jpg', b'fake image bytes', content_type='image/jpeg'
+        )
+
+        self.client.force_authenticate(user=self.user)
+
+        with patch('threading.Thread') as mock_thread_class:
+            mock_thread = Mock()
+            mock_thread_class.return_value = mock_thread
+
+            response = self.client.post(
+                '/api/upload-cor/student/',
+                {'file': image_file},
+                format='multipart',
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertIn('job_id', response.data)
+        mock_manager_class.assert_not_called()
+
+    @patch('api.views.upload_views.ExtractionManager')
+    def test_student_image_content_type_with_pdf_filename_still_defers_sync(self, mock_manager_class):
+        """Image MIME should win over misleading filename extension for student uploads."""
+        image_file = SimpleUploadedFile(
+            'cor.pdf', b'fake image bytes', content_type='image/jpeg'
+        )
+
+        self.client.force_authenticate(user=self.user)
+
+        with patch('threading.Thread') as mock_thread_class:
+            mock_thread = Mock()
+            mock_thread_class.return_value = mock_thread
+
+            response = self.client.post(
+                '/api/upload-cor/student/',
+                {'file': image_file},
+                format='multipart',
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertIn('job_id', response.data)
         mock_manager_class.assert_not_called()
 
     # ------------------------------------------------------------------
@@ -691,6 +790,41 @@ class AsyncExtractionJobTestCase(TestCase):
         fake_id = uuid.uuid4()
         response = self.client.get(f'/api/extraction-jobs/{fake_id}/')
         self.assertEqual(response.status_code, 404)
+
+    def test_recent_jobs_returns_only_authenticated_users_jobs(self):
+        own_job = self._make_job(status='processing')
+        other_job = self._make_job(user=self.other_user, status='processing')
+
+        response = self.client.get('/api/extraction-jobs/recent/?limit=5')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('jobs', response.data)
+
+        job_ids = [item['job_id'] for item in response.data['jobs']]
+        self.assertIn(str(own_job.job_id), job_ids)
+        self.assertNotIn(str(other_job.job_id), job_ids)
+
+    def test_recent_jobs_upload_type_filter(self):
+        from api.models import ExtractionJob
+
+        ExtractionJob.objects.create(
+            user=self.user,
+            upload_type='student',
+            file_name='student.pdf',
+            status='done',
+            courses=[{'subject_code': 'BSCS101'}],
+            confidence=0.90,
+        )
+        ExtractionJob.objects.create(
+            user=self.user,
+            upload_type='faculty',
+            file_name='faculty.pdf',
+            status='processing',
+        )
+
+        response = self.client.get('/api/extraction-jobs/recent/?upload_type=student&limit=10')
+        self.assertEqual(response.status_code, 200)
+        self.assertGreaterEqual(response.data.get('count', 0), 1)
+        self.assertTrue(all(item['upload_type'] == 'student' for item in response.data['jobs']))
 
     # ------------------------------------------------------------------
     # run_extraction_job: lifecycle

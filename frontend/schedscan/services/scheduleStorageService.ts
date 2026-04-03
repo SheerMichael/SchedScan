@@ -251,7 +251,7 @@ export const scheduleStorageService = {
       return schedules.map(transformAPISchedule);
     } catch (error: any) {
       console.error('Error getting schedules from backend:', error.response?.data || error.message);
-      return [];
+      throw error;
     }
   },
 
@@ -540,7 +540,7 @@ export const scheduleStorageService = {
       return schedules.map(transformAPISchedule);
     } catch (error: any) {
       console.error('Error getting all schedules:', error.response?.data || error.message);
-      return [];
+      throw error;
     }
   },
 };

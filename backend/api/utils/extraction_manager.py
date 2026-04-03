@@ -610,6 +610,24 @@ def run_extraction_job(job_id) -> None:
             if job.upload_type == 'student':
                 extracted_sn = (result.get('student_number', '') or '').strip()
                 user_sn = (getattr(job.user, 'student_number', '') or '').strip()
+                if user_sn and not extracted_sn:
+                    logger.warning(
+                        "run_extraction_job: student number missing for student job %s. Failing ownership gate.",
+                        job_id,
+                    )
+                    job.status = 'failed'
+                    job.failure_category = 'metadata_mismatch'
+                    job.error_message = (
+                        "Unable to verify ownership because student number could not be extracted."
+                    )
+                    job.confidence = result.get('confidence')
+                    job.llm_failure_reason = str(result.get('llm_failure_reason') or '')[:40]
+                    job._temp_file_path = ''
+                    job.save()
+                    _write_extraction_log_for_job(job, result, success=False)
+                    _send_extraction_job_notification(job, success=False)
+                    return
+
                 if extracted_sn and user_sn and extracted_sn != user_sn:
                     logger.warning(
                         "run_extraction_job: student number mismatch — "

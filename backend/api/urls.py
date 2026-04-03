@@ -33,6 +33,7 @@ urlpatterns = [
 
     # Async extraction job polling
     path('extraction-jobs/<uuid:job_id>/', views.ExtractionJobStatusView.as_view(), name='extraction_job_status'),
+    path('extraction-jobs/recent/', views.ExtractionJobRecentView.as_view(), name='extraction_job_recent'),
 
     
     # Schedule endpoints (new - for cross-device sync)

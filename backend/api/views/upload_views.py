@@ -306,13 +306,25 @@ class BaseCORUploadView(APIView):
             
             logger.info(f"Processing {self.upload_type.upper()} COR for user {request.user.id}: {uploaded_file.name}")
 
+            content_type = str(getattr(uploaded_file, 'content_type', '') or '').lower()
+            is_image_upload = (
+                file_extension in ['.png', '.jpg', '.jpeg']
+                or content_type.startswith('image/')
+            )
+
+            defer_student_ownership_for_images = (
+                self.upload_type == 'student'
+                and is_image_upload
+                and bool(getattr(settings, 'EXTRACTION_DEFER_STUDENT_OWNERSHIP_FOR_IMAGES', True))
+            )
+
             # ------------------------------------------------------------------
             # Student COR: synchronous ownership check BEFORE launching async job
             # We need to verify the student number in the file matches the user
             # before accepting the upload.  This is a security gate — it must
             # stay synchronous.  Faculty uploads have no ownership requirement.
             # ------------------------------------------------------------------
-            if self.upload_type == 'student':
+            if self.upload_type == 'student' and not defer_student_ownership_for_images:
 
                 manager = ExtractionManager()
                 result = manager.extract_schedule(temp_file_path, self.upload_type)
@@ -480,6 +492,13 @@ class BaseCORUploadView(APIView):
                     }
                     return Response(payload, status=final_status)
                 # end if self.upload_type == 'student'
+            elif defer_student_ownership_for_images:
+                logger.info(
+                    "Deferring sync student ownership check for image upload %s (user=%s); "
+                    "ownership will be enforced in async job execution.",
+                    uploaded_file.name,
+                    request.user.id,
+                )
 
             # ------------------------------------------------------------------
             # Launch async extraction job

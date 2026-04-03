@@ -2,6 +2,14 @@ import api from './api';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const inferExtensionFromMime = (mimeType: string): string => {
+  const normalized = String(mimeType || '').toLowerCase();
+  if (normalized.includes('jpeg') || normalized.includes('jpg')) return 'jpg';
+  if (normalized.includes('png')) return 'png';
+  if (normalized.includes('pdf')) return 'pdf';
+  return '';
+};
+
 export interface Course {
   id: number;
   user: number;
@@ -66,6 +74,38 @@ export interface ExtractionJobTimeoutResponse {
   message: string;
 }
 
+export interface RecentExtractionJob {
+  job_id: string;
+  status: 'processing' | 'done' | 'failed' | string;
+  upload_type: 'student' | 'faculty';
+  file_name?: string;
+  confidence?: number;
+  extraction_method?: string;
+  failure_category?: string;
+  created_at: string;
+  updated_at: string;
+  courses?: Course[];
+  total_courses?: number;
+  semester?: string;
+  school_year?: string;
+  message?: string;
+  retryable?: boolean;
+}
+
+const isRecoverableUploadError = (error: any): boolean => {
+  if (error?.response) {
+    return false;
+  }
+  const code = String(error?.code || '').toUpperCase();
+  const msg = String(error?.message || '').toLowerCase();
+  return (
+    code === 'ECONNABORTED' ||
+    msg.includes('network error') ||
+    msg.includes('timeout') ||
+    msg.includes('timed out')
+  );
+};
+
 export interface PollingCancelToken {
   isCancelled: boolean;
 }
@@ -93,31 +133,74 @@ export const courseService = {
       const formData = new FormData();
 
       // Determine file type and name
-      const filename = file.name || file.uri.split('/').pop() || 'cor.pdf';
-      const match = /\.(\w+)$/.exec(filename);
-      const type = file.mimeType || (match ? `application/${match[1]}` : 'application/pdf');
+      const uriCandidate = String(file?.uri || '').split('/').pop() || '';
+      const nameCandidate = String(file?.name || uriCandidate || '').trim();
+      const incomingMime = String(file?.mimeType || file?.type || '').toLowerCase();
+
+      const hasExtension = /\.[A-Za-z0-9]+$/.test(nameCandidate);
+      const inferredExt = hasExtension
+        ? nameCandidate.split('.').pop()?.toLowerCase() || ''
+        : inferExtensionFromMime(incomingMime);
+
+      const safeFilename = nameCandidate
+        ? (hasExtension ? nameCandidate : `${nameCandidate}.${inferredExt || 'jpg'}`)
+        : `upload.${inferredExt || 'jpg'}`;
+
+      const type = incomingMime || (
+        inferredExt === 'pdf'
+          ? 'application/pdf'
+          : inferredExt === 'png'
+            ? 'image/png'
+            : 'image/jpeg'
+      );
 
       formData.append('file', {
         uri: file.uri,
-        name: filename,
+        name: safeFilename,
         type: type,
       } as any);
 
       // Use appropriate endpoint based on upload type
       const endpoint = `/upload-cor/${uploadType}/`;
 
-      const response = await api.post(endpoint, formData, {
+      const requestConfig = {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
-        timeout: 120000, // 120 seconds for OCR processing (server-side processing can be slow)
-      });
+        // Student uploads can include synchronous ownership checks and may exceed 2 minutes.
+        timeout: 300000,
+      };
 
-      return response.data;
+      try {
+        const response = await api.post(endpoint, formData, requestConfig);
+        return response.data;
+      } catch (firstError: any) {
+        if (!isRecoverableUploadError(firstError)) {
+          throw firstError;
+        }
+
+        // One controlled retry for transient network/timeout failures.
+        await sleep(1500);
+        const response = await api.post(endpoint, formData, requestConfig);
+        return response.data;
+      }
     } catch (error: any) {
       console.error(`Upload ${uploadType.toUpperCase()} COR error:`, error.response?.data || error.message);
       throw error;
     }
+  },
+
+  getRecentExtractionJobs: async (
+    options?: { uploadType?: 'student' | 'faculty'; limit?: number }
+  ): Promise<RecentExtractionJob[]> => {
+    const params = new URLSearchParams();
+    if (options?.uploadType) {
+      params.append('upload_type', options.uploadType);
+    }
+    params.append('limit', String(options?.limit ?? 5));
+
+    const response = await api.get(`/extraction-jobs/recent/?${params.toString()}`);
+    return Array.isArray(response.data?.jobs) ? response.data.jobs : [];
   },
 
   /**

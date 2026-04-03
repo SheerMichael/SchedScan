@@ -11,6 +11,7 @@ import {
   Course,
   ExtractionJobDoneResponse,
   PollingCancelToken,
+  RecentExtractionJob,
   UploadCORAcceptedResponse,
 } from '../../services/courseService';
 import { scheduleStorageService } from '../../services/scheduleStorageService';
@@ -45,6 +46,8 @@ export default function Scanner() {
   const [showBehindScenesModal, setShowBehindScenesModal] = useState(false);
   const [backgroundJobId, setBackgroundJobId] = useState('');
   const activePollRef = useRef<ActivePollState | null>(null);
+  const backgroundJobUploadTypeRef = useRef<'student' | 'faculty' | null>(null);
+  const backgroundJobIsRetryRef = useRef(false);
 
   // Faculty mode unlock modal
   const [showFacultyModeModal, setShowFacultyModeModal] = useState(false);
@@ -63,6 +66,20 @@ export default function Scanner() {
       activePollRef.current = null;
     }
   }, []);
+
+  const isRecoverableUploadError = (error: any): boolean => {
+    if (error?.response) {
+      return false;
+    }
+    const code = String(error?.code || '').toUpperCase();
+    const msg = String(error?.message || '').toLowerCase();
+    return (
+      code === 'ECONNABORTED' ||
+      msg.includes('network error') ||
+      msg.includes('timeout') ||
+      msg.includes('timed out')
+    );
+  };
 
   const handleExtractionSuccess = useCallback(async (
     response: { courses: Course[]; semester?: string; school_year?: string },
@@ -144,6 +161,153 @@ export default function Scanner() {
       Alert.alert('Status Check Failed', 'Unable to fetch extraction result. Please check your schedules shortly.');
     }
   }, [handleExtractionSuccess]);
+
+  const reconcileBackgroundJob = useCallback(async (): Promise<boolean> => {
+    if (!backgroundJobId) {
+      return false;
+    }
+
+    try {
+      setProcessingSubtitle('Checking latest extraction status...');
+      const response = await api.get(`/extraction-jobs/${backgroundJobId}/`);
+      const jobStatus = response.data;
+
+      if (jobStatus.status === 'done') {
+        clearActivePolling();
+        setShowBehindScenesModal(false);
+        await handleExtractionSuccess(
+          jobStatus as ExtractionJobDoneResponse,
+          backgroundJobUploadTypeRef.current || selectedRole || 'student',
+          {
+            isRetry: backgroundJobIsRetryRef.current,
+            alreadyRecorded: true,
+          }
+        );
+        return true;
+      }
+
+      if (jobStatus.status === 'failed') {
+        clearActivePolling();
+        setShowBehindScenesModal(false);
+        setIsUploading(false);
+        setUploadError(jobStatus.message || 'Extraction failed. Please try again.');
+        setReportModal(true);
+        return true;
+      }
+
+      setProcessingSubtitle('Extraction is still running in the background...');
+      return false;
+    } catch (error) {
+      console.error('Failed to reconcile background extraction job:', error);
+      setProcessingSubtitle('Still processing. You can check again shortly.');
+      return false;
+    }
+  }, [backgroundJobId, clearActivePolling, handleExtractionSuccess, selectedRole]);
+
+  useEffect(() => {
+    if (!showBehindScenesModal || !backgroundJobId) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      // If an active poll loop is still running, avoid duplicate status checks.
+      if (activePollRef.current) {
+        return;
+      }
+      reconcileBackgroundJob().catch((error) => {
+        console.error('Background reconciliation timer error:', error);
+      });
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, [showBehindScenesModal, backgroundJobId, reconcileBackgroundJob]);
+
+  const resumePollingForJob = useCallback(async (
+    jobId: string,
+    uploadType: 'student' | 'faculty',
+    isRetry: boolean
+  ) => {
+    backgroundJobUploadTypeRef.current = uploadType;
+    backgroundJobIsRetryRef.current = isRetry;
+
+    const cancelToken: PollingCancelToken = { isCancelled: false };
+    activePollRef.current = {
+      jobId,
+      uploadType,
+      isRetry,
+      cancelToken,
+    };
+
+    setBackgroundJobId(jobId);
+    setIsUploading(false);
+    setShowBehindScenesModal(true);
+    setProcessingSubtitle('Extraction is running in the background...');
+
+    const result = await courseService.pollExtractionJob(jobId, {
+      maxAttempts: 10,
+      intervalMs: 3000,
+      cancelToken,
+    });
+
+    if (!activePollRef.current || activePollRef.current.jobId !== jobId) {
+      return;
+    }
+    activePollRef.current = null;
+
+    if (result.status === 'done') {
+      setShowBehindScenesModal(false);
+      await handleExtractionSuccess(result, uploadType, {
+        isRetry,
+        alreadyRecorded: true,
+      });
+      return;
+    }
+
+    if (result.status === 'failed') {
+      throw new Error(result.message || 'Extraction failed. Please try again.');
+    }
+
+    setShowBehindScenesModal(true);
+    setProcessingSubtitle('Still processing in background. We will keep checking status.');
+  }, [handleExtractionSuccess]);
+
+  const recoverFromRecentJobs = useCallback(async (
+    uploadType: 'student' | 'faculty',
+    isRetry: boolean
+  ): Promise<boolean> => {
+    const jobs = await courseService.getRecentExtractionJobs({ uploadType, limit: 5 });
+    if (!jobs.length) {
+      return false;
+    }
+
+    const latestDone = jobs.find((job: RecentExtractionJob) => job.status === 'done' && (job.total_courses || 0) > 0);
+    if (latestDone && Array.isArray(latestDone.courses) && latestDone.courses.length > 0) {
+      await handleExtractionSuccess(
+        {
+          courses: latestDone.courses,
+          semester: latestDone.semester,
+          school_year: latestDone.school_year,
+        },
+        uploadType,
+        {
+          isRetry,
+          alreadyRecorded: true,
+        }
+      );
+      return true;
+    }
+
+    const latestProcessing = jobs.find((job: RecentExtractionJob) => job.status === 'processing');
+    if (latestProcessing?.job_id) {
+      if (!isRetry && user?.id) {
+        await scheduleStorageService.recordUpload(user.id);
+      }
+      await resumePollingForJob(latestProcessing.job_id, uploadType, isRetry);
+      return true;
+    }
+
+    return false;
+  }, [handleExtractionSuccess, resumePollingForJob, user?.id]);
 
   useEffect(() => {
     const handleExtractionNotification = async (rawData: unknown) => {
@@ -306,54 +470,30 @@ export default function Scanner() {
           await scheduleStorageService.recordUpload(user.id);
         }
 
-        const cancelToken: PollingCancelToken = { isCancelled: false };
-        activePollRef.current = {
-          jobId: response.job_id,
-          uploadType,
-          isRetry,
-          cancelToken,
-        };
-
-        setBackgroundJobId(response.job_id);
-        setIsUploading(false);
-        setShowBehindScenesModal(true);
-        setProcessingSubtitle('Extraction is running in the background...');
-
-        const result = await courseService.pollExtractionJob(response.job_id, {
-          maxAttempts: 10,
-          intervalMs: 3000,
-          cancelToken,
-        });
-
-        // If a push notification already finalized this job, stop here.
-        if (!activePollRef.current || activePollRef.current.jobId !== response.job_id) {
-          return;
-        }
-        activePollRef.current = null;
-
-        if (result.status === 'done') {
-          setShowBehindScenesModal(false);
-          await handleExtractionSuccess(result, uploadType, {
-            isRetry,
-            alreadyRecorded: true,
-          });
-          return;
-        }
-
-        if (result.status === 'failed') {
-          throw new Error(result.message || 'Extraction failed. Please try again.');
-        }
-
-        setShowBehindScenesModal(true);
+        await resumePollingForJob(response.job_id, uploadType, isRetry);
         return;
       }
 
       await handleExtractionSuccess(response, uploadType, { isRetry });
     } catch (error: any) {
+      if (isRecoverableUploadError(error)) {
+        try {
+          setProcessingSubtitle('Checking extraction status...');
+          const recovered = await recoverFromRecentJobs(uploadType, isRetry);
+          if (recovered) {
+            return;
+          }
+        } catch (recoveryError) {
+          console.error('Recovery from recent extraction jobs failed:', recoveryError);
+        }
+      }
+
       const errorMessage =
         error.response?.data?.error ||
         error.response?.data?.message ||
-        error.message ||
+        (isRecoverableUploadError(error)
+          ? 'Upload request timed out on the network. Extraction may still be running in the background. Please wait for notification or retry shortly.'
+          : error.message) ||
         'Failed to upload file. Please try again.';
       setUploadError(errorMessage);
       setIsUploading(false);
@@ -439,6 +579,8 @@ export default function Scanner() {
 
   const resetScanner = () => {
     clearActivePolling();
+    backgroundJobUploadTypeRef.current = null;
+    backgroundJobIsRetryRef.current = false;
     setSelectedFile(null);
     setSelectedRole(null);
     setScheduleTitle('');
@@ -615,7 +757,20 @@ export default function Scanner() {
               </View>
             ) : null}
 
+            <Text className="text-xs text-gray-500 mb-4">{processingSubtitle}</Text>
+
             <View className="gap-3">
+              <TouchableOpacity
+                className="bg-gray-100 py-3 rounded-xl"
+                onPress={() => {
+                  reconcileBackgroundJob().catch((error) => {
+                    console.error('Manual background job check failed:', error);
+                  });
+                }}
+              >
+                <Text className="text-center font-semibold text-gray-700">Check Status Now</Text>
+              </TouchableOpacity>
+
               <TouchableOpacity
                 className="bg-[#B88080] py-3 rounded-xl"
                 onPress={() => {
