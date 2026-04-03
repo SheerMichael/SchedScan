@@ -64,9 +64,11 @@ from .password_reset_views import (
 # Parent / push notification views
 from .parent_views import (
     RegisterPushTokenView,
-    GenerateInviteCodeView,
-    ValidateInviteCodeView,
-    UseInviteCodeView,
+    ParentChildSearchView,
+    ParentLinkRequestView,
+    StudentParentLinkRequestListView,
+    StudentParentLinkRequestApproveView,
+    StudentParentLinkRequestRejectView,
     ChildScheduleView,
     LinkedParentsView,
     RevokeParentAccessView,

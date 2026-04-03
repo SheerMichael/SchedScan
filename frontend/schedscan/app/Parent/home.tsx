@@ -3,7 +3,7 @@ import React, { useState, useCallback } from "react";
 import { router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "../../context/AuthContext";
-import { parentService, LinkedChild, ChildInfo } from "../../services/parentService";
+import { parentService, LinkedChild, ChildInfo, StudentSearchResult } from "../../services/parentService";
 import { parentRemarkService, FacultyRemark } from "../../services/remarkService";
 import { paymentService } from "../../services/paymentService";
 import * as WebBrowser from 'expo-web-browser';
@@ -33,13 +33,14 @@ const ParentHomePage = () => {
 
   // Link child modal state
   const [showLinkModal, setShowLinkModal] = useState(false);
-  const [inviteCode, setInviteCode] = useState("");
-  const [isLinking, setIsLinking] = useState(false);
-  const [linkError, setLinkError] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<StudentSearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [isSendingRequest, setIsSendingRequest] = useState(false);
+  const [requestError, setRequestError] = useState("");
 
   // Payment state
   const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [isCheckingPayment, setIsCheckingPayment] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
 
   // Remarks state
@@ -123,25 +124,10 @@ const ParentHomePage = () => {
   };
 
   const handleAddChild = async () => {
-    // Check if payment is needed before showing the link modal
-    try {
-      setIsCheckingPayment(true);
-      const result = await paymentService.checkCanAddChild();
-
-      if (result.can_add_free || !result.needs_payment) {
-        // Free slot available — go straight to link modal
-        setShowLinkModal(true);
-      } else {
-        // Payment required — show payment modal
-        setShowPaymentModal(true);
-      }
-    } catch (error: any) {
-      // If the check fails, default to showing link modal
-      // (the backend will still enforce the gate)
-      setShowLinkModal(true);
-    } finally {
-      setIsCheckingPayment(false);
-    }
+    setRequestError("");
+    setSearchQuery("");
+    setSearchResults([]);
+    setShowLinkModal(true);
   };
 
   const handlePayment = async () => {
@@ -164,7 +150,7 @@ const ParentHomePage = () => {
           if (status.status === 'completed') {
             Alert.alert(
               "Payment Successful! ✅",
-              "You can now add another child. Enter their invite code.",
+              "You can now add another child. Search for your child and send a request.",
               [{ text: "Continue", onPress: () => setShowLinkModal(true) }]
             );
             return;
@@ -189,35 +175,51 @@ const ParentHomePage = () => {
     }
   };
 
-  const handleLinkChild = async () => {
-    const code = inviteCode.trim().toUpperCase();
-    if (!code || code.length !== 10) {
-      setLinkError("Please enter a valid 10-character invite code");
+  const handleSearchChildren = async () => {
+    const query = searchQuery.trim();
+    if (query.length < 2) {
+      setRequestError("Enter at least 2 characters to search.");
       return;
     }
 
     try {
-      setIsLinking(true);
-      setLinkError("");
+      setIsSearching(true);
+      setRequestError("");
 
-      const result = await parentService.useInviteCode(code);
+      const results = await parentService.searchChildren(query);
+      setSearchResults(results);
+      if (results.length === 0) {
+        setRequestError("No matching student found.");
+      }
+    } catch (error: any) {
+      const message = error.response?.data?.error || "Failed to search students. Please try again.";
+      setRequestError(message);
+    } finally {
+      setIsSearching(false);
+    }
+  };
 
-      Alert.alert("Success!", `You are now linked to ${result.child.full_name}!`);
+  const handleRequestChildLink = async (child: StudentSearchResult) => {
+    try {
+      setIsSendingRequest(true);
+      setRequestError("");
+
+      const result = await parentService.requestChildLink(child.id);
+
+      Alert.alert("Request Sent", result.message || `Request sent to ${child.full_name}.`);
       setShowLinkModal(false);
-      setInviteCode("");
-      await loadChildrenData();
+      setSearchQuery("");
+      setSearchResults([]);
     } catch (error: any) {
       if (error.response?.status === 402) {
-        // Payment required — show payment modal
         setShowLinkModal(false);
-        setInviteCode("");
         setShowPaymentModal(true);
       } else {
-        const message = error.response?.data?.error || "Failed to link. Please check the code and try again.";
-        setLinkError(message);
+        const message = error.response?.data?.error || "Failed to send request. Please try again.";
+        setRequestError(message);
       }
     } finally {
-      setIsLinking(false);
+      setIsSendingRequest(false);
     }
   };
 
@@ -324,18 +326,13 @@ const ParentHomePage = () => {
               <Users size={18} color="#374151" /> Linked Children
             </Text>
             <TouchableOpacity
-              className={`bg-primary-600 px-3 py-2 rounded-lg flex-row items-center ${isCheckingPayment ? 'opacity-50' : ''}`}
+              className="bg-primary-600 px-3 py-2 rounded-lg flex-row items-center"
               onPress={handleAddChild}
-              disabled={isCheckingPayment}
             >
-              {isCheckingPayment ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <>
-                  <Plus size={16} color="#fff" />
-                  <Text className="text-white font-semibold ml-1">Add Child</Text>
-                </>
-              )}
+              <>
+                <Plus size={16} color="#fff" />
+                <Text className="text-white font-semibold ml-1">Add Child</Text>
+              </>
             </TouchableOpacity>
           </View>
 
@@ -344,14 +341,13 @@ const ParentHomePage = () => {
               <Text className="text-5xl mb-4">👪</Text>
               <Text className="text-lg font-semibold text-gray-700 text-center mb-2">No children linked yet</Text>
               <Text className="text-gray-500 text-center mb-4">
-                Ask your child to share their invite code with you
+                Search for your child and send a request for approval
               </Text>
               <TouchableOpacity
-                className={`bg-primary-600 px-6 py-3 rounded-xl ${isCheckingPayment ? 'opacity-50' : ''}`}
+                className="bg-primary-600 px-6 py-3 rounded-xl"
                 onPress={handleAddChild}
-                disabled={isCheckingPayment}
               >
-                <Text className="text-white font-bold">Enter Invite Code</Text>
+                <Text className="text-white font-bold">Search Child</Text>
               </TouchableOpacity>
             </View>
           ) : (
@@ -588,54 +584,72 @@ const ParentHomePage = () => {
           <View className="bg-white rounded-2xl p-6 w-11/12 max-w-md">
             {/* Header */}
             <View className="flex-row justify-between items-center mb-4">
-              <Text className="text-xl font-bold text-gray-800">Link to Child</Text>
-              <TouchableOpacity onPress={() => { setShowLinkModal(false); setLinkError(""); setInviteCode(""); }}>
+              <Text className="text-xl font-bold text-gray-800">Search for Child</Text>
+              <TouchableOpacity onPress={() => { setShowLinkModal(false); setRequestError(""); setSearchQuery(""); setSearchResults([]); }}>
                 <X size={24} color="#6B7280" />
               </TouchableOpacity>
             </View>
 
             <Text className="text-gray-600 mb-4">
-              Ask your child to share their invite code from the SchedScan app.
+              Enter your child&apos;s name, email, or student number. We&apos;ll send a connection request for their approval.
             </Text>
 
             {/* Error Message */}
-            {linkError ? (
+            {requestError ? (
               <View className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
-                <Text className="text-red-600 text-sm">{linkError}</Text>
+                <Text className="text-red-600 text-sm">{requestError}</Text>
               </View>
             ) : null}
 
-            {/* Code Input */}
-            <TextInput
-              className="bg-gray-100 rounded-xl p-4 text-center text-xl font-bold tracking-widest mb-4"
-              placeholder="ABC123XYZ0"
-              placeholderTextColor="#9CA3AF"
-              value={inviteCode}
-              onChangeText={(text) => { setInviteCode(text.toUpperCase()); setLinkError(""); }}
-              autoCapitalize="characters"
-              maxLength={10}
-            />
-
-            {/* Buttons */}
-            <View className="flex-row gap-3">
+            <View className="flex-row gap-2 mb-4">
+              <TextInput
+                className="flex-1 bg-gray-100 rounded-xl p-4"
+                placeholder="Search by name, email, or student number"
+                placeholderTextColor="#9CA3AF"
+                value={searchQuery}
+                onChangeText={(text) => { setSearchQuery(text); setRequestError(""); }}
+                autoCapitalize="none"
+              />
               <TouchableOpacity
-                className="flex-1 bg-gray-200 rounded-xl py-3"
-                onPress={() => { setShowLinkModal(false); setLinkError(""); setInviteCode(""); }}
+                className={`bg-primary-600 rounded-xl px-4 justify-center ${isSearching ? 'opacity-50' : ''}`}
+                onPress={handleSearchChildren}
+                disabled={isSearching}
               >
-                <Text className="text-gray-700 font-semibold text-center">Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                className={`flex-1 bg-primary-600 rounded-xl py-3 ${isLinking ? 'opacity-50' : ''}`}
-                onPress={handleLinkChild}
-                disabled={isLinking}
-              >
-                {isLinking ? (
+                {isSearching ? (
                   <ActivityIndicator color="#fff" size="small" />
                 ) : (
-                  <Text className="text-white font-bold text-center">Link</Text>
+                  <Text className="text-white font-semibold">Search</Text>
                 )}
               </TouchableOpacity>
             </View>
+
+            <ScrollView className="max-h-64 mb-4">
+              {searchResults.map((child) => (
+                <View
+                  key={child.id}
+                  className="border border-gray-200 rounded-xl p-3 mb-2 flex-row items-center justify-between"
+                >
+                  <View className="flex-1 pr-3">
+                    <Text className="font-semibold text-gray-800">{child.full_name}</Text>
+                  </View>
+                  <TouchableOpacity
+                    className={`bg-primary-600 rounded-lg px-3 py-2 ${isSendingRequest ? 'opacity-50' : ''}`}
+                    onPress={() => handleRequestChildLink(child)}
+                    disabled={isSendingRequest}
+                  >
+                    <Text className="text-white font-semibold text-sm">Request</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </ScrollView>
+
+            {/* Buttons */}
+            <TouchableOpacity
+              className="bg-gray-200 rounded-xl py-3"
+              onPress={() => { setShowLinkModal(false); setRequestError(""); setSearchQuery(""); setSearchResults([]); }}
+            >
+              <Text className="text-gray-700 font-semibold text-center">Close</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>

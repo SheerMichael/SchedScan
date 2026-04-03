@@ -4,7 +4,7 @@ from django.contrib.auth.password_validation import validate_password
 from rest_framework.validators import UniqueValidator
 from rest_framework_simplejwt.tokens import RefreshToken
 import re
-from .models import Course, Schedule, Task, ParentChildLink, InviteCode, ClassCode, ClassEnrollment, FacultyTask, FacultyTaskFile, FacultyTaskCompletion, Notification, FacultyRemark
+from .models import Course, Schedule, Task, ParentChildLink, ParentLinkRequest, ClassCode, ClassEnrollment, FacultyTask, FacultyTaskFile, FacultyTaskCompletion, Notification, FacultyRemark
 from .utils.timetable_generator import generate_and_save_timetable
 
 User = get_user_model()
@@ -76,7 +76,16 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['email', 'password', 'password2', 'first_name', 'last_name', 'user_type', 'student_number', 'profile_picture']
+        fields = [
+            'email',
+            'password',
+            'password2',
+            'first_name',
+            'last_name',
+            'user_type',
+            'student_number',
+            'profile_picture',
+        ]
 
     def validate_student_number(self, value):
         """
@@ -110,7 +119,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"student_number": "Student number is required for student accounts."}
             )
-        
+
         return attrs
 
     def create(self, validated_data):
@@ -119,7 +128,6 @@ class RegisterSerializer(serializers.ModelSerializer):
         """
         # Remove password2 from validated_data as it's not a model field
         validated_data.pop('password2', None)
-        
         # Coerce blank student_number to None to avoid unique constraint
         # violations (multiple NULLs are fine, multiple '' are not)
         if not validated_data.get('student_number'):
@@ -469,15 +477,6 @@ class PushTokenSerializer(serializers.Serializer):
 # Parental View Serializers
 # ============================================
 
-class InviteCodeSerializer(serializers.ModelSerializer):
-    """
-    Serializer for InviteCode - used for generating and viewing invite codes
-    """
-    class Meta:
-        model = InviteCode
-        fields = ['id', 'code', 'created_at', 'is_active', 'used']
-        read_only_fields = ['id', 'code', 'created_at', 'is_active', 'used']
-
 
 class ParentChildLinkSerializer(serializers.ModelSerializer):
     """
@@ -528,6 +527,50 @@ class ChildScheduleSerializer(serializers.Serializer):
     child = ChildInfoSerializer(read_only=True)
     schedule = ScheduleSerializer(read_only=True, allow_null=True)
     has_active_schedule = serializers.BooleanField(read_only=True)
+
+
+class StudentSearchResultSerializer(serializers.ModelSerializer):
+    """Lightweight student profile for parent search results."""
+    full_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ['id', 'first_name', 'last_name', 'full_name']
+        read_only_fields = ['id', 'first_name', 'last_name', 'full_name']
+
+    def get_full_name(self, obj):
+        return obj.get_full_name()
+
+
+class ParentLinkRequestSerializer(serializers.ModelSerializer):
+    """Serializer for parent-child connection requests."""
+    parent_name = serializers.SerializerMethodField()
+    parent_email = serializers.SerializerMethodField()
+    child_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ParentLinkRequest
+        fields = [
+            'id',
+            'status',
+            'requested_at',
+            'resolved_at',
+            'parent',
+            'child',
+            'parent_name',
+            'parent_email',
+            'child_name',
+        ]
+        read_only_fields = fields
+
+    def get_parent_name(self, obj):
+        return obj.parent.get_full_name()
+
+    def get_parent_email(self, obj):
+        return obj.parent.email
+
+    def get_child_name(self, obj):
+        return obj.child.get_full_name()
 
 
 # ============================================

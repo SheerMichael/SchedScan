@@ -21,12 +21,6 @@ export interface LinkedChild {
     linked_at: string;
 }
 
-export interface InviteCodeResponse {
-    code: string;
-    created_at: string;
-    message?: string;
-}
-
 export interface ChildScheduleResponse {
     child: ChildInfo;
     schedule: any | null;  // Full schedule with courses
@@ -48,10 +42,23 @@ export interface ChildrenListResponse {
     has_linked_children: boolean;
 }
 
-export interface UseInviteCodeResponse {
-    message: string;
-    child: ChildInfo;
-    linked_at: string;
+export interface StudentSearchResult {
+    id: number;
+    first_name: string;
+    last_name: string;
+    full_name: string;
+}
+
+export interface ParentLinkRequest {
+    id: number;
+    status: 'pending' | 'approved' | 'rejected' | 'cancelled';
+    requested_at: string;
+    resolved_at: string | null;
+    parent: number;
+    child: number;
+    parent_name: string;
+    parent_email: string;
+    child_name: string;
 }
 
 export interface ApiError {
@@ -61,27 +68,6 @@ export interface ApiError {
 // --- Service ---
 
 export const parentService = {
-    // ============================================
-    // Student endpoints - Generate codes and manage parents
-    // ============================================
-
-    /**
-     * Generate a new invite code for parents
-     * Only students/faculty can call this
-     */
-    generateInviteCode: async (): Promise<InviteCodeResponse> => {
-        const response = await api.post('/auth/invite-code/generate/');
-        return response.data;
-    },
-
-    /**
-     * Get current active invite code (if any)
-     */
-    getActiveInviteCode: async (): Promise<InviteCodeResponse | null> => {
-        const response = await api.get('/auth/invite-code/generate/');
-        return response.data.code ? response.data : null;
-    },
-
     /**
      * Get list of parents linked to this student
      */
@@ -100,16 +86,6 @@ export const parentService = {
     // ============================================
     // Parent endpoints - Link to children and view schedules
     // ============================================
-
-    /**
-     * Use an invite code to link to a student
-     * Only parents can call this
-     * Now supports linking to multiple children
-     */
-    useInviteCode: async (code: string): Promise<UseInviteCodeResponse> => {
-        const response = await api.post('/auth/invite-code/use/', { code });
-        return response.data;
-    },
 
     /**
      * Get all linked children (supports multiple)
@@ -141,18 +117,51 @@ export const parentService = {
     },
 
     /**
-     * Validate an invite code (unauthenticated)
-     * Used before registration to check if code is valid
+     * Search students by name/email/student number.
+     * Parent-only endpoint.
      */
-    validateInviteCode: async (code: string): Promise<{ valid: boolean; student_name?: string; error?: string }> => {
-        try {
-            const response = await api.get(`/auth/invite-code/validate/?code=${code}`);
-            return response.data;
-        } catch (error: any) {
-            return {
-                valid: false,
-                error: error.response?.data?.error || 'Invalid code'
-            };
-        }
+    searchChildren: async (query: string): Promise<StudentSearchResult[]> => {
+        const response = await api.get('/parent/children/search/', { params: { q: query } });
+        return response.data.results || [];
+    },
+
+    /**
+     * Parent sends a request to connect with a student.
+     */
+    requestChildLink: async (childId: number): Promise<{ message: string; request: ParentLinkRequest }> => {
+        const response = await api.post('/parent/link-requests/', { child_id: childId });
+        return response.data;
+    },
+
+    /**
+     * Parent lists their own connection requests.
+     */
+    getMyLinkRequests: async (): Promise<ParentLinkRequest[]> => {
+        const response = await api.get('/parent/link-requests/');
+        return response.data.requests || [];
+    },
+
+    /**
+     * Student lists pending parent connection requests.
+     */
+    getIncomingParentLinkRequests: async (): Promise<ParentLinkRequest[]> => {
+        const response = await api.get('/student/parent-link-requests/');
+        return response.data.requests || [];
+    },
+
+    /**
+     * Student approves a parent connection request.
+     */
+    approveParentLinkRequest: async (requestId: number): Promise<{ message: string }> => {
+        const response = await api.post(`/student/parent-link-requests/${requestId}/approve/`);
+        return response.data;
+    },
+
+    /**
+     * Student rejects a parent connection request.
+     */
+    rejectParentLinkRequest: async (requestId: number): Promise<{ message: string }> => {
+        const response = await api.post(`/student/parent-link-requests/${requestId}/reject/`);
+        return response.data;
     },
 };

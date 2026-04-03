@@ -125,7 +125,7 @@ class CreateCheckoutSessionView(APIView):
 
         if active_children < total_allowed:
             return Response(
-                {"error": "You already have a paid slot available. Use your invite code to link a child."},
+                {"error": "You already have a paid slot available. Search for your child and send a link request."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 

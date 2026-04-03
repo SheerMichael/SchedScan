@@ -59,18 +59,18 @@ urlpatterns = [
     path('notifications/unread-count/', views.NotificationUnreadCountView.as_view(), name='notification_unread_count'),
     path('notifications/<int:pk>/read/', views.NotificationMarkReadView.as_view(), name='notification_mark_read'),
     
-    # Parental view endpoints - Invite codes
-    path('auth/invite-code/generate/', views.GenerateInviteCodeView.as_view(), name='generate_invite_code'),
-    path('auth/invite-code/validate/', views.ValidateInviteCodeView.as_view(), name='validate_invite_code'),
-    path('auth/invite-code/use/', views.UseInviteCodeView.as_view(), name='use_invite_code'),
-    
     # Parental view endpoints - Parent side
     path('parent/child/', views.ChildLinkView.as_view(), name='child_link'),
     path('parent/child/schedule/', views.ChildScheduleView.as_view(), name='child_schedule'),
+    path('parent/children/search/', views.ParentChildSearchView.as_view(), name='parent_child_search'),
+    path('parent/link-requests/', views.ParentLinkRequestView.as_view(), name='parent_link_requests'),
     
     # Parental view endpoints - Student side
     path('student/parents/', views.LinkedParentsView.as_view(), name='linked_parents'),
     path('student/parents/<int:link_id>/revoke/', views.RevokeParentAccessView.as_view(), name='revoke_parent_access'),
+    path('student/parent-link-requests/', views.StudentParentLinkRequestListView.as_view(), name='student_parent_link_requests'),
+    path('student/parent-link-requests/<int:request_id>/approve/', views.StudentParentLinkRequestApproveView.as_view(), name='student_parent_link_request_approve'),
+    path('student/parent-link-requests/<int:request_id>/reject/', views.StudentParentLinkRequestRejectView.as_view(), name='student_parent_link_request_reject'),
     
     # Faculty-Student Connection endpoints
     path('faculty/activate/', views.FacultyModeActivateView.as_view(), name='faculty_activate'),

@@ -176,7 +176,7 @@ const LoginScreen = () => {
         {/* Parent Link */}
         <View className="flex-row justify-center mb-10">
           <TouchableOpacity onPress={() => router.push('/intro/parent_signup')} disabled={isLoading}>
-            <Text className="text-primary-600 font-medium">Are you a parent? Enter invite code</Text>
+            <Text className="text-primary-600 font-medium">Are you a parent? Create an account</Text>
           </TouchableOpacity>
         </View>
 

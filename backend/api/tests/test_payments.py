@@ -1,6 +1,6 @@
 """
 Tests for the Stripe payment feature.
-Covers: can-add-child check, payment gate in invite code usage,
+Covers: can-add-child check, payment gate in parent link requests,
 checkout session creation (mocked), and payment status polling (mocked).
 """
 from unittest.mock import patch, MagicMock
@@ -8,7 +8,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 from rest_framework import status
 
-from api.models import User, ParentChildLink, InviteCode, Payment
+from api.models import User, ParentChildLink, ParentLinkRequest, Payment
 
 
 class PaymentTestBase(TestCase):
@@ -88,35 +88,27 @@ class CanAddChildTests(PaymentTestBase):
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
-class InviteCodePaymentGateTests(PaymentTestBase):
-    """Test that UseInviteCodeView enforces payment for additional children."""
+class LinkRequestPaymentGateTests(PaymentTestBase):
+    """Test that parent link requests enforce payment for additional children."""
 
-    def _create_invite(self, student):
-        """Helper to create an active invite code for a student."""
-        code = InviteCode.generate_code()
-        return InviteCode.objects.create(student=student, code=code, is_active=True)
-
-    def test_first_child_links_free(self):
-        """First child should link without any payment."""
-        invite = self._create_invite(self.student1)
-
-        response = self.client.post('/api/auth/invite-code/use/', {'code': invite.code})
+    def test_first_child_request_is_free(self):
+        """First child request should succeed without payment."""
+        response = self.client.post('/api/parent/link-requests/', {'child_id': self.student1.id})
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertTrue(ParentChildLink.objects.filter(
-            parent=self.parent, child=self.student1, status='active'
+        self.assertTrue(ParentLinkRequest.objects.filter(
+            parent=self.parent, child=self.student1, status='pending'
         ).exists())
 
-    def test_second_child_requires_payment(self):
-        """Second child should return 402 without payment."""
+    def test_second_child_request_requires_payment(self):
+        """Second child request should return 402 without payment."""
         ParentChildLink.objects.create(parent=self.parent, child=self.student1, status='active')
-        invite = self._create_invite(self.student2)
 
-        response = self.client.post('/api/auth/invite-code/use/', {'code': invite.code})
+        response = self.client.post('/api/parent/link-requests/', {'child_id': self.student2.id})
         self.assertEqual(response.status_code, status.HTTP_402_PAYMENT_REQUIRED)
         self.assertTrue(response.data['needs_payment'])
 
-    def test_second_child_links_after_payment(self):
-        """Second child should link after payment is completed."""
+    def test_second_child_request_succeeds_after_payment(self):
+        """Second child request should succeed once paid slot is available."""
         ParentChildLink.objects.create(parent=self.parent, child=self.student1, status='active')
         Payment.objects.create(
             parent=self.parent,
@@ -125,9 +117,8 @@ class InviteCodePaymentGateTests(PaymentTestBase):
             status='completed',
             child_slot_number=2,
         )
-        invite = self._create_invite(self.student2)
 
-        response = self.client.post('/api/auth/invite-code/use/', {'code': invite.code})
+        response = self.client.post('/api/parent/link-requests/', {'child_id': self.student2.id})
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
 

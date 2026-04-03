@@ -371,6 +371,59 @@ class ParentChildLink(models.Model):
         return f"{self.parent.email} → {self.child.email} ({self.status})"
 
 
+class ParentLinkRequest(models.Model):
+    """
+    Request from a parent to connect to a student account.
+    Students must approve before an active parent-child link is created.
+    """
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    parent = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='outgoing_parent_link_requests',
+        help_text="The parent requesting access"
+    )
+    child = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='incoming_parent_link_requests',
+        help_text="The student receiving the request"
+    )
+    status = models.CharField(
+        max_length=10,
+        choices=STATUS_CHOICES,
+        default='pending',
+        help_text="Current status of the link request"
+    )
+    requested_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'Parent Link Request'
+        verbose_name_plural = 'Parent Link Requests'
+        ordering = ['-requested_at']
+        indexes = [
+            models.Index(fields=['parent', 'status']),
+            models.Index(fields=['child', 'status']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['parent', 'child'],
+                condition=models.Q(status='pending'),
+                name='unique_pending_parent_link_request'
+            )
+        ]
+
+    def __str__(self):
+        return f"Request {self.parent.email} -> {self.child.email} ({self.status})"
+
+
 class InviteCode(models.Model):
     """
     Invite codes for parents to link to student accounts.
