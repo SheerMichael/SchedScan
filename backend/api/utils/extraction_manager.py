@@ -25,6 +25,7 @@ from .extraction import (
 )
 from .extraction.fallbacks import should_use_fallback
 from .extraction.llm_normalizer import (
+    parse_document_metadata_with_llm_vision,
     parse_document_with_llm_vision,
 )
 
@@ -38,6 +39,18 @@ except ImportError as e:
     logging.getLogger(__name__).warning(f"OCR not available: {e}")
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_student_number(value: str) -> str:
+    text = str(value or '').strip()
+    if not text:
+        return ''
+
+    digits_only = ''.join(ch for ch in text if ch.isdigit())
+    if len(digits_only) == 9:
+        return f"{digits_only[:4]}-{digits_only[4:]}"
+
+    return text.upper()
 
 
 class ExtractionManager:
@@ -68,6 +81,71 @@ class ExtractionManager:
             self.quality_threshold = self.PDF_QUALITY_THRESHOLD
         
         logger.info(f"ExtractionManager initialized with quality threshold: {self.quality_threshold}")
+
+    def extract_student_number_for_ownership_gate(self, file_path: str) -> Dict:
+        """
+        Fast synchronous ownership gate for student uploads.
+
+        This path extracts only the student number with a tight compute budget
+        to reduce request latency before launching async full extraction.
+        """
+        start_time = time.time()
+        attempts: List[str] = []
+
+        timeout_seconds = int(getattr(settings, 'EXTRACTION_FAST_OWNERSHIP_GATE_TIMEOUT_SECONDS', 10))
+        max_pages = int(getattr(settings, 'EXTRACTION_FAST_OWNERSHIP_GATE_MAX_PAGES', 1))
+        retry_count = int(getattr(settings, 'EXTRACTION_FAST_OWNERSHIP_GATE_RETRY_COUNT', 0))
+
+        doc_meta, telemetry = parse_document_metadata_with_llm_vision(
+            file_path=file_path,
+            upload_type='student',
+            timeout_seconds_override=timeout_seconds,
+            max_pages_override=max_pages,
+            retry_count_override=retry_count,
+        )
+        attempts.append('llm_vision_metadata_gate')
+        student_number = _normalize_student_number(doc_meta.get('student_number', ''))
+
+        raw_text = ''
+        if not student_number and file_path.lower().endswith('.pdf'):
+            # Lightweight local fallback: first-page text scan only.
+            try:
+                import pdfplumber as _pdfplumber
+                with _pdfplumber.open(file_path) as _pdf:
+                    first_page_text = ''
+                    if _pdf.pages:
+                        first_page_text = _pdf.pages[0].extract_text() or ''
+                raw_text = first_page_text
+                digits = ''.join(ch for ch in first_page_text if ch.isdigit())
+                if len(digits) >= 9:
+                    for i in range(0, len(digits) - 8):
+                        candidate = digits[i:i + 9]
+                        normalized = _normalize_student_number(candidate)
+                        if normalized:
+                            student_number = normalized
+                            attempts.append('pdf_first_page_metadata_fallback')
+                            break
+            except Exception as exc:
+                logger.warning('Ownership gate PDF fallback failed: %s', exc)
+
+        processing_time = round(time.time() - start_time, 3)
+        return {
+            'student_number': student_number,
+            'extraction_method': attempts[-1] if student_number else 'none',
+            'confidence': 1.0 if student_number else 0.0,
+            'processing_time': processing_time,
+            'attempts': attempts,
+            'failure_category': 'none' if student_number else 'metadata_mismatch',
+            'validator_errors': [],
+            'score_breakdown': {},
+            'llm_used': telemetry.get('llm_used', False),
+            'llm_parse_success': telemetry.get('llm_parse_success', False),
+            'llm_failure_reason': telemetry.get('llm_failure_reason', ''),
+            'raw_text': raw_text,
+            'score_policy_upload_type': 'student',
+            'score_version': str(getattr(settings, 'EXTRACTION_SCORE_VERSION', 'v1')),
+            'rule_version': str(getattr(settings, 'EXTRACTION_RULE_VERSION', 'v1')),
+        }
 
     def _accept_threshold(self, upload_type: str) -> float:
         by_type = getattr(settings, 'EXTRACTION_ACCEPT_THRESHOLD_BY_UPLOAD_TYPE', None)
@@ -324,15 +402,27 @@ class ExtractionManager:
         # low-confidence "none" outcomes when the vision call fails closed
         # (timeout, policy gate, model cold-start, etc.).
         llm_failure_reason = str(result.get('llm_failure_reason') or '').strip()
-        if (
+        fallback_reasons = {'timeout', 'empty_courses', 'invalid_json', 'schema_reject'}
+        fallback_on_reject = bool(
+            getattr(settings, 'EXTRACTION_LLM_DIRECT_FILE_FALLBACK_ON_REJECT', True)
+        )
+        should_fallback_from_direct = (
             direct_file_parse_enabled
             and not result.get('accepted', False)
-            and not result.get('courses')
-            and llm_failure_reason in {'timeout', 'empty_courses'}
+            and fallback_on_reject
+            and (
+                not result.get('courses')
+                or result.get('failure_category') in {'low_confidence', 'parse_error'}
+                or llm_failure_reason in fallback_reasons
+            )
+        )
+        if (
+            should_fallback_from_direct
         ):
             logger.warning(
-                'Direct-file vision produced no accepted courses (%s); falling back to staged extraction '
-                '(file=%s, upload_type=%s)',
+                'Direct-file vision result rejected (failure_category=%s, llm_failure_reason=%s); '
+                'falling back to staged extraction (file=%s, upload_type=%s)',
+                result.get('failure_category', 'none'),
                 llm_failure_reason,
                 file_path,
                 upload_type,
@@ -608,8 +698,8 @@ def run_extraction_job(job_id) -> None:
             # that the student number the LLM extracted still matches the
             # authenticated user before writing any Course rows.
             if job.upload_type == 'student':
-                extracted_sn = (result.get('student_number', '') or '').strip()
-                user_sn = (getattr(job.user, 'student_number', '') or '').strip()
+                extracted_sn = _normalize_student_number(result.get('student_number', ''))
+                user_sn = _normalize_student_number(getattr(job.user, 'student_number', ''))
                 if user_sn and not extracted_sn:
                     logger.warning(
                         "run_extraction_job: student number missing for student job %s. Failing ownership gate.",
@@ -729,7 +819,7 @@ def run_extraction_job(job_id) -> None:
             job.status = 'done'
             job.extraction_method = job_method
             job.courses = courses_data
-            job.student_number = result.get('student_number', '')
+            job.student_number = _normalize_student_number(result.get('student_number', ''))
             job.semester = result.get('semester', '')
             job.school_year = result.get('school_year', '')
             job.confidence = result.get('confidence')

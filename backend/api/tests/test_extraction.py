@@ -354,6 +354,56 @@ class ExtractionManagerTestCase(TestCase):
         self.assertEqual(result['extraction_method'], 'ocr_fallback')
         self.assertIn('ocr_fallback', result['attempts'])
 
+    @override_settings(
+        EXTRACTION_LLM_DIRECT_FILE_PARSE_ENABLED=True,
+        EXTRACTION_LLM_DIRECT_FILE_FALLBACK_ON_REJECT=True,
+    )
+    @patch('api.utils.extraction_manager.parse_document_with_llm_vision')
+    @patch('api.utils.extraction_manager.StagedExtractionOrchestrator')
+    def test_direct_file_reject_with_empty_courses_falls_back_to_staged(
+        self,
+        mock_orchestrator_class,
+        mock_parse_vision,
+    ):
+        """Direct-file mode should recover via staged extraction when vision fails closed."""
+        mock_parse_vision.return_value = (
+            [],
+            {'student_number': '', 'semester': '', 'school_year': ''},
+            {
+                'llm_used': True,
+                'llm_parse_success': False,
+                'llm_failure_reason': 'invalid_json',
+            },
+        )
+
+        mock_orchestrator = Mock()
+        mock_orchestrator.run.return_value = {
+            'courses': [
+                {
+                    'subject_code': 'BSCS101',
+                    'start_time': '08:00AM',
+                    'end_time': '10:00AM',
+                    'day': 'M',
+                    'location': 'LR1',
+                }
+            ],
+            'extraction_method': 'ocr_fallback',
+            'confidence': 0.9,
+            'attempts': ['ocr_fallback'],
+            'student_number': '2022-01191',
+            'semester': '1ST',
+            'school_year': '2025-2026',
+            'raw_text': 'Student number 2022-01191',
+        }
+        mock_orchestrator_class.return_value = mock_orchestrator
+
+        manager = ExtractionManager()
+        result = manager.extract_schedule('/fake/path.jpg', 'student')
+
+        mock_orchestrator.run.assert_called_once()
+        self.assertTrue(result.get('fallback_triggered', False))
+        self.assertGreaterEqual(len(result.get('courses', [])), 1)
+
 
 class ExtractionViewIntegrationTestCase(TestCase):
     """Integration tests for extraction views"""
@@ -375,31 +425,16 @@ class ExtractionViewIntegrationTestCase(TestCase):
         """Student COR upload uses extraction manager for ownership check and returns 202."""
         # Mock extraction manager
         mock_manager = Mock()
-        mock_manager.extract_schedule.return_value = {
-            'courses': [
-                {
-                    'subject_code': 'BSCS101',
-                    'subject_name': 'Programming',
-                    'start_time': '08:00AM',
-                    'end_time': '10:00AM',
-                    'day': 'M',
-                    'location': 'LR1'
-                }
-            ],
-            'extraction_method': 'pdf_text',
-            'confidence': 0.95,
-            'processing_time': 0.3,
-            'attempts': ['pdf_text'],
+        mock_manager.extract_student_number_for_ownership_gate.return_value = {
             'student_number': '2022-01191',
+            'extraction_method': 'llm_vision_metadata_gate',
+            'confidence': 1.0,
+            'processing_time': 0.3,
+            'attempts': ['llm_vision_metadata_gate'],
             'failure_category': 'none',
             'validator_errors': [],
-            'score_breakdown': {
-                'completeness': 1.0,
-                'validity': 1.0,
-                'consistency': 1.0,
-                'parser_reliability': 0.95,
-                'agreement': 1.0,
-            },
+            'score_breakdown': {},
+            'llm_failure_reason': '',
         }
         mock_manager_class.return_value = mock_manager
 
@@ -431,22 +466,16 @@ class ExtractionViewIntegrationTestCase(TestCase):
     def test_retry_response_preserves_legacy_keys_with_enhanced_metadata(self, mock_manager_class):
         """Low-confidence student upload still returns 202 (quality rejection now async)."""
         mock_manager = Mock()
-        mock_manager.extract_schedule.return_value = {
-            'courses': [],
-            'extraction_method': 'pdf_text',
-            'confidence': 0.55,
-            'processing_time': 0.35,
-            'attempts': ['pdf_text', 'ocr_fallback'],
+        mock_manager.extract_student_number_for_ownership_gate.return_value = {
             'student_number': '2022-01191',
-            'failure_category': 'low_confidence',
-            'validator_errors': ['Course[0] invalid day token: TUES'],
-            'score_breakdown': {
-                'completeness': 0.4,
-                'validity': 0.5,
-                'consistency': 0.5,
-                'parser_reliability': 0.68,
-                'agreement': 0.7,
-            },
+            'extraction_method': 'llm_vision_metadata_gate',
+            'confidence': 1.0,
+            'processing_time': 0.35,
+            'attempts': ['llm_vision_metadata_gate'],
+            'failure_category': 'none',
+            'validator_errors': [],
+            'score_breakdown': {},
+            'llm_failure_reason': '',
         }
         mock_manager_class.return_value = mock_manager
 
@@ -546,26 +575,16 @@ class AsyncExtractionJobTestCase(TestCase):
     def test_student_upload_returns_202(self, mock_manager_class, mock_run_job):
         """Student COR upload passes ownership check and returns 202 Accepted."""
         mock_manager = Mock()
-        mock_manager.extract_schedule.return_value = {
-            'courses': [
-                {
-                    'subject_code': 'BSCS101',
-                    'subject_name': 'Programming',
-                    'start_time': '08:00AM',
-                    'end_time': '10:00AM',
-                    'day': 'M',
-                    'location': 'LR1',
-                }
-            ],
-            'extraction_method': 'pdf_text',
-            'confidence': 0.95,
-            'processing_time': 0.3,
-            'attempts': ['pdf_text'],
+        mock_manager.extract_student_number_for_ownership_gate.return_value = {
             'student_number': '2022-09999',
+            'extraction_method': 'llm_vision_metadata_gate',
+            'confidence': 1.0,
+            'processing_time': 0.3,
+            'attempts': ['llm_vision_metadata_gate'],
             'failure_category': 'none',
             'validator_errors': [],
             'score_breakdown': {},
-            'accepted': True,
+            'llm_failure_reason': '',
         }
         mock_manager_class.return_value = mock_manager
 
@@ -746,6 +765,19 @@ class AsyncExtractionJobTestCase(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['status'], 'processing')
 
+    def test_poll_stale_processing_job_auto_fails(self):
+        from django.utils import timezone
+        from datetime import timedelta
+
+        job = self._make_job(status='processing')
+        stale_time = timezone.now() - timedelta(minutes=30)
+        type(job).objects.filter(pk=job.pk).update(updated_at=stale_time)
+
+        response = self.client.get(f'/api/extraction-jobs/{job.job_id}/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['status'], 'failed')
+        self.assertEqual(response.data.get('failure_category'), 'system_error')
+
     def test_poll_done_returns_courses(self):
         from api.models import ExtractionJob
         job = ExtractionJob.objects.create(
@@ -888,6 +920,62 @@ class AsyncExtractionJobTestCase(TestCase):
         self.assertEqual(linked_courses.first().subject_code, 'BSCS101')
         mock_notify.assert_called_once_with(job, success=True)
         # Temp file should be cleaned up
+        self.assertFalse(os.path.exists(temp_path))
+
+    @patch('api.utils.extraction_manager._send_extraction_job_notification')
+    @patch('api.utils.extraction_manager._write_extraction_log_for_job')
+    @patch('api.utils.extraction_manager.ExtractionManager')
+    def test_run_extraction_job_accepts_normalized_student_number_match(self, mock_manager_class, mock_log, mock_notify):
+        """Async ownership check should normalize compact student numbers from handwritten docs."""
+        import tempfile, os
+        from api.models import ExtractionJob
+        from api.utils.extraction_manager import run_extraction_job
+
+        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as f:
+            f.write(b'fake image')
+            temp_path = f.name
+
+        job = ExtractionJob.objects.create(
+            user=self.user,
+            upload_type='student',
+            file_name='handwritten.jpg',
+            status='pending',
+            _temp_file_path=temp_path,
+        )
+
+        mock_manager = Mock()
+        mock_manager.extract_schedule.return_value = {
+            'courses': [
+                {
+                    'subject_code': 'OS',
+                    'subject_name': '',
+                    'start_time': '07:00AM',
+                    'end_time': '09:00AM',
+                    'day': '',
+                    'location': 'LR1',
+                }
+            ],
+            'extraction_method': 'llm_vision_parse',
+            'confidence': 0.90,
+            'processing_time': 1.0,
+            'attempts': ['llm_vision_parse'],
+            'student_number': '202209999',
+            'semester': '1ST',
+            'school_year': '2025-2026',
+            'failure_category': 'none',
+            'validator_errors': [],
+            'score_breakdown': {},
+            'accepted': True,
+            'llm_failure_reason': '',
+        }
+        mock_manager_class.return_value = mock_manager
+
+        run_extraction_job(job.job_id)
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, 'done')
+        self.assertEqual(job.student_number, '2022-09999')
+        mock_notify.assert_called_once_with(job, success=True)
         self.assertFalse(os.path.exists(temp_path))
 
     @patch('api.utils.extraction_manager._send_extraction_job_notification')

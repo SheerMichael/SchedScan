@@ -8,6 +8,7 @@ from django.test import SimpleTestCase, override_settings
 
 from api.utils.extraction.llm_normalizer import (
     normalize_with_llm,
+    parse_document_metadata_with_llm_vision,
     parse_document_with_llm_vision,
     parse_with_llm,
 )
@@ -556,6 +557,121 @@ class ParseDocumentWithLLMVisionTestCase(SimpleTestCase):
             sent_payload = mock_post.call_args.kwargs.get('json', {})
             self.assertEqual(sent_payload.get('model'), 'granite3.2-vision:2b')
             self.assertTrue(bool(sent_payload.get('images')))
+        finally:
+            os.unlink(tmp_path)
+
+
+class ParseDocumentMetadataWithLLMVisionTestCase(SimpleTestCase):
+    @override_settings(
+        EXTRACTION_LLM_VISION_PARSE_ENABLED=True,
+        EXTRACTION_LLM_NORMALIZATION_ENABLED=True,
+        EXTRACTION_LLM_VISION_MODEL_NAME='granite3.2-vision:2b',
+        EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL=False,
+    )
+    @patch('api.utils.extraction.llm_normalizer.requests.post')
+    def test_metadata_gate_extracts_student_number(self, mock_post):
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+            tmp.write(b'fake-image-bytes')
+            tmp_path = tmp.name
+
+        try:
+            payload = json.dumps({
+                'doc_metadata': {
+                    'student_number': '202201191',
+                },
+            })
+            mock_post.return_value = Mock(status_code=200)
+            mock_post.return_value.raise_for_status = Mock()
+            mock_post.return_value.json.return_value = {'response': payload}
+
+            meta, telemetry = parse_document_metadata_with_llm_vision(
+                file_path=tmp_path,
+                upload_type='student',
+                timeout_seconds_override=5,
+                max_pages_override=1,
+                retry_count_override=0,
+            )
+
+            self.assertTrue(telemetry['llm_used'])
+            self.assertTrue(telemetry['llm_parse_success'])
+            self.assertEqual(meta['student_number'], '2022-01191')
+        finally:
+            os.unlink(tmp_path)
+
+    @override_settings(
+        EXTRACTION_LLM_VISION_PARSE_ENABLED=True,
+        EXTRACTION_LLM_NORMALIZATION_ENABLED=True,
+        EXTRACTION_LLM_VISION_MODEL_NAME='granite3.2-vision:2b',
+        EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL=False,
+    )
+    @patch('api.utils.extraction.llm_normalizer.requests.post')
+    def test_metadata_gate_empty_returns_metadata_missing(self, mock_post):
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+            tmp.write(b'fake-image-bytes')
+            tmp_path = tmp.name
+
+        try:
+            mock_post.return_value = Mock(status_code=200)
+            mock_post.return_value.raise_for_status = Mock()
+            mock_post.return_value.json.return_value = {
+                'response': json.dumps({'doc_metadata': {'student_number': None}})
+            }
+
+            meta, telemetry = parse_document_metadata_with_llm_vision(
+                file_path=tmp_path,
+                upload_type='student',
+            )
+
+            self.assertEqual(meta['student_number'], '')
+            self.assertFalse(telemetry['llm_parse_success'])
+            self.assertEqual(telemetry['llm_failure_reason'], 'metadata_missing')
+        finally:
+            os.unlink(tmp_path)
+
+    @override_settings(
+        EXTRACTION_LLM_VISION_PARSE_ENABLED=True,
+        EXTRACTION_LLM_NORMALIZATION_ENABLED=True,
+        EXTRACTION_LLM_MODEL_NAME='granite3.2-vision:2b',
+        EXTRACTION_LLM_VISION_MODEL_NAME='granite3.2-vision:2b',
+        EXTRACTION_LLM_REQUIRE_PINNED_MODEL=False,
+        EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL=False,
+    )
+    @patch('api.utils.extraction.llm_normalizer.requests.post')
+    def test_student_number_compact_digits_are_normalized(self, mock_post):
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+            tmp.write(b'fake-image-bytes')
+            tmp_path = tmp.name
+
+        try:
+            payload = json.dumps({
+                'doc_metadata': {
+                    'student_number': '202201191',
+                    'semester': '1ST',
+                    'school_year': '2025-2026',
+                },
+                'courses': [
+                    {
+                        'subject_code': 'OS',
+                        'subject_name': '',
+                        'day': '',
+                        'start_time': '07:00AM',
+                        'end_time': '09:00AM',
+                        'location': 'LR1',
+                    }
+                ],
+            })
+            mock_post.return_value = Mock(status_code=200)
+            mock_post.return_value.raise_for_status = Mock()
+            mock_post.return_value.json.return_value = {'response': payload}
+
+            courses, meta, telemetry = parse_document_with_llm_vision(
+                file_path=tmp_path,
+                upload_type='student',
+            )
+
+            self.assertTrue(telemetry['llm_parse_success'])
+            self.assertEqual(len(courses), 1)
+            self.assertEqual(meta['student_number'], '2022-01191')
         finally:
             os.unlink(tmp_path)
 

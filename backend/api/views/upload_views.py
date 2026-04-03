@@ -327,9 +327,12 @@ class BaseCORUploadView(APIView):
             if self.upload_type == 'student' and not defer_student_ownership_for_images:
 
                 manager = ExtractionManager()
-                result = manager.extract_schedule(temp_file_path, self.upload_type)
+                if bool(getattr(settings, 'EXTRACTION_FAST_OWNERSHIP_GATE_ENABLED', True)):
+                    result = manager.extract_student_number_for_ownership_gate(temp_file_path)
+                else:
+                    # Backward-compatible fallback for emergency rollback.
+                    result = manager.extract_schedule(temp_file_path, self.upload_type)
 
-                courses_data = result['courses']
                 extracted_student_number = self._normalize_student_number(result.get('student_number', ''))
                 extraction_metadata = {
                     'method': result['extraction_method'],
@@ -356,33 +359,6 @@ class BaseCORUploadView(APIView):
                     f"Student COR ownership check: method={result['extraction_method']}, "
                     f"confidence={result['confidence']}, student_number={extracted_student_number!r}"
                 )
-
-                # Re-run with stronger OCR fallback if student number not found
-                if not extracted_student_number:
-                    stronger_fallback_result = manager.extract_schedule(
-                        temp_file_path,
-                        self.upload_type,
-                        force_ocr_fallback=True,
-                    )
-                    extracted_student_number = self._normalize_student_number(
-                        stronger_fallback_result.get('student_number', '')
-                    )
-                    if extracted_student_number:
-                        result = stronger_fallback_result
-                        courses_data = result['courses']
-                        extraction_metadata.update({
-                            'method': result['extraction_method'],
-                            'confidence': result['confidence'],
-                            'processing_time_seconds': result['processing_time'],
-                            'attempts': result.get('attempts', []),
-                            'llm_failure_reason': result.get('llm_failure_reason', ''),
-                            'semester': result.get('semester', ''),
-                            'school_year': result.get('school_year', ''),
-                            'failure_category': result.get('failure_category', 'none'),
-                            'validator_errors': result.get('validator_errors', []),
-                            'score_breakdown': result.get('score_breakdown', {}),
-                        })
-                        redacted_preview = self._build_raw_text_preview(uploaded_file, result)
 
                 if not extracted_student_number:
                     extracted_student_number = self._extract_student_number_from_text(

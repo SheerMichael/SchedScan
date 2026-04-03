@@ -470,12 +470,24 @@ def normalize_with_llm(
 ALLOWED_DOC_METADATA_KEYS = {'student_number', 'semester', 'school_year'}
 
 
+def _normalize_student_number(value: Any) -> str:
+    text = str(value or '').strip()
+    if not text:
+        return ''
+
+    digits_only = ''.join(ch for ch in text if ch.isdigit())
+    if len(digits_only) == 9:
+        return f'{digits_only[:4]}-{digits_only[4:]}'
+
+    return text.upper()
+
+
 def _sanitize_doc_metadata(value: Any) -> Dict[str, Any]:
     if not isinstance(value, dict):
         value = {}
 
     return {
-        'student_number': str(value.get('student_number') or '').strip(),
+        'student_number': _normalize_student_number(value.get('student_number')),
         'semester': str(value.get('semester') or '').strip().upper(),
         'school_year': str(value.get('school_year') or '').strip(),
     }
@@ -588,8 +600,36 @@ def _build_vision_parse_prompt(upload_type: str) -> str:
         f'Format context: {format_hint}\n'
         'Rules:\n'
         '- Use only data visible in the document.\n'
+        '- Handwritten rows may look like: "OS 7:00AM-9:00AM LR1" or "SE 1:00PM-3:00PM LP2".\n'
+        '- Column headers may be abbreviated: Subject/Subj, Time, Loc/Location.\n'
+        '- Student number can appear as 9 contiguous digits (e.g. 202201191); normalize to YYYY-NNNNN.\n'
         '- Normalize times to HH:MMAM/PM.\n'
         '- Keep unknown fields empty instead of guessing.\n'
+        '- No markdown, no prose, JSON only.'
+    )
+
+
+def _build_vision_metadata_prompt(upload_type: str) -> str:
+    context_hint = (
+        'Student COR documents can be typed or handwritten. '
+        'Student number can appear as YYYY-NNNNN, YYYY NNNNN, or 9 contiguous digits.'
+        if upload_type == 'student'
+        else 'Faculty documents usually do not contain a student number. Return null.'
+    )
+
+    return (
+        'You are a strict metadata extractor. Analyze the attached document image(s) '
+        'and return ONLY valid JSON with this exact schema:\n'
+        '{\n'
+        '  "doc_metadata": {\n'
+        '    "student_number": "<YYYY-NNNNN or null>"\n'
+        '  }\n'
+        '}\n\n'
+        f'Context: {context_hint}\n'
+        'Rules:\n'
+        '- Use only data visible in the document.\n'
+        '- If student number is shown as 9 digits (e.g. 202201191), normalize to YYYY-NNNNN.\n'
+        '- If missing or unreadable, return null.\n'
         '- No markdown, no prose, JSON only.'
     )
 
@@ -781,6 +821,138 @@ def parse_document_with_llm_vision(
             return [], empty_meta, telemetry
 
     return [], empty_meta, telemetry
+
+
+def parse_document_metadata_with_llm_vision(
+    *,
+    file_path: str,
+    upload_type: str,
+    timeout_seconds_override: int | None = None,
+    max_pages_override: int | None = None,
+    retry_count_override: int | None = None,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+    Lightweight vision call for ownership gating.
+
+    Extracts only doc_metadata.student_number using a smaller budget
+    (page/timeout/retry overrides), reducing synchronous request latency.
+    """
+    empty_meta: Dict[str, Any] = {'student_number': '', 'semester': '', 'school_year': ''}
+    telemetry: Dict[str, Any] = {
+        'llm_used': False,
+        'llm_parse_success': False,
+        'llm_failure_reason': '',
+        'llm_model': '',
+        'llm_timeout_seconds': int(getattr(settings, 'EXTRACTION_LLM_TIMEOUT_SECONDS', 12)),
+        'llm_retry_count': 0,
+        'stage': 'llm_vision_metadata_gate',
+    }
+
+    if not bool(getattr(settings, 'EXTRACTION_LLM_VISION_PARSE_ENABLED', False)):
+        telemetry['llm_failure_reason'] = 'schema_reject'
+        return empty_meta, telemetry
+    if not bool(getattr(settings, 'EXTRACTION_LLM_NORMALIZATION_ENABLED', False)):
+        telemetry['llm_failure_reason'] = 'schema_reject'
+        return empty_meta, telemetry
+
+    model_name = str(getattr(settings, 'EXTRACTION_LLM_VISION_MODEL_NAME', '')).strip()
+    telemetry['llm_model'] = model_name
+    telemetry['llm_used'] = True
+
+    if not model_name:
+        telemetry['llm_failure_reason'] = 'schema_reject'
+        return empty_meta, telemetry
+
+    default_timeout = int(getattr(settings, 'EXTRACTION_LLM_TIMEOUT_SECONDS', 12))
+    timeout_seconds = int(timeout_seconds_override or default_timeout)
+    max_pages = max(1, int(max_pages_override or 1))
+    retry_count = max(0, int(retry_count_override or 0))
+    base_url = str(getattr(settings, 'EXTRACTION_LLM_BASE_URL', 'http://127.0.0.1:11434')).rstrip('/')
+    generate_url = f'{base_url}{OLLAMA_GENERATE_PATH}'
+
+    policy_ok, policy_error = _validate_runtime_policy(
+        base_url=base_url,
+        model_name=model_name,
+        timeout_seconds=timeout_seconds,
+        require_pinned_model=bool(getattr(settings, 'EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL', True)),
+        require_model_digest=bool(getattr(settings, 'EXTRACTION_LLM_VISION_REQUIRE_MODEL_DIGEST', False)),
+        required_digest=str(getattr(settings, 'EXTRACTION_LLM_VISION_MODEL_DIGEST', '')).strip(),
+    )
+    if not policy_ok:
+        logger.warning('LLM metadata gate policy check failed: %s', policy_error)
+        telemetry['llm_failure_reason'] = 'schema_reject'
+        return empty_meta, telemetry
+
+    retryable_reasons = {'timeout', 'metadata_missing'}
+
+    for attempt_index in range(retry_count + 1):
+        telemetry['llm_retry_count'] = attempt_index
+        is_retry = attempt_index > 0
+
+        images_b64 = _load_document_images_for_vision(file_path, max_pages=max_pages)
+        if not images_b64:
+            telemetry['llm_failure_reason'] = 'metadata_missing'
+            return empty_meta, telemetry
+
+        try:
+            request_payload = {
+                'model': model_name,
+                'prompt': _build_vision_metadata_prompt(upload_type),
+                'images': images_b64,
+                'stream': False,
+                'format': 'json',
+                'options': {'temperature': 0},
+            }
+            response = requests.post(
+                generate_url,
+                json=request_payload,
+                timeout=timeout_seconds,
+                headers=_build_ollama_headers(content_type=True),
+            )
+            response.raise_for_status()
+            ollama_payload = response.json()
+            llm_output = _extract_response_text(ollama_payload)
+            if not llm_output:
+                telemetry['llm_failure_reason'] = 'metadata_missing'
+                if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
+                    return empty_meta, telemetry
+                continue
+
+            parsed = _parse_llm_json(llm_output)
+            raw_doc_meta = parsed.get('doc_metadata', {})
+
+            # Recovery for occasional non-schema outputs:
+            # {"student_number": "2022-01191"}
+            if not raw_doc_meta and isinstance(parsed.get('student_number'), str):
+                raw_doc_meta = {'student_number': parsed.get('student_number')}
+
+            doc_metadata: Dict[str, Any] = _sanitize_doc_metadata(raw_doc_meta)
+            student_number = str(doc_metadata.get('student_number') or '').strip()
+
+            if student_number:
+                telemetry['llm_parse_success'] = True
+                telemetry['llm_failure_reason'] = ''
+                return doc_metadata, telemetry
+
+            telemetry['llm_failure_reason'] = 'metadata_missing'
+            if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
+                return empty_meta, telemetry
+        except requests.Timeout:
+            telemetry['llm_failure_reason'] = 'timeout'
+            logger.warning('LLM metadata gate timed out after %ss', timeout_seconds)
+            if is_retry:
+                return empty_meta, telemetry
+            continue
+        except requests.RequestException:
+            telemetry['llm_failure_reason'] = 'schema_reject'
+            logger.exception('LLM metadata gate request failed')
+            return empty_meta, telemetry
+        except (JSONDecodeError, ValueError):
+            telemetry['llm_failure_reason'] = 'invalid_json'
+            logger.warning('LLM metadata gate output was not valid JSON')
+            return empty_meta, telemetry
+
+    return empty_meta, telemetry
 
 
 def parse_with_llm(

@@ -1,8 +1,25 @@
 # SchedScan: Schedule Extraction Pipeline — Implementation Reference
 
 > **Status:** Active deployment validation with runtime stabilization applied.
-> Last updated: 2026-03-31 (23:30 PHT)
+> Last updated: 2026-04-02 (14:30 PHT)
 > Architecture: Vision-only LLM-primary, async, regex fallback.
+
+## 0A. April 2026 Delivery Addendum
+
+The extraction system has reached a materially better operating state in production.
+
+What changed in this cycle:
+
+- Vision parser reliability improved with controlled retry + better fallback arbitration.
+- LLM failure reasons are now first-class telemetry for operators.
+- Async success path now persists to a saved schedule model, not just a job payload.
+- Scanner UX now explicitly communicates background execution and safe navigation away from the upload screen.
+
+What this means operationally:
+
+- Higher successful extraction completion rate.
+- Better observability when failures do happen.
+- Better user trust: successful extraction now maps to durable saved schedule behavior.
 
 ## 0. Deployment Reality Check (2026-03-31)
 
@@ -132,7 +149,7 @@ POST /api/upload-cor/{student|faculty}/
   confidence ≥ threshold(upload_type)   confidence < threshold(upload_type)
         │               │
         ▼               ▼
-     Save ✅         Reject 422 ❌
+   Save Schedule + Courses ✅   Reject 422 ❌
         │
         ▼
   Push notification ──────────────► User's device
@@ -280,7 +297,7 @@ Every response is **schema-validated** before use. Unknown keys are logged and i
 |---|---|
 | Prompt injection mitigation | Fixed instruction template + strict response schema |
 | Schema enforcement | `ALLOWED_KEYS` whitelist and shape validation |
-| Hard timeout | `EXTRACTION_LLM_TIMEOUT_SECONDS` (currently 45s) |
+| Hard timeout | `EXTRACTION_LLM_TIMEOUT_SECONDS` (recommend 75s for current runtime profile) |
 | Input bounding | `EXTRACTION_LLM_VISION_MAX_PAGES` limits PDF pages sent to model |
 | Fail closed | Timeout / bad JSON / schema fail → return `([], {}, telemetry)`, never raise |
 | Model pinning | `EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL=True` rejects `:latest` tags |
@@ -296,6 +313,11 @@ Fallback path only runs when enabled and needed:
 - Vision LLM response failed schema validation
 - Vision LLM score below retry threshold
 - Ollama vision model unavailable
+
+Controlled retry behavior:
+
+- Retry is attempted once for transient classes (`timeout`, `empty_courses`).
+- Non-transient classes (`invalid_json`, `schema_reject`) fail fast and are logged for operator action.
 
 Fallback chain:
 
@@ -351,14 +373,17 @@ Composite score computed after validation:
 | `EXTRACTION_LLM_VISION_PARSE_ENABLED` | `True` | Enables direct-file vision parser |
 | `EXTRACTION_LLM_DIRECT_FILE_PARSE_ENABLED` | `True` | Bypasses OCR/pdfplumber orchestration |
 | `EXTRACTION_LLM_VISION_MODEL_NAME` | `granite3.2-vision:2b` | Primary vision model |
-| `EXTRACTION_LLM_VISION_MAX_PAGES` | `2` | Limits rendered PDF pages sent to model |
+| `EXTRACTION_LLM_VISION_MAX_PAGES` | `3` | Limits rendered PDF pages sent to model |
+| `EXTRACTION_LLM_VISION_RETRY_COUNT` | `1` | Controlled retry count for transient failures |
+| `EXTRACTION_LLM_VISION_RETRY_TIMEOUT_SECONDS` | `90` | Retry timeout budget (or inherits timeout if unset) |
+| `EXTRACTION_LLM_VISION_RETRY_MAX_PAGES` | `3` | Retry page budget for difficult PDFs |
 | `EXTRACTION_LLM_VISION_REQUIRE_MODEL_DIGEST` | `False` | Keep disabled during burn-in; enable once stable |
 | `EXTRACTION_LLM_VISION_MODEL_DIGEST` | *(optional)* | Required only when digest lock is enabled |
 | `EXTRACTION_LLM_FULL_PARSE_ENABLED` | `False` | Legacy text parser flag (not used by runtime orchestration) |
 | `EXTRACTION_LLM_MODEL_NAME` | *(optional)* | Legacy text model config (not used by runtime orchestration) |
 | `EXTRACTION_LLM_BASE_URL` | `http://209.97.172.45:8080` | Ollama on DigitalOcean Droplet |
 | `EXTRACTION_LLM_API_KEY` | *(see update.md)* | nginx X-Api-Key auth |
-| `EXTRACTION_LLM_TIMEOUT_SECONDS` | `45` | Hard timeout per LLM call |
+| `EXTRACTION_LLM_TIMEOUT_SECONDS` | `75` | Hard timeout per LLM call |
 | `EXTRACTION_LLM_MAX_INPUT_CHARS` | `6000` | Legacy text-parser input bound (not used in runtime orchestration) |
 | `EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL` | `True` | Reject `:latest` tags for vision model |
 | `EXTRACTION_LLM_STARTUP_CHECK_ENABLED` | `True` | Validate runtime/model availability on startup |
@@ -424,16 +449,22 @@ Response (failed):      { "status": "failed", "failure_category": "low_confidenc
 | `403` | Student number ownership mismatch |
 | `500` | System error |
 
+Done payload semantics:
+
+- A `done` async job now indicates extraction output is persisted to schedule + course records.
+- Success message explicitly states "extracted and saved" to avoid UX ambiguity.
+
 ---
 
 ## 11. Frontend Integration
 
 1. `POST` upload → receive `job_id`.
 2. Poll `GET /api/extraction-jobs/{job_id}/` every **3 seconds**.
-3. On `status: "done"` → refresh schedule view.
-4. On `status: "failed"` → show retry prompt.
-5. On push notification → stop polling early and reload.
-6. Max poll attempts: **10** (~30s). After that, show "Taking longer than expected — we'll notify you when done."
+3. Show background-processing modal immediately after acceptance: user can leave safely.
+4. On `status: "done"` → navigate to schedules and show saved confirmation.
+5. On `status: "failed"` → show retry prompt.
+6. On push notification → stop polling early and reload.
+7. Max poll attempts: **10** (~30s). After that, keep background UX active and rely on completion notification.
 
 ---
 
@@ -441,12 +472,13 @@ Response (failed):      { "status": "failed", "failure_category": "low_confidenc
 
 | Failure | What happens | User sees |
 |---|---|---|
-| Vision LLM timeout | Regex fallback runs automatically | Normal result (or retry) |
+| Vision LLM timeout | Controlled retry then fallback arbitration | Normal result (or retry) |
 | Vision LLM bad JSON | Regex fallback runs automatically | Normal result (or retry) |
 | Regex also fails | Job → `failed`, push notification sent | "Couldn't read your schedule — please re-upload" |
 | Student number mismatch | 403 returned synchronously | Error before job is created |
 | Ollama vision model down | Regex fallback path handles request | Slower but no hard outage |
 | Unexpected exception | Job → `failed`, error logged internally | "Something went wrong — please try again" |
+| Async DB persistence error | Job forced to `failed` (system_error) | Clear failure + retry path (no false done state) |
 
 ---
 
@@ -483,6 +515,8 @@ Key test classes:
 | `b79325e` | Admin extraction jobs tab + API wiring |
 | `f633159` | LLM parse/sanitization robustness + validator/scoring hardening |
 | `8e97d2d` | Student ownership fallback: normalize/extract student ID from raw text |
+| `564eadf` | Vision retry controls + llm failure telemetry + fallback arbitration |
+| `f9e54cc` | Async auto-persistence to schedule + linked courses, plus scanner background UX clarity |
 
 ### Operational Validation Checklist (not covered by unit tests)
 
@@ -494,4 +528,4 @@ Key test classes:
 3. Production E2E:
   - upload returns `202`
   - polling transitions to terminal state
-  - success writes courses and failure returns actionable category
+  - success writes schedule + linked courses and failure returns actionable category

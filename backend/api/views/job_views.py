@@ -15,6 +15,8 @@ Frontend polling strategy (recommended):
 import logging
 import uuid
 from django.utils import timezone
+from datetime import timedelta
+from django.conf import settings
 
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -24,6 +26,41 @@ from rest_framework.views import APIView
 from ..models import ExtractionJob
 
 logger = logging.getLogger(__name__)
+
+
+def _mark_stale_job_failed(job) -> bool:
+    """
+    Mark long-running pending/processing jobs as failed.
+
+    This protects clients from indefinite "processing" when in-process worker
+    threads are interrupted by process restarts or infrastructure recycling.
+    """
+    if job.status not in ('pending', 'processing'):
+        return False
+
+    max_age_minutes = int(getattr(settings, 'EXTRACTION_STALE_JOB_MAX_AGE_MINUTES', 5))
+    max_age_minutes = max(1, max_age_minutes)
+    cutoff = timezone.now() - timedelta(minutes=max_age_minutes)
+
+    # updated_at is auto_now; if it's too old, this job is stale.
+    if not job.updated_at or job.updated_at > cutoff:
+        return False
+
+    job.status = 'failed'
+    job.failure_category = 'system_error'
+    job.error_message = (
+        'Extraction exceeded expected processing window and was marked failed. '
+        'Please retry upload.'
+    )
+    job.save(update_fields=['status', 'failure_category', 'error_message', 'updated_at'])
+    logger.warning(
+        'ExtractionJobStatusView: auto-failed stale job %s (user=%s, upload_type=%s, age_minutes=%s)',
+        job.job_id,
+        job.user_id,
+        job.upload_type,
+        max_age_minutes,
+    )
+    return True
 
 
 class ExtractionJobStatusView(APIView):
@@ -67,6 +104,10 @@ class ExtractionJobStatusView(APIView):
                 {"error": "You do not have permission to view this job."},
                 status=status.HTTP_403_FORBIDDEN,
             )
+
+        _mark_stale_job_failed(job)
+        # Refresh after stale recovery attempt.
+        job.refresh_from_db(fields=['status', 'failure_category', 'error_message', 'updated_at'])
 
         job_status = job.status
 

@@ -1,6 +1,6 @@
 # SchedScan Extraction Pipeline — Master Update Log
 
-**Last updated:** 2026-03-31 (23:30 PHT)
+**Last updated:** 2026-04-02 (14:30 PHT)
 
 ---
 
@@ -12,6 +12,24 @@ The extraction pipeline is now **vision-only, LLM-primary, async**.
 - Legacy OCR/pdfplumber paths are no longer required for normal processing when direct-file mode is enabled.
 - Text LLM parsing paths were removed from runtime orchestration to reduce complexity.
 - Validation, scoring, ownership checks, async jobs, polling, and push notifications remain in place as reliability guardrails.
+
+### April 2026 Progress Update
+
+Extraction quality and runtime reliability improved significantly this week, and production now shows consistent successful extractions across real user uploads.
+
+Key gains delivered:
+
+- Raised vision coverage for PDFs and introduced controlled retry behavior for transient failures.
+- Added structured LLM failure telemetry (`timeout`, `invalid_json`, `schema_reject`, `empty_courses`) end-to-end in jobs/logs/admin.
+- Added fallback arbitration so direct-file vision empty/transient failures can still recover through staged extraction.
+- Improved async persistence semantics so successful async jobs now create a saved schedule and linked course rows in one transaction.
+- Improved user UX around background processing so users are explicitly told they can leave and continue using the app safely.
+
+Net effect:
+
+- Fewer dead-end failures.
+- Better operator visibility in admin.
+- Better end-user confidence and less confusion around "is it saved?" behavior.
 
 Recommended production model for current infrastructure: `granite3.2-vision:2b`.
 
@@ -66,7 +84,7 @@ Direct file understanding (Vision LLM)
          ├── score >= threshold → accepted
          └── score < threshold → regex fallback path
              │
-             ├── accepted → write Course rows → status: 'done'
+             ├── accepted → create Schedule + write linked Course rows → status: 'done'
              └── rejected / error → status: 'failed'
              │
              ▼
@@ -114,7 +132,7 @@ Direct file understanding (Vision LLM)
    → failure: "Extraction Failed ⚠️"
 
 4. On push notification received → cancel polling immediately, reload schedule
-5. After 10 poll attempts without terminal state → show "We'll notify you when done"
+5. After 10 poll attempts without terminal state → show explicit background-processing modal and continue via push notification
 ```
 
 ---
@@ -184,7 +202,10 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/api/tags \
 | `EXTRACTION_LLM_VISION_PARSE_ENABLED` | `True` |
 | `EXTRACTION_LLM_DIRECT_FILE_PARSE_ENABLED` | `True` |
 | `EXTRACTION_LLM_VISION_MODEL_NAME` | `granite3.2-vision:2b` |
-| `EXTRACTION_LLM_VISION_MAX_PAGES` | `2` |
+| `EXTRACTION_LLM_VISION_MAX_PAGES` | `3` |
+| `EXTRACTION_LLM_VISION_RETRY_COUNT` | `1` |
+| `EXTRACTION_LLM_VISION_RETRY_TIMEOUT_SECONDS` | `90` *(recommended; may inherit timeout if unset)* |
+| `EXTRACTION_LLM_VISION_RETRY_MAX_PAGES` | `3` |
 | `EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL` | `True` |
 | `EXTRACTION_LLM_VISION_REQUIRE_MODEL_DIGEST` | `False` *(enable after burn-in)* |
 | `EXTRACTION_LLM_VISION_MODEL_DIGEST` | *(optional until digest lock)* |
@@ -196,7 +217,7 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/api/tags \
 | `EXTRACTION_LLM_API_KEY` | `<redacted-secret-in-do-app-platform>` |
 | `EXTRACTION_LLM_MODEL_DIGEST` | *(optional, legacy only)* |
 | `EXTRACTION_LLM_REQUIRE_MODEL_DIGEST` | `False` *(legacy only)* |
-| `EXTRACTION_LLM_TIMEOUT_SECONDS` | `45` |
+| `EXTRACTION_LLM_TIMEOUT_SECONDS` | `75` *(recommended for current model/runtime profile)* |
 
 #### Scoring / Threshold Overrides (recommended for current rollout)
 
@@ -226,6 +247,51 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/api/tags \
 ---
 
 ## Session History
+
+### 2026-04-02 (Session 9) — Async Persistence + UX Clarity Hardening ✅ IMPLEMENTED
+
+**Goal:** Close the final UX trust gap where extraction was successful but users were unsure results were truly saved.
+
+#### Backend changes pushed
+
+- Commit `f9e54cc`:
+  - Async success path now creates a `Schedule` and writes linked `Course` rows atomically.
+  - Job failure path hardened if DB persistence fails during the write phase.
+  - Polling success message updated to explicitly state "extracted and saved".
+
+#### Frontend changes pushed
+
+- Scanner flow now presents an explicit background-processing modal with clear messaging:
+  - upload accepted,
+  - extraction continues server-side,
+  - user can safely leave and continue using the app,
+  - notification will be sent on completion.
+- Completion flow now confirms auto-save behavior and routes users to schedules quickly.
+
+#### Validation
+
+```bash
+Async extraction test suite passed.
+Updated success test now asserts schedule creation + linked course persistence.
+```
+
+### 2026-04-02 (Session 8) — Vision Retry + Failure Telemetry + Fallback Arbitration ✅ IMPLEMENTED
+
+**Goal:** Eliminate transient vision failure dead-ends and make LLM failure states observable.
+
+#### Backend changes pushed
+
+- Commit `564eadf`:
+  - Increased `EXTRACTION_LLM_VISION_MAX_PAGES` to 3.
+  - Added controlled retry for transient failure classes only.
+  - Added `llm_failure_reason` telemetry in `ExtractionJob` and `ExtractionLog`.
+  - Added direct-file vision fallback arbitration when results are empty due to transient issues.
+  - Added regression tests for retry and non-retry failure classes.
+
+#### Admin visibility
+
+- `llm_failure_reason` now visible in admin extraction job/list detail APIs and UI.
+- Processing spinner behavior improved to avoid misleading animation when processing count is zero.
 
 ### 2026-03-31 (Session 7) — Production Runtime Stability + Ownership Hotfix ✅ IMPLEMENTED
 
@@ -482,6 +548,9 @@ New tests covering:
 | Frontend: Admin dashboard — job visibility | ✅ Implemented and pushed (`b79325e`) |
 | Ollama runtime memory stabilization | ✅ Swap + single-runner constraints applied |
 | Student ownership fallback for missing ID formats | ✅ Implemented and pushed (`8e97d2d`) |
+| Vision retry + failure telemetry + fallback arbitration | ✅ Implemented and pushed (`564eadf`) |
+| Async job auto-persistence to Schedule + Course linkage | ✅ Implemented and pushed (`f9e54cc`) |
+| Background-processing UX clarity in scanner | ✅ Implemented and pushed (`f9e54cc`) |
 | `EXTRACTION_LLM_REQUIRE_MODEL_DIGEST=True` | 🟡 Pending burn-in telemetry |
 | Confidence threshold recalibration | 🟡 Pending upload-type threshold rollout + telemetry |
 
@@ -489,7 +558,7 @@ New tests covering:
 
 ## Clear Next Steps
 
-### Step 6 — Complete Productionization (Post-Runtime-Stabilization)
+### Step 6 — Lock Runtime Config Baseline
 
 1. Keep runtime stability controls in place on Droplet:
   - ensure `/swapfile` remains active after reboot (`swapon --show`)
@@ -501,7 +570,10 @@ New tests covering:
   - `EXTRACTION_LLM_VISION_PARSE_ENABLED=True`
   - `EXTRACTION_LLM_DIRECT_FILE_PARSE_ENABLED=True`
   - `EXTRACTION_LLM_VISION_MODEL_NAME=granite3.2-vision:2b`
-  - `EXTRACTION_LLM_VISION_MAX_PAGES=1` (temporary stabilization mode)
+  - `EXTRACTION_LLM_VISION_MAX_PAGES=3`
+  - `EXTRACTION_LLM_VISION_RETRY_COUNT=1`
+  - `EXTRACTION_LLM_VISION_RETRY_TIMEOUT_SECONDS=90`
+  - `EXTRACTION_LLM_VISION_RETRY_MAX_PAGES=3`
   - `EXTRACTION_LLM_FULL_PARSE_ENABLED=False`
 4. Apply upload-type thresholds:
   - `EXTRACTION_ACCEPT_THRESHOLD_FACULTY=0.72`
@@ -521,10 +593,24 @@ Acceptance criteria:
 
 - Upload endpoint returns `202` consistently.
 - Polling endpoint reaches terminal state (`done` or `failed`) without hanging.
-- Successful runs write expected course rows.
+- Successful runs write expected schedule rows and linked course rows.
 - Failure runs provide actionable `failure_category`.
 
-### Step 8 — Frontend: Admin Dashboard Job Visibility (optional)
+### Step 8 — Telemetry-Guided Quality Improvement
+
+1. Track top failure categories daily from admin extraction jobs/logs.
+2. Track `llm_failure_reason` distribution (`timeout`, `invalid_json`, `schema_reject`, `empty_courses`).
+3. If timeout-heavy: increase retry timeout modestly or lower page count for specific file families.
+4. If schema-heavy: tighten prompt JSON examples and post-parse sanitizer rules.
+5. If empty-courses-heavy: add targeted vision prompt hints for known campus template variants.
+
+### Step 9 — UX Continuity Improvements
+
+1. Add a lightweight in-app "Recent Extraction Jobs" card on Home so users can re-open terminal status quickly.
+2. Provide one-tap "View Saved Schedule" CTA from the completion notification payload handler.
+3. Add simple SLA copy in scanner (for example: "usually completes in 30-120s").
+
+### Admin Dashboard Job Visibility (already implemented)
 
 1. Set production env flags:
   - `EXTRACTION_LLM_VISION_PARSE_ENABLED=True`
@@ -540,7 +626,7 @@ Add an `ExtractionJob` list to the admin dashboard so admins can monitor stuck/f
 - Backend: `GET /api/admin/extraction/jobs/` is already implemented (filters: status, user, date, search)
 - Frontend: add dashboard tab/table for pending/processing/done/failed breakdown and drill-down
 
-### Step 9 — Threshold Recalibration
+### Step 10 — Threshold Recalibration
 
 After 2–4 weeks of real-world LLM extraction traffic:
 1. Pull `ExtractionLog` records where `llm_parse_success=True`
@@ -548,7 +634,7 @@ After 2–4 weeks of real-world LLM extraction traffic:
 3. Adjust `EXTRACTION_ACCEPT_THRESHOLD` (currently `0.85`) if LLM results are consistently rejected due to scoring model mismatch
 4. Enable `EXTRACTION_LLM_REQUIRE_MODEL_DIGEST=True` once model version is confirmed stable
 
-### Step 10 — Model Digest Lock
+### Step 11 — Model Digest Lock
 
 Once Ollama is confirmed stable on `granite3.2-vision:2b` for 48h+:
 ```
