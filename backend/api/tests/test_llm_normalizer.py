@@ -738,7 +738,7 @@ class ParseDocumentMetadataWithLLMVisionTestCase(SimpleTestCase):
         EXTRACTION_LLM_VISION_RETRY_COUNT=1,
     )
     @patch('api.utils.extraction.llm_normalizer.requests.post')
-    def test_invalid_json_fails_without_retry(self, mock_post):
+    def test_invalid_json_retries_once_then_fails(self, mock_post):
         with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
             tmp.write(b'fake-image-bytes')
             tmp_path = tmp.name
@@ -747,17 +747,52 @@ class ParseDocumentMetadataWithLLMVisionTestCase(SimpleTestCase):
             bad_response = Mock(status_code=200)
             bad_response.raise_for_status = Mock()
             bad_response.json.return_value = {'response': '{not-valid-json'}
-            mock_post.return_value = bad_response
+            mock_post.side_effect = [bad_response, bad_response]
 
             courses, meta, telemetry = parse_document_with_llm_vision(
                 file_path=tmp_path,
                 upload_type='faculty',
             )
 
-            self.assertEqual(mock_post.call_count, 1)
+            self.assertEqual(mock_post.call_count, 2)
             self.assertEqual(courses, [])
             self.assertFalse(telemetry['llm_parse_success'])
             self.assertEqual(telemetry['llm_failure_reason'], 'invalid_json')
+        finally:
+            os.unlink(tmp_path)
+
+    @override_settings(
+        EXTRACTION_LLM_VISION_PARSE_ENABLED=True,
+        EXTRACTION_LLM_NORMALIZATION_ENABLED=True,
+        EXTRACTION_LLM_MODEL_NAME='granite3.2-vision:2b',
+        EXTRACTION_LLM_VISION_MODEL_NAME='granite3.2-vision:2b',
+        EXTRACTION_LLM_REQUIRE_PINNED_MODEL=False,
+        EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL=False,
+        EXTRACTION_LLM_VISION_RETRY_COUNT=1,
+    )
+    @patch('api.utils.extraction.llm_normalizer.requests.post')
+    def test_schema_reject_retries_once_then_fails(self, mock_post):
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+            tmp.write(b'fake-image-bytes')
+            tmp_path = tmp.name
+
+        try:
+            schema_bad_response = Mock(status_code=200)
+            schema_bad_response.raise_for_status = Mock()
+            schema_bad_response.json.return_value = {
+                'response': json.dumps({'doc_metadata': {}, 'courses': 'not-a-list'})
+            }
+            mock_post.side_effect = [schema_bad_response, schema_bad_response]
+
+            courses, meta, telemetry = parse_document_with_llm_vision(
+                file_path=tmp_path,
+                upload_type='faculty',
+            )
+
+            self.assertEqual(mock_post.call_count, 2)
+            self.assertEqual(courses, [])
+            self.assertFalse(telemetry['llm_parse_success'])
+            self.assertEqual(telemetry['llm_failure_reason'], 'schema_reject')
         finally:
             os.unlink(tmp_path)
 

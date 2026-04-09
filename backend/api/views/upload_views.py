@@ -145,7 +145,7 @@ class BaseCORUploadView(APIView):
                 file_name=uploaded_file.name,
                 file_type=file_ext,
                 upload_type=self.upload_type,
-                extraction_method=extraction_method,
+                extraction_method=str(extraction_method or 'none')[:20],
                 confidence=confidence,
                 courses_extracted=courses_extracted,
                 success=success,
@@ -509,18 +509,25 @@ class BaseCORUploadView(APIView):
                 "Launched async extraction thread for job %s (user=%s, type=%s)",
                 job.job_id, request.user.id, self.upload_type,
             )
-
-            return Response(
-                {
-                    "job_id": str(job.job_id),
-                    "status": "processing",
-                    "message": (
-                        "Your file is being processed. "
-                        "We'll notify you when it's ready."
-                    ),
-                },
-                status=status.HTTP_202_ACCEPTED,
+            payload = {
+                "job_id": str(job.job_id),
+                "status": "processing",
+                "message": (
+                    "Your file is being processed. "
+                    "We'll notify you when it's ready."
+                ),
+            }
+            payload, final_status, replayed = self._finalize_idempotent_response(
+                user=request.user,
+                context=idempotency_context,
+                payload=payload,
+                status_code=status.HTTP_202_ACCEPTED,
             )
+            payload['idempotency'] = {
+                **{k: idempotency_context[k] for k in ('request_id', 'idempotency_key', 'extraction_run_id', 'schema_version')},
+                'hit': replayed,
+            }
+            return Response(payload, status=final_status)
 
         except Exception as e:
             logger.error(f"Error processing {self.upload_type.upper()} COR for user {request.user.id}: {str(e)}")

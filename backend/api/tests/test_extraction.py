@@ -232,6 +232,30 @@ class FacultyOCRDayRecoveryTestCase(TestCase):
         self.assertEqual(course['day'], 'TH')
 
 
+class StudentHandwrittenOCRParsingTestCase(TestCase):
+    """Regression tests for handwritten student image parsing."""
+
+    def setUp(self):
+        self.extractor = StudentCORExtractor()
+
+    def test_parse_handwritten_line_accepts_optional_meridiem(self):
+        line = 'OS 7:00-9:00 LR1'
+        course = self.extractor._parse_handwritten_line(line)
+        self.assertIsNotNone(course)
+        self.assertEqual(course['subject_code'], 'OS')
+        self.assertEqual(course['start_time'], '07:00')
+        self.assertEqual(course['end_time'], '09:00')
+
+    def test_parse_handwritten_line_handles_dot_separator_and_lp_location(self):
+        line = 'SE 1.00PM - 3:00PM LP2'
+        course = self.extractor._parse_handwritten_line(line)
+        self.assertIsNotNone(course)
+        self.assertEqual(course['subject_code'], 'SE')
+        self.assertEqual(course['start_time'], '01:00PM')
+        self.assertEqual(course['end_time'], '03:00PM')
+        self.assertEqual(course['location'], 'LP2')
+
+
 class ExtractionManagerTestCase(TestCase):
     """Test extraction manager orchestration"""
     
@@ -738,6 +762,50 @@ class AsyncExtractionJobTestCase(TestCase):
         self.assertEqual(response.status_code, 202)
         self.assertIn('job_id', response.data)
         mock_manager_class.assert_not_called()
+
+    @patch('api.utils.extraction_manager._send_extraction_job_notification')
+    @patch('api.utils.extraction_manager._write_extraction_log_for_job')
+    @patch('api.utils.extraction_manager.ExtractionManager')
+    def test_run_extraction_job_failed_rejection_persists_method(self, mock_manager_class, mock_log, mock_notify):
+        """Rejected async jobs should still persist the best-known extraction method."""
+        import tempfile
+        from api.models import ExtractionJob
+        from api.utils.extraction_manager import run_extraction_job
+
+        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as f:
+            f.write(b'fake image')
+            temp_path = f.name
+
+        job = ExtractionJob.objects.create(
+            user=self.user,
+            upload_type='student',
+            file_name='student_image.jpg',
+            status='pending',
+            _temp_file_path=temp_path,
+        )
+
+        mock_manager = Mock()
+        mock_manager.extract_schedule.return_value = {
+            'courses': [],
+            'extraction_method': 'ocr',
+            'confidence': 0.511,
+            'processing_time': 2.0,
+            'attempts': ['ocr'],
+            'failure_category': 'low_confidence',
+            'validator_errors': [],
+            'score_breakdown': {},
+            'accepted': False,
+            'llm_failure_reason': 'timeout',
+        }
+        mock_manager_class.return_value = mock_manager
+
+        run_extraction_job(job.job_id)
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, 'failed')
+        self.assertEqual(job.failure_category, 'low_confidence')
+        self.assertEqual(job.extraction_method, 'ocr')
+        mock_notify.assert_called_once_with(job, success=False)
 
     # ------------------------------------------------------------------
     # Polling endpoint: status shapes

@@ -22,7 +22,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from api.models import ExtractionLog, IncidentReport, Course, ExtractionRequest
+from api.models import ExtractionLog, IncidentReport, Course, ExtractionRequest, ExtractionJob
 
 User = get_user_model()
 
@@ -159,44 +159,49 @@ class UploadExtractionTelemetryViewTestCase(TestCase):
         )
 
     @patch("api.views.upload_views.ExtractionManager")
-    def test_no_courses_is_logged_as_failed_extraction(self, mock_manager_class):
+    def test_student_upload_is_accepted_for_async_processing(self, mock_manager_class):
         mock_manager = mock_manager_class.return_value
-        mock_manager.extract_schedule.return_value = {
-            "courses": [],
+        mock_manager.extract_student_number_for_ownership_gate.return_value = {
             "student_number": "2024-0001",
-            "extraction_method": "pdf_text",
-            "confidence": 0.72,
+            "extraction_method": "llm_vision_metadata_gate",
+            "confidence": 1.0,
             "processing_time": 0.21,
-            "attempts": ["pdf_text"],
-            "semester": "1st",
-            "school_year": "2025-2026",
+            "attempts": ["llm_vision_metadata_gate"],
+            "failure_category": "none",
+            "validator_errors": [],
+            "score_breakdown": {},
+            "llm_used": True,
+            "llm_parse_success": True,
+            "llm_failure_reason": "",
         }
 
-        response = self._post_upload()
-        self.assertEqual(response.status_code, 422)
-        self.assertEqual(response.data.get("code"), "NO_COURSES_EXTRACTED")
-        self.assertTrue(response.data.get("retryable"))
-        self.assertEqual(response.data.get("total_courses"), 0)
+        with patch("threading.Thread") as mock_thread_class:
+            mock_thread = mock_thread_class.return_value
+            response = self._post_upload()
 
-        self.assertEqual(ExtractionLog.objects.count(), 1)
-        log = ExtractionLog.objects.first()
-        self.assertFalse(log.success)
-        self.assertEqual(log.courses_extracted, 0)
-        self.assertEqual(log.extraction_method, "pdf_text")
-        self.assertIn("No courses found", log.error_message)
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.data.get("status"), "processing")
+        self.assertIn("job_id", response.data)
+        self.assertEqual(Course.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(ExtractionLog.objects.count(), 0)
+        mock_thread.start.assert_called_once()
 
     @patch("api.views.upload_views.ExtractionManager")
     def test_student_number_mismatch_is_logged_as_failed_extraction(self, mock_manager_class):
         mock_manager = mock_manager_class.return_value
-        mock_manager.extract_schedule.return_value = {
-            "courses": [{"subject_code": "CS101"}],
+        mock_manager.extract_student_number_for_ownership_gate.return_value = {
             "student_number": "2024-9999",
-            "extraction_method": "pdf_text",
+            "extraction_method": "llm_vision_metadata_gate",
             "confidence": 0.88,
             "processing_time": 0.19,
-            "attempts": ["pdf_text"],
-            "semester": "1st",
-            "school_year": "2025-2026",
+            "attempts": ["llm_vision_metadata_gate"],
+            "failure_category": "metadata_mismatch",
+            "validator_errors": [],
+            "score_breakdown": {},
+            "llm_used": True,
+            "llm_parse_success": True,
+            "llm_failure_reason": "",
+            "raw_text": "Student Number 2024-9999",
         }
 
         response = self._post_upload()
@@ -208,138 +213,90 @@ class UploadExtractionTelemetryViewTestCase(TestCase):
         self.assertIn("COR verification failed", log.error_message)
 
     @patch("api.views.upload_views.ExtractionManager")
-    def test_course_creation_is_atomic_when_mid_loop_failure_occurs(self, mock_manager_class):
+    def test_upload_path_does_not_write_courses_synchronously(self, mock_manager_class):
         mock_manager = mock_manager_class.return_value
-        mock_manager.extract_schedule.return_value = {
-            "courses": [
-                {
-                    "subject_code": "CS101",
-                    "subject_name": "Intro to CS",
-                    "start_time": "08:00AM",
-                    "end_time": "09:00AM",
-                    "day": "M",
-                    "location": "R1",
-                },
-                {
-                    "subject_code": "CS102",
-                    "subject_name": "Data Structures",
-                    "start_time": "09:00AM",
-                    "end_time": "10:00AM",
-                    "day": "T",
-                    "location": "R2",
-                },
-            ],
+        mock_manager.extract_student_number_for_ownership_gate.return_value = {
             "student_number": "2024-0001",
-            "extraction_method": "pdf_text",
-            "confidence": 0.91,
+            "extraction_method": "llm_vision_metadata_gate",
+            "confidence": 1.0,
             "processing_time": 0.31,
-            "attempts": ["pdf_text"],
-            "semester": "1st",
-            "school_year": "2025-2026",
+            "attempts": ["llm_vision_metadata_gate"],
+            "failure_category": "none",
+            "validator_errors": [],
+            "score_breakdown": {},
+            "llm_used": True,
+            "llm_parse_success": True,
+            "llm_failure_reason": "",
         }
 
-        original_create = Course.objects.create
-        call_count = {"n": 0}
-
-        def flaky_create(*args, **kwargs):
-            call_count["n"] += 1
-            if call_count["n"] == 2:
-                raise Exception("Simulated DB insert failure")
-            return original_create(*args, **kwargs)
-
-        with patch("api.views.upload_views.Course.objects.create", side_effect=flaky_create):
+        with patch("threading.Thread") as mock_thread_class:
+            mock_thread = mock_thread_class.return_value
             response = self._post_upload()
 
-        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.data.get("status"), "processing")
         self.assertEqual(Course.objects.filter(user=self.user).count(), 0)
-
-        self.assertEqual(ExtractionLog.objects.count(), 1)
-        log = ExtractionLog.objects.first()
-        self.assertFalse(log.success)
-        self.assertEqual(log.extraction_method, "none")
+        mock_thread.start.assert_called_once()
 
     @patch("api.views.upload_views.ExtractionManager")
     def test_idempotency_key_replays_success_without_duplicate_courses(self, mock_manager_class):
         mock_manager = mock_manager_class.return_value
-        mock_manager.extract_schedule.return_value = {
-            "courses": [
-                {
-                    "subject_code": "CS101",
-                    "subject_name": "Intro to CS",
-                    "start_time": "08:00AM",
-                    "end_time": "09:00AM",
-                    "day": "M",
-                    "location": "R1",
-                }
-            ],
+        mock_manager.extract_student_number_for_ownership_gate.return_value = {
             "student_number": "2024-0001",
-            "extraction_method": "pdf_text",
-            "confidence": 0.91,
+            "extraction_method": "llm_vision_metadata_gate",
+            "confidence": 1.0,
             "processing_time": 0.31,
-            "attempts": ["pdf_text"],
-            "semester": "1st",
-            "school_year": "2025-2026",
+            "attempts": ["llm_vision_metadata_gate"],
             "failure_category": "none",
             "validator_errors": [],
-            "score_breakdown": {
-                "completeness": 1.0,
-                "validity": 1.0,
-                "consistency": 1.0,
-                "parser_reliability": 0.92,
-                "agreement": 1.0,
-            },
+            "score_breakdown": {},
+            "llm_used": True,
+            "llm_parse_success": True,
+            "llm_failure_reason": "",
         }
 
         key = "student-upload-123"
-        first = self._post_upload_with_idempotency_key(key)
-        second = self._post_upload_with_idempotency_key(key)
+        with patch("threading.Thread") as mock_thread_class:
+            mock_thread = mock_thread_class.return_value
+            first = self._post_upload_with_idempotency_key(key)
+            second = self._post_upload_with_idempotency_key(key)
 
-        self.assertEqual(first.status_code, 201)
-        self.assertEqual(second.status_code, 201)
-        self.assertEqual(Course.objects.filter(user=self.user).count(), 1)
+        self.assertEqual(first.status_code, 202)
+        self.assertEqual(second.status_code, 202)
+        self.assertEqual(ExtractionJob.objects.filter(user=self.user).count(), 1)
         self.assertEqual(ExtractionRequest.objects.filter(user=self.user, idempotency_key=key).count(), 1)
         self.assertTrue(second.data.get("idempotency", {}).get("hit"))
+        self.assertEqual(second.data.get("job_id"), first.data.get("job_id"))
+        mock_thread.start.assert_called_once()
 
     @patch("api.views.upload_views.ExtractionManager")
     def test_idempotency_replay_skips_second_extraction_call(self, mock_manager_class):
         mock_manager = mock_manager_class.return_value
-        mock_manager.extract_schedule.return_value = {
-            "courses": [
-                {
-                    "subject_code": "CS101",
-                    "subject_name": "Intro to CS",
-                    "start_time": "08:00AM",
-                    "end_time": "09:00AM",
-                    "day": "M",
-                    "location": "R1",
-                }
-            ],
+        mock_manager.extract_student_number_for_ownership_gate.return_value = {
             "student_number": "2024-0001",
-            "extraction_method": "pdf_text",
-            "confidence": 0.91,
+            "extraction_method": "llm_vision_metadata_gate",
+            "confidence": 1.0,
             "processing_time": 0.31,
-            "attempts": ["pdf_text"],
-            "semester": "1st",
-            "school_year": "2025-2026",
+            "attempts": ["llm_vision_metadata_gate"],
             "failure_category": "none",
             "validator_errors": [],
-            "score_breakdown": {
-                "completeness": 1.0,
-                "validity": 1.0,
-                "consistency": 1.0,
-                "parser_reliability": 0.92,
-                "agreement": 1.0,
-            },
+            "score_breakdown": {},
+            "llm_used": True,
+            "llm_parse_success": True,
+            "llm_failure_reason": "",
         }
 
         key = "student-upload-replay-once"
-        first = self._post_upload_with_idempotency_key(key)
-        second = self._post_upload_with_idempotency_key(key)
+        with patch("threading.Thread") as mock_thread_class:
+            mock_thread = mock_thread_class.return_value
+            first = self._post_upload_with_idempotency_key(key)
+            second = self._post_upload_with_idempotency_key(key)
 
-        self.assertEqual(first.status_code, 201)
-        self.assertEqual(second.status_code, 201)
-        self.assertEqual(mock_manager.extract_schedule.call_count, 1)
+        self.assertEqual(first.status_code, 202)
+        self.assertEqual(second.status_code, 202)
+        self.assertEqual(mock_manager.extract_student_number_for_ownership_gate.call_count, 1)
         self.assertTrue(second.data.get("idempotency", {}).get("hit"))
+        mock_thread.start.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -417,6 +374,36 @@ class AdminExtractionAnalyticsViewTestCase(AdminEndpointMixin, TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data["period_days"], 365)
 
+    def test_llm_failure_breakdown_counts_failed_reasons(self):
+        # Add explicit LLM-tagged failures to validate reason grouping.
+        ExtractionLog.objects.create(
+            file_name="timeout_case.pdf",
+            file_type="pdf",
+            upload_type="student",
+            extraction_method="llm",
+            confidence=0.2,
+            courses_extracted=0,
+            success=False,
+            llm_failure_reason="timeout",
+        )
+        ExtractionLog.objects.create(
+            file_name="invalid_json_case.pdf",
+            file_type="pdf",
+            upload_type="student",
+            extraction_method="llm",
+            confidence=0.3,
+            courses_extracted=0,
+            success=False,
+            llm_failure_reason="invalid_json",
+        )
+
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.get("/api/admin/extraction/analytics/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("llm_failure_breakdown", resp.data)
+        self.assertEqual(resp.data["llm_failure_breakdown"].get("timeout"), 1)
+        self.assertEqual(resp.data["llm_failure_breakdown"].get("invalid_json"), 1)
+
 
 class AdminExtractionChartViewTestCase(AdminEndpointMixin, TestCase):
     """Test GET /api/admin/extraction/analytics/chart/"""
@@ -490,6 +477,56 @@ class AdminExtractionChartViewTestCase(AdminEndpointMixin, TestCase):
 
         self.assertEqual(chart_success, analytics.data["successful"])
         self.assertEqual(chart_failure, analytics.data["failed"])
+
+
+class AdminExtractionJobListViewTestCase(AdminEndpointMixin, TestCase):
+    """Test GET /api/admin/extraction/jobs/"""
+
+    def setUp(self):
+        super().setUp()
+        self.timeout_job = ExtractionJob.objects.create(
+            user=self.regular_user,
+            upload_type='student',
+            file_name='timeout_case.jpg',
+            status='failed',
+            failure_category='low_confidence',
+            llm_failure_reason='timeout',
+        )
+        self.invalid_job = ExtractionJob.objects.create(
+            user=self.regular_user,
+            upload_type='student',
+            file_name='invalid_json_case.jpg',
+            status='failed',
+            failure_category='parse_error',
+            llm_failure_reason='invalid_json',
+        )
+        self.done_job = ExtractionJob.objects.create(
+            user=self.regular_user,
+            upload_type='student',
+            file_name='done_case.jpg',
+            status='done',
+            failure_category='none',
+            llm_failure_reason='',
+        )
+
+    def test_non_staff_returns_403(self):
+        self.client.force_authenticate(user=self.regular_user)
+        resp = self.client.get('/api/admin/extraction/jobs/')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_filter_by_llm_failure_reason(self):
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.get('/api/admin/extraction/jobs/?llm_failure_reason=timeout')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['results'][0]['job_id'], str(self.timeout_job.job_id))
+        self.assertEqual(resp.data['results'][0]['llm_failure_reason'], 'timeout')
+
+    def test_invalid_llm_failure_reason_filter_is_ignored(self):
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.get('/api/admin/extraction/jobs/?llm_failure_reason=not_real')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['count'], 3)
 
 
 class AdminFailedExtractionListViewTestCase(AdminEndpointMixin, TestCase):

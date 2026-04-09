@@ -467,18 +467,28 @@ class StudentCORExtractor(BaseCORExtractor):
 
     # Handwritten / simple format time pattern: 1:00 pm or 1:00pm
     _HW_TIME_RANGE = re.compile(
-        r'(\d{1,2}:\d{2}\s*[aApP][mM])\s*[-\u2013]\s*(\d{1,2}:\d{2}\s*[aApP][mM])',
+        r'(\d{1,2}[:.]\d{2}\s*[aApP]?[mM]?)\s*[-\u2013]\s*(\d{1,2}[:.]\d{2}\s*[aApP]?[mM]?)',
         re.IGNORECASE,
     )
     _HW_SUBJ = re.compile(r'^([A-Z]{2,8}(?:\s*\d{1,3})?)', re.IGNORECASE)
 
     def _normalize_hw_time(self, t: str) -> str:
-        """Normalize '1:00 pm' → '01:00PM'."""
-        t = re.sub(r'\s+', '', t.strip().upper())
-        m = re.match(r'(\d{1,2}):(\d{2})(AM|PM)', t)
-        if m:
-            return f"{int(m.group(1)):02d}:{m.group(2)}{m.group(3)}"
-        return t
+        """Normalize noisy OCR time tokens like '1.00 pm' or '7:00' into parseable form."""
+        token = re.sub(r'\s+', '', str(t or '').strip().upper())
+        token = token.replace('.', ':')
+        token = token.replace('O', '0')
+        token = token.replace('|', '1')
+        token = token.replace('I', '1')
+
+        with_meridiem = re.match(r'(\d{1,2}):(\d{2})(AM|PM)$', token)
+        if with_meridiem:
+            return f"{int(with_meridiem.group(1)):02d}:{with_meridiem.group(2)}{with_meridiem.group(3)}"
+
+        no_meridiem = re.match(r'(\d{1,2}):(\d{2})$', token)
+        if no_meridiem:
+            return f"{int(no_meridiem.group(1)):02d}:{no_meridiem.group(2)}"
+
+        return token
 
     def _parse_handwritten_line(self, line: str) -> Optional[Dict]:
         """
@@ -501,7 +511,7 @@ class StudentCORExtractor(BaseCORExtractor):
 
         subject_code = subj_match.group(1).strip().upper()
         # Skip obvious header words
-        if subject_code in ('SUBJECT', 'SUB', 'COURSE', 'CODE'):
+        if subject_code in ('SUBJECT', 'SUB', 'COURSE', 'CODE', 'TIME', 'LOC', 'STUDENT', 'NUMBER'):
             return None
 
         start_time = self._normalize_hw_time(time_match.group(1))
@@ -514,7 +524,11 @@ class StudentCORExtractor(BaseCORExtractor):
 
         # Extract location
         location_match = self.LOCATION_PATTERN.search(after_time)
-        location = re.sub(r'\s+', '', location_match.group(1).upper()) if location_match else ''
+        if location_match:
+            location = re.sub(r'\s+', '', location_match.group(1).upper())
+        else:
+            loose_location_match = re.search(r'\bL[RP]\s*[A-Z0-9]{1,3}\b', after_time, re.IGNORECASE)
+            location = re.sub(r'\s+', '', loose_location_match.group(0).upper()) if loose_location_match else ''
 
         if not subject_code or not start_time or not end_time:
             return None

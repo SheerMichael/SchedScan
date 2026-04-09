@@ -8,7 +8,7 @@ can poll until the job reaches a terminal state (done or failed).
 
 Frontend polling strategy (recommended):
   - Poll every 3 seconds
-  - Max 10 attempts (~30 seconds total)
+    - Max 40 attempts with backoff (~3-4 minutes total)
   - On done: store courses from push notification or re-fetch /api/courses/
   - On failed: show error + retry prompt
 """

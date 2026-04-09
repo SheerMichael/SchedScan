@@ -397,7 +397,7 @@ export const extractionApi = {
 
   /**
    * Paginated list of extraction jobs for queue visibility.
-   * params: { search, status, upload_type, user_id, date_from, date_to, page, page_size }
+   * params: { search, status, upload_type, llm_failure_reason, user_id, date_from, date_to, page, page_size }
    */
   jobs: (params = {}) =>
     apiClient.get("/admin/extraction/jobs/", { params }),

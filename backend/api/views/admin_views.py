@@ -1049,7 +1049,8 @@ class AdminExtractionAnalyticsView(APIView):
         "avg_confidence": float,
         "avg_processing_time": float,
         "method_breakdown": { "pdf_text": int, "ocr": int, "ocr_fallback": int, ... },
-        "upload_type_breakdown": { "student": int, "faculty": int }
+        "upload_type_breakdown": { "student": int, "faculty": int },
+        "llm_failure_breakdown": { "timeout": int, "invalid_json": int, ... }
     }
     """
 
@@ -1094,6 +1095,17 @@ class AdminExtractionAnalyticsView(APIView):
         )
         type_breakdown = {r["upload_type"]: r["n"] for r in type_raw}
 
+        failure_reason_raw = (
+            qs.filter(success=False)
+            .exclude(llm_failure_reason='')
+            .values("llm_failure_reason")
+            .annotate(n=Count("id"))
+            .order_by("-n")
+        )
+        llm_failure_breakdown = {
+            r["llm_failure_reason"]: r["n"] for r in failure_reason_raw
+        }
+
         return Response({
             "period_days": days,
             "total_extractions": total,
@@ -1104,6 +1116,7 @@ class AdminExtractionAnalyticsView(APIView):
             "avg_processing_time": round(agg["avg_time"] or 0.0, 3),
             "method_breakdown": method_breakdown,
             "upload_type_breakdown": type_breakdown,
+            "llm_failure_breakdown": llm_failure_breakdown,
         })
 
 
@@ -1244,6 +1257,7 @@ class AdminExtractionJobListView(APIView):
         - search     : job_id, file_name, or user email contains
         - status     : pending | processing | done | failed
         - upload_type: student | faculty
+        - llm_failure_reason: timeout | invalid_json | schema_reject | empty_courses
         - user_id    : integer user id
         - date_from  : ISO date (YYYY-MM-DD), inclusive
         - date_to    : ISO date (YYYY-MM-DD), inclusive
@@ -1255,6 +1269,7 @@ class AdminExtractionJobListView(APIView):
 
     _allowed_statuses = {'pending', 'processing', 'done', 'failed'}
     _allowed_upload_types = {'student', 'faculty'}
+    _allowed_llm_failure_reasons = {'timeout', 'invalid_json', 'schema_reject', 'empty_courses'}
 
     def get(self, request):
         qs = ExtractionJob.objects.select_related('user').order_by('-created_at')
@@ -1262,6 +1277,7 @@ class AdminExtractionJobListView(APIView):
         search = request.query_params.get('search', '').strip()
         status_filter = request.query_params.get('status', '').strip().lower()
         upload_type = request.query_params.get('upload_type', '').strip().lower()
+        llm_failure_reason = request.query_params.get('llm_failure_reason', '').strip().lower()
         user_id = request.query_params.get('user_id', '').strip()
         date_from = request.query_params.get('date_from', '').strip()
         date_to = request.query_params.get('date_to', '').strip()
@@ -1271,6 +1287,9 @@ class AdminExtractionJobListView(APIView):
 
         if upload_type in self._allowed_upload_types:
             qs = qs.filter(upload_type=upload_type)
+
+        if llm_failure_reason in self._allowed_llm_failure_reasons:
+            qs = qs.filter(llm_failure_reason=llm_failure_reason)
 
         if user_id:
             try:

@@ -634,7 +634,14 @@ def _build_vision_metadata_prompt(upload_type: str) -> str:
     )
 
 
-def _load_document_images_for_vision(file_path: str, max_pages: int) -> List[str]:
+def _load_document_images_for_vision(
+    file_path: str,
+    max_pages: int,
+    *,
+    image_max_edge: int = 1600,
+    image_quality: int = 72,
+    pdf_dpi: int = 220,
+) -> List[str]:
     extension = os.path.splitext(file_path)[1].lower()
 
     if extension == '.pdf':
@@ -645,7 +652,13 @@ def _load_document_images_for_vision(file_path: str, max_pages: int) -> List[str
             return []
 
         images_b64: List[str] = []
-        pages = convert_from_path(file_path, dpi=220, first_page=1, last_page=max_pages, fmt='jpeg')
+        pages = convert_from_path(
+            file_path,
+            dpi=max(120, int(pdf_dpi)),
+            first_page=1,
+            last_page=max_pages,
+            fmt='jpeg',
+        )
         for page in pages:
             buffer = BytesIO()
             page.save(buffer, format='JPEG', quality=85)
@@ -653,8 +666,28 @@ def _load_document_images_for_vision(file_path: str, max_pages: int) -> List[str
         return images_b64
 
     if extension in _VISION_IMAGE_EXTENSIONS:
-        with open(file_path, 'rb') as infile:
-            return [base64.b64encode(infile.read()).decode('ascii')]
+        # Large phone images can trigger long multimodal decode/inference times.
+        # Resize/compress before sending to Ollama to reduce timeout risk.
+        try:
+            from PIL import Image
+
+            with Image.open(file_path) as image:
+                image = image.convert('RGB')
+                width, height = image.size
+                max_edge = max(960, int(image_max_edge))
+                if max(width, height) > max_edge:
+                    ratio = max_edge / float(max(width, height))
+                    resized = (max(1, int(width * ratio)), max(1, int(height * ratio)))
+                    image = image.resize(resized, Image.Resampling.LANCZOS)
+
+                buffer = BytesIO()
+                quality = max(40, min(95, int(image_quality)))
+                image.save(buffer, format='JPEG', quality=quality, optimize=True)
+                return [base64.b64encode(buffer.getvalue()).decode('ascii')]
+        except Exception:
+            logger.exception('LLM vision image preprocessing failed; falling back to raw bytes')
+            with open(file_path, 'rb') as infile:
+                return [base64.b64encode(infile.read()).decode('ascii')]
 
     logger.warning('LLM vision parse skipped: unsupported file extension %s', extension)
     return []
@@ -700,9 +733,36 @@ def parse_document_with_llm_vision(
         telemetry['llm_failure_reason'] = 'schema_reject'
         return [], empty_meta, telemetry
 
-    timeout_seconds = int(getattr(settings, 'EXTRACTION_LLM_TIMEOUT_SECONDS', 12))
+    timeout_seconds = max(1, int(getattr(settings, 'EXTRACTION_LLM_TIMEOUT_SECONDS', 12)))
     max_pages = int(getattr(settings, 'EXTRACTION_LLM_VISION_MAX_PAGES', 2))
     retry_count = max(0, int(getattr(settings, 'EXTRACTION_LLM_VISION_RETRY_COUNT', 1)))
+    connect_timeout_seconds = max(
+        1,
+        int(getattr(settings, 'EXTRACTION_LLM_VISION_CONNECT_TIMEOUT_SECONDS', 8)),
+    )
+    max_tokens = max(64, int(getattr(settings, 'EXTRACTION_LLM_VISION_MAX_TOKENS', 768)))
+    retry_max_tokens = max(
+        64,
+        int(
+            getattr(
+                settings,
+                'EXTRACTION_LLM_VISION_RETRY_MAX_TOKENS',
+                max(256, int(max_tokens * 0.75)),
+            )
+        ),
+    )
+    image_max_edge = max(960, int(getattr(settings, 'EXTRACTION_LLM_VISION_IMAGE_MAX_EDGE', 1600)))
+    image_quality = max(40, min(95, int(getattr(settings, 'EXTRACTION_LLM_VISION_IMAGE_QUALITY', 72))))
+    retry_image_max_edge = max(
+        960,
+        int(getattr(settings, 'EXTRACTION_LLM_VISION_RETRY_IMAGE_MAX_EDGE', 1280)),
+    )
+    retry_image_quality = max(
+        40,
+        min(95, int(getattr(settings, 'EXTRACTION_LLM_VISION_RETRY_IMAGE_QUALITY', 68))),
+    )
+    pdf_dpi = max(120, int(getattr(settings, 'EXTRACTION_LLM_VISION_PDF_DPI', 220)))
+    retry_pdf_dpi = max(120, int(getattr(settings, 'EXTRACTION_LLM_VISION_RETRY_PDF_DPI', 180)))
     retry_timeout_seconds = max(
         timeout_seconds,
         int(getattr(settings, 'EXTRACTION_LLM_VISION_RETRY_TIMEOUT_SECONDS', timeout_seconds)),
@@ -727,32 +787,50 @@ def parse_document_with_llm_vision(
         telemetry['llm_failure_reason'] = 'schema_reject'
         return [], empty_meta, telemetry
 
-    retryable_reasons = {'timeout', 'empty_courses'}
+    retryable_reasons = {'timeout', 'empty_courses', 'invalid_json', 'schema_reject'}
 
     for attempt_index in range(retry_count + 1):
         telemetry['llm_retry_count'] = attempt_index
         is_retry = attempt_index > 0
         attempt_timeout_seconds = retry_timeout_seconds if is_retry else timeout_seconds
         attempt_max_pages = retry_max_pages if is_retry else max_pages
+        attempt_max_tokens = retry_max_tokens if is_retry else max_tokens
+        attempt_image_max_edge = min(image_max_edge, retry_image_max_edge) if is_retry else image_max_edge
+        attempt_image_quality = min(image_quality, retry_image_quality) if is_retry else image_quality
+        attempt_pdf_dpi = min(pdf_dpi, retry_pdf_dpi) if is_retry else pdf_dpi
+        request_timeout: float | Tuple[float, float] = (
+            connect_timeout_seconds,
+            max(1, attempt_timeout_seconds),
+        )
 
-        images_b64 = _load_document_images_for_vision(file_path, max_pages=attempt_max_pages)
+        images_b64 = _load_document_images_for_vision(
+            file_path,
+            max_pages=attempt_max_pages,
+            image_max_edge=attempt_image_max_edge,
+            image_quality=attempt_image_quality,
+            pdf_dpi=attempt_pdf_dpi,
+        )
         if not images_b64:
             telemetry['llm_failure_reason'] = 'empty_courses'
             return [], empty_meta, telemetry
 
         try:
+            request_options: Dict[str, Any] = {'temperature': 0}
+            if attempt_max_tokens > 0:
+                request_options['num_predict'] = attempt_max_tokens
+
             request_payload = {
                 'model': model_name,
                 'prompt': _build_vision_parse_prompt(upload_type),
                 'images': images_b64,
                 'stream': False,
                 'format': 'json',
-                'options': {'temperature': 0},
+                'options': request_options,
             }
             response = requests.post(
                 generate_url,
                 json=request_payload,
-                timeout=attempt_timeout_seconds,
+                timeout=request_timeout,
                 headers=_build_ollama_headers(content_type=True),
             )
             response.raise_for_status()
@@ -777,18 +855,24 @@ def parse_document_with_llm_vision(
             if not isinstance(courses_raw, list):
                 telemetry['llm_failure_reason'] = 'schema_reject'
                 logger.warning('LLM vision parse: "courses" is not a list')
-                return [], empty_meta, telemetry
+                if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
+                    return [], empty_meta, telemetry
+                continue
 
             courses = _coerce_courses(courses_raw)
             if not courses and courses_raw:
                 telemetry['llm_failure_reason'] = 'schema_reject'
                 logger.warning('LLM vision parse: unusable courses after sanitization')
-                return [], empty_meta, telemetry
+                if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
+                    return [], empty_meta, telemetry
+                continue
 
             if not _validate_normalized_courses(courses):
                 telemetry['llm_failure_reason'] = 'schema_reject'
                 logger.warning('LLM vision parse: course schema validation failed')
-                return [], empty_meta, telemetry
+                if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
+                    return [], empty_meta, telemetry
+                continue
 
             if not courses:
                 telemetry['llm_failure_reason'] = 'empty_courses'
@@ -813,12 +897,16 @@ def parse_document_with_llm_vision(
             continue
         except requests.RequestException:
             telemetry['llm_failure_reason'] = 'schema_reject'
-            logger.exception('LLM vision parse request failed')
-            return [], empty_meta, telemetry
+            logger.warning('LLM vision parse request failed', exc_info=True)
+            if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
+                return [], empty_meta, telemetry
+            continue
         except (JSONDecodeError, ValueError):
             telemetry['llm_failure_reason'] = 'invalid_json'
             logger.warning('LLM vision parse output was not valid JSON')
-            return [], empty_meta, telemetry
+            if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
+                return [], empty_meta, telemetry
+            continue
 
     return [], empty_meta, telemetry
 

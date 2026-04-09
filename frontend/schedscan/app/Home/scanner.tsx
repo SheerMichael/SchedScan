@@ -1,6 +1,7 @@
-import { View, Text, TouchableOpacity, Image, Alert, ActivityIndicator, Modal, TextInput, Dimensions, SafeAreaView } from "react-native";
+import { View, Text, TouchableOpacity, Image, Alert, ActivityIndicator, Modal, TextInput } from "react-native";
 import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Svg, { Path } from 'react-native-svg';
 import { Images, Files, GraduationCap, Briefcase, ArrowRight, AlertTriangle } from "lucide-react-native";
 import * as DocumentPicker from 'expo-document-picker';
@@ -27,6 +28,15 @@ type ActivePollState = {
   cancelToken: PollingCancelToken;
 };
 
+type PersistedBackgroundJobState = {
+  jobId: string;
+  uploadType: 'student' | 'faculty';
+  isRetry: boolean;
+  updatedAt: string;
+};
+
+const BACKGROUND_EXTRACTION_JOB_KEY = '@schedscan/background-extraction-job';
+
 export default function Scanner() {
   const router = useRouter();
   const { user, activateFacultyMode, setPendingFacultyUnlock } = useAuth();
@@ -48,6 +58,7 @@ export default function Scanner() {
   const activePollRef = useRef<ActivePollState | null>(null);
   const backgroundJobUploadTypeRef = useRef<'student' | 'faculty' | null>(null);
   const backgroundJobIsRetryRef = useRef(false);
+  const hydratedBackgroundJobRef = useRef(false);
 
   // Faculty mode unlock modal
   const [showFacultyModeModal, setShowFacultyModeModal] = useState(false);
@@ -55,6 +66,65 @@ export default function Scanner() {
   // --- Logic Helpers (Rate Limit, Upload, Etc) ---
 
   const MAX_REPORT_LENGTH = 500;
+
+  const persistBackgroundJobState = useCallback(async (
+    jobId: string,
+    uploadType: 'student' | 'faculty',
+    isRetry: boolean,
+  ) => {
+    try {
+      const payload: PersistedBackgroundJobState = {
+        jobId,
+        uploadType,
+        isRetry,
+        updatedAt: new Date().toISOString(),
+      };
+      await AsyncStorage.setItem(BACKGROUND_EXTRACTION_JOB_KEY, JSON.stringify(payload));
+    } catch (error) {
+      console.error('Failed to persist background extraction job state:', error);
+    }
+  }, []);
+
+  const clearPersistedBackgroundJobState = useCallback(async () => {
+    try {
+      await AsyncStorage.removeItem(BACKGROUND_EXTRACTION_JOB_KEY);
+    } catch (error) {
+      console.error('Failed to clear persisted extraction job state:', error);
+    }
+  }, []);
+
+  const loadPersistedBackgroundJobState = useCallback(async (): Promise<PersistedBackgroundJobState | null> => {
+    try {
+      const raw = await AsyncStorage.getItem(BACKGROUND_EXTRACTION_JOB_KEY);
+      if (!raw) {
+        return null;
+      }
+
+      const parsed = JSON.parse(raw) as Partial<PersistedBackgroundJobState>;
+      if (
+        typeof parsed?.jobId !== 'string'
+        || (parsed?.uploadType !== 'student' && parsed?.uploadType !== 'faculty')
+      ) {
+        await AsyncStorage.removeItem(BACKGROUND_EXTRACTION_JOB_KEY);
+        return null;
+      }
+
+      return {
+        jobId: parsed.jobId,
+        uploadType: parsed.uploadType,
+        isRetry: parsed.isRetry === true,
+        updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
+      };
+    } catch (error) {
+      console.error('Failed to load persisted extraction job state:', error);
+      try {
+        await AsyncStorage.removeItem(BACKGROUND_EXTRACTION_JOB_KEY);
+      } catch (cleanupError) {
+        console.error('Failed to remove invalid persisted extraction job state:', cleanupError);
+      }
+      return null;
+    }
+  }, []);
 
   const isAsyncUploadResponse = (value: any): value is UploadCORAcceptedResponse => {
     return Boolean(value && typeof value.job_id === 'string' && value.status === 'processing');
@@ -95,6 +165,8 @@ export default function Scanner() {
       );
     }
 
+    await clearPersistedBackgroundJobState();
+
     // Record one upload attempt when the async job is accepted.
     if (!isRetry && !alreadyRecorded && user?.id) {
       await scheduleStorageService.recordUpload(user.id);
@@ -113,6 +185,7 @@ export default function Scanner() {
 
     setIsUploading(false);
     setShowBehindScenesModal(false);
+    setBackgroundJobId('');
     Alert.alert(
       'Schedule Saved',
       'Extraction completed and your schedule has been saved automatically. You can review it in Schedules.',
@@ -130,12 +203,14 @@ export default function Scanner() {
         },
       ]
     );
-  }, [user?.id]);
+  }, [clearPersistedBackgroundJobState, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const finalizeJobFromPush = useCallback(async (activePoll: ActivePollState) => {
     try {
       setProcessingSubtitle('Finalizing extraction...');
-      const response = await api.get(`/extraction-jobs/${activePoll.jobId}/`);
+      const response = await api.get(`/extraction-jobs/${activePoll.jobId}/`, {
+        timeout: 20000,
+      });
       const jobStatus = response.data;
 
       if (jobStatus.status === 'done') {
@@ -147,8 +222,10 @@ export default function Scanner() {
       }
 
       if (jobStatus.status === 'failed') {
+        await clearPersistedBackgroundJobState();
         setShowBehindScenesModal(false);
         setIsUploading(false);
+        setBackgroundJobId('');
         setUploadError(jobStatus.message || 'Extraction failed. Please try again.');
         setReportModal(true);
         return;
@@ -156,11 +233,11 @@ export default function Scanner() {
 
       setIsUploading(false);
       setShowBehindScenesModal(true);
-    } catch (error) {
+    } catch {
       setIsUploading(false);
       Alert.alert('Status Check Failed', 'Unable to fetch extraction result. Please check your schedules shortly.');
     }
-  }, [handleExtractionSuccess]);
+  }, [clearPersistedBackgroundJobState, handleExtractionSuccess]);
 
   const reconcileBackgroundJob = useCallback(async (): Promise<boolean> => {
     if (!backgroundJobId) {
@@ -169,7 +246,9 @@ export default function Scanner() {
 
     try {
       setProcessingSubtitle('Checking latest extraction status...');
-      const response = await api.get(`/extraction-jobs/${backgroundJobId}/`);
+      const response = await api.get(`/extraction-jobs/${backgroundJobId}/`, {
+        timeout: 20000,
+      });
       const jobStatus = response.data;
 
       if (jobStatus.status === 'done') {
@@ -188,8 +267,10 @@ export default function Scanner() {
 
       if (jobStatus.status === 'failed') {
         clearActivePolling();
+        await clearPersistedBackgroundJobState();
         setShowBehindScenesModal(false);
         setIsUploading(false);
+        setBackgroundJobId('');
         setUploadError(jobStatus.message || 'Extraction failed. Please try again.');
         setReportModal(true);
         return true;
@@ -202,10 +283,10 @@ export default function Scanner() {
       setProcessingSubtitle('Still processing. You can check again shortly.');
       return false;
     }
-  }, [backgroundJobId, clearActivePolling, handleExtractionSuccess, selectedRole]);
+  }, [backgroundJobId, clearActivePolling, clearPersistedBackgroundJobState, handleExtractionSuccess, selectedRole]);
 
   useEffect(() => {
-    if (!showBehindScenesModal || !backgroundJobId) {
+    if (!backgroundJobId) {
       return;
     }
 
@@ -220,7 +301,7 @@ export default function Scanner() {
     }, 10000);
 
     return () => clearInterval(interval);
-  }, [showBehindScenesModal, backgroundJobId, reconcileBackgroundJob]);
+  }, [backgroundJobId, reconcileBackgroundJob]);
 
   const resumePollingForJob = useCallback(async (
     jobId: string,
@@ -239,12 +320,13 @@ export default function Scanner() {
     };
 
     setBackgroundJobId(jobId);
+  await persistBackgroundJobState(jobId, uploadType, isRetry);
     setIsUploading(false);
     setShowBehindScenesModal(true);
     setProcessingSubtitle('Extraction is running in the background...');
 
     const result = await courseService.pollExtractionJob(jobId, {
-      maxAttempts: 10,
+      maxAttempts: 40,
       intervalMs: 3000,
       cancelToken,
     });
@@ -269,7 +351,7 @@ export default function Scanner() {
 
     setShowBehindScenesModal(true);
     setProcessingSubtitle('Still processing in background. We will keep checking status.');
-  }, [handleExtractionSuccess]);
+  }, [handleExtractionSuccess, persistBackgroundJobState]);
 
   const recoverFromRecentJobs = useCallback(async (
     uploadType: 'student' | 'faculty',
@@ -308,6 +390,78 @@ export default function Scanner() {
 
     return false;
   }, [handleExtractionSuccess, resumePollingForJob, user?.id]);
+
+  useEffect(() => {
+    if (hydratedBackgroundJobRef.current) {
+      return;
+    }
+    hydratedBackgroundJobRef.current = true;
+
+    let isCancelled = false;
+
+    const rehydrateBackgroundJob = async () => {
+      const persisted = await loadPersistedBackgroundJobState();
+      if (!persisted || isCancelled || activePollRef.current) {
+        return;
+      }
+
+      backgroundJobUploadTypeRef.current = persisted.uploadType;
+      backgroundJobIsRetryRef.current = persisted.isRetry;
+      setBackgroundJobId(persisted.jobId);
+      setShowBehindScenesModal(true);
+      setProcessingSubtitle('Recovered a background extraction job. Reconnecting...');
+
+      try {
+        const response = await api.get(`/extraction-jobs/${persisted.jobId}/`, {
+          timeout: 20000,
+        });
+        const jobStatus = response.data;
+        if (isCancelled) {
+          return;
+        }
+
+        if (jobStatus.status === 'done') {
+          await handleExtractionSuccess(
+            jobStatus as ExtractionJobDoneResponse,
+            persisted.uploadType,
+            {
+              isRetry: persisted.isRetry,
+              alreadyRecorded: true,
+            }
+          );
+          return;
+        }
+
+        if (jobStatus.status === 'failed') {
+          await clearPersistedBackgroundJobState();
+          setBackgroundJobId('');
+          setShowBehindScenesModal(false);
+          setUploadError(jobStatus.message || 'Extraction failed. Please try again.');
+          setReportModal(true);
+          return;
+        }
+      } catch (error) {
+        console.error('Failed to restore persisted extraction job status:', error);
+      }
+
+      if (!isCancelled) {
+        await resumePollingForJob(persisted.jobId, persisted.uploadType, persisted.isRetry);
+      }
+    };
+
+    rehydrateBackgroundJob().catch((error) => {
+      console.error('Background extraction rehydration failed:', error);
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [
+    clearPersistedBackgroundJobState,
+    handleExtractionSuccess,
+    loadPersistedBackgroundJobState,
+    resumePollingForJob,
+  ]);
 
   useEffect(() => {
     const handleExtractionNotification = async (rawData: unknown) => {
@@ -396,7 +550,7 @@ export default function Scanner() {
         setSelectedFile({ uri: file.uri, name: file.name, mimeType: file.mimeType, size: file.size, uploadType: selectedRole });
         await uploadFile(file, selectedRole);
       }
-    } catch (error) {
+    } catch {
       setUploadError('Failed to pick document. Please try again.');
       setReportModal(true);
     }
@@ -425,7 +579,9 @@ export default function Scanner() {
         setSelectedFile({ uri: image.uri, name: 'image.jpg', mimeType: 'image/jpeg', uploadType: selectedRole });
         await uploadFile(image, selectedRole);
       }
-    } catch (error) { Alert.alert('Error', 'Failed to pick image'); }
+    } catch {
+      Alert.alert('Error', 'Failed to pick image');
+    }
   };
 
   const handleCameraCapture = async () => {
@@ -450,7 +606,9 @@ export default function Scanner() {
         setSelectedFile({ uri: image.uri, name: 'camera-capture.jpg', mimeType: 'image/jpeg', uploadType: selectedRole });
         await uploadFile(image, selectedRole);
       }
-    } catch (error) { Alert.alert('Error', 'Failed to capture image'); }
+    } catch {
+      Alert.alert('Error', 'Failed to capture image');
+    }
   };
 
   // Upload function to backend
@@ -531,7 +689,9 @@ export default function Scanner() {
           { text: 'OK', onPress: () => { resetScanner(); router.push(selectedRole === 'student' ? '/Home/Schedules/student' : '/Home/Schedules/faculty'); } }
         ]);
       }
-    } catch (error) { Alert.alert('Error', 'Failed to save schedule.'); }
+    } catch {
+      Alert.alert('Error', 'Failed to save schedule.');
+    }
   };
 
   const saveAndApplyReminders = async () => {
@@ -549,7 +709,9 @@ export default function Scanner() {
           { text: 'OK', onPress: () => { resetScanner(); router.replace('/Home/home'); } }
         ]);
       }
-    } catch (error) { Alert.alert('Error', 'Failed to save schedule.'); }
+    } catch {
+      Alert.alert('Error', 'Failed to save schedule.');
+    }
   };
 
   const handleFacultyModeConfirm = async () => {
@@ -579,6 +741,9 @@ export default function Scanner() {
 
   const resetScanner = () => {
     clearActivePolling();
+    clearPersistedBackgroundJobState().catch((error) => {
+      console.error('Failed to clear persisted extraction job state during reset:', error);
+    });
     backgroundJobUploadTypeRef.current = null;
     backgroundJobIsRetryRef.current = false;
     setSelectedFile(null);

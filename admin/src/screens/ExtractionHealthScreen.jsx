@@ -197,6 +197,12 @@ function AnalyticsTab({ refreshKey }) {
           <BreakdownCard title="By Upload Type" data={stats.upload_type_breakdown} labels={{
             student: 'Student', faculty: 'Faculty',
           }} />
+          <BreakdownCard title="LLM Failure Reasons" data={stats.llm_failure_breakdown || {}} labels={{
+            timeout: 'Timeout',
+            invalid_json: 'Invalid JSON',
+            schema_reject: 'Schema Reject',
+            empty_courses: 'Empty Courses',
+          }} />
         </div>
       )}
 
@@ -273,6 +279,7 @@ function ExtractionJobsTab({ refreshKey }) {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [uploadTypeFilter, setUploadTypeFilter] = useState('');
+  const [llmFailureReasonFilter, setLlmFailureReasonFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [breakdown, setBreakdown] = useState({ pending: 0, processing: 0, done: 0, failed: 0 });
@@ -292,6 +299,7 @@ function ExtractionJobsTab({ refreshKey }) {
       search,
       status: statusFilter,
       upload_type: uploadTypeFilter,
+      llm_failure_reason: llmFailureReasonFilter,
       date_from: dateFrom,
       date_to: dateTo,
       page,
@@ -312,7 +320,7 @@ function ExtractionJobsTab({ refreshKey }) {
         if (requestVersion !== requestVersionRef.current) return;
         setLoading(false);
       });
-  }, [search, statusFilter, uploadTypeFilter, dateFrom, dateTo, page, refreshKey]);
+  }, [search, statusFilter, uploadTypeFilter, llmFailureReasonFilter, dateFrom, dateTo, page, refreshKey]);
 
   useEffect(() => {
     fetchJobs();
@@ -381,6 +389,28 @@ function ExtractionJobsTab({ refreshKey }) {
               {type || 'All Types'}
             </button>
           ))}
+
+          <div className="h-6 w-px bg-slate-200 mx-1" />
+
+          {[
+            { key: '', label: 'All LLM Outcomes' },
+            { key: 'timeout', label: 'Timeout' },
+            { key: 'invalid_json', label: 'Invalid JSON' },
+            { key: 'schema_reject', label: 'Schema Reject' },
+            { key: 'empty_courses', label: 'Empty Courses' },
+          ].map((reason) => (
+            <button
+              key={reason.key || 'all-llm-reasons'}
+              onClick={() => { setLlmFailureReasonFilter(reason.key); setPage(1); }}
+              className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest border-2 transition-all ${
+                llmFailureReasonFilter === reason.key
+                  ? 'bg-slate-900 text-white border-slate-900'
+                  : 'bg-white text-slate-400 border-slate-200 hover:border-slate-400'
+              }`}
+            >
+              {reason.label}
+            </button>
+          ))}
         </div>
 
         <div className="flex flex-wrap items-end gap-3">
@@ -407,6 +437,7 @@ function ExtractionJobsTab({ refreshKey }) {
               setSearch('');
               setStatusFilter('');
               setUploadTypeFilter('');
+              setLlmFailureReasonFilter('');
               setDateFrom('');
               setDateTo('');
               setPage(1);

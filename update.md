@@ -1,6 +1,6 @@
 # SchedScan Extraction Pipeline — Master Update Log
 
-**Last updated:** 2026-04-02 (14:30 PHT)
+**Last updated:** 2026-04-09 (22:10 PHT)
 
 ---
 
@@ -122,7 +122,7 @@ Direct file understanding (Vision LLM)
    → 202 { job_id: "uuid", status: "processing", message }
    → Show "Processing your schedule…"
 
-2. Poll GET /api/extraction-jobs/{job_id}/ every 3 seconds (max 10 attempts)
+2. Poll GET /api/extraction-jobs/{job_id}/ every 3 seconds (up to 40 attempts, jittered backoff)
    → { status: "processing" }   still running, keep polling
    → { status: "done", courses, confidence, ... }   success
    → { status: "failed", failure_category, message, retryable }   failure
@@ -132,7 +132,10 @@ Direct file understanding (Vision LLM)
    → failure: "Extraction Failed ⚠️"
 
 4. On push notification received → cancel polling immediately, reload schedule
-5. After 10 poll attempts without terminal state → show explicit background-processing modal and continue via push notification
+5. After polling window exhaustion without terminal state:
+  - client treats it as retryable timeout (not terminal failure),
+  - keeps background-processing UX active,
+  - resumes via push notification / recovery checks.
 ```
 
 ---
@@ -244,9 +247,102 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/api/tags \
 | `EXTRACTION_ACCEPT_THRESHOLD` | `0.85` |
 | `EXTRACTION_RETRY_THRESHOLD` | `0.60` |
 
+#### Exact App Platform Snapshot (2026-04-09)
+
+Verbatim configuration currently set in DigitalOcean App Platform:
+
+```env
+EXTRACTION_LLM_BASE_URL=http://209.97.172.45:8080
+EXTRACTION_LLM_NORMALIZATION_ENABLED=True
+EXTRACTION_LLM_VISION_PARSE_ENABLED=True
+EXTRACTION_LLM_DIRECT_FILE_PARSE_ENABLED=True
+EXTRACTION_LLM_VISION_MODEL_NAME=granite3.2-vision:2b
+EXTRACTION_LLM_VISION_MAX_PAGES=3
+EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL=True
+EXTRACTION_LLM_VISION_REQUIRE_MODEL_DIGEST=False
+EXTRACTION_LLM_VISION_MODEL_DIGEST=
+EXTRACTION_LLM_FULL_PARSE_ENABLED=False
+EXTRACTION_LLM_MODEL_NAME=
+EXTRACTION_LLM_REQUIRE_PINNED_MODEL=False
+EXTRACTION_LLM_REQUIRE_MODEL_DIGEST=False
+EXTRACTION_LLM_MODEL_DIGEST=
+EXTRACTION_LLM_TIMEOUT_SECONDS=75
+EXTRACTION_LLM_STARTUP_CHECK_ENABLED=True
+EXTRACTION_LLM_STARTUP_CHECK_STRICT=False
+EXTRACTION_LLM_STARTUP_CHECK_TIMEOUT_SECONDS=2
+EXTRACTION_ACCEPT_THRESHOLD=0.85
+EXTRACTION_RETRY_THRESHOLD=0.60
+EXTRACTION_ACCEPT_THRESHOLD_FACULTY=0.72
+EXTRACTION_RETRY_THRESHOLD_FACULTY=0.50
+EXTRACTION_ACCEPT_THRESHOLD_STUDENT=0.85
+EXTRACTION_RETRY_THRESHOLD_STUDENT=0.60
+EXTRACTION_LLM_VISION_RETRY_COUNT=1
+EXTRACTION_LLM_VISION_RETRY_TIMEOUT_SECONDS=90
+EXTRACTION_LLM_VISION_RETRY_MAX_PAGES=3
+EXTRACTION_LLM_VISION_CONNECT_TIMEOUT_SECONDS=8
+EXTRACTION_LLM_VISION_MAX_TOKENS=768
+EXTRACTION_LLM_VISION_RETRY_MAX_TOKENS=576
+EXTRACTION_LLM_VISION_IMAGE_MAX_EDGE=1600
+EXTRACTION_LLM_VISION_IMAGE_QUALITY=72
+EXTRACTION_LLM_VISION_RETRY_IMAGE_MAX_EDGE=1280
+EXTRACTION_LLM_VISION_RETRY_IMAGE_QUALITY=68
+EXTRACTION_LLM_VISION_PDF_DPI=220
+EXTRACTION_LLM_VISION_RETRY_PDF_DPI=180
+EXTRACTION_RECOVER_STALE_JOBS_ON_STARTUP=True
+EXTRACTION_STALE_JOB_MAX_AGE_MINUTES=5
+EXTRACTION_FAST_OWNERSHIP_GATE_TIMEOUT_SECONDS=8
+EXTRACTION_FAST_OWNERSHIP_GATE_MAX_PAGES=1
+EXTRACTION_FAST_OWNERSHIP_GATE_RETRY_COUNT=0
+```
+
 ---
 
 ## Session History
+
+### 2026-04-09 (Session 10) — Timeout Hardening + Async Reliability + Mobile Recovery ✅ IMPLEMENTED
+
+**Goal:** Maximize extraction success for handwritten PNG/JPEG uploads while preserving strict ownership checks and safe async UX.
+
+#### Backend changes pushed
+
+- LLM vision retry behavior hardened:
+  - transient retry expanded to include `invalid_json` and `schema_reject`, not just timeout/empty outcomes.
+  - new per-attempt request budgets added (connect timeout split, token ceilings, image/PDF retry budgets).
+- Runtime knobs added in settings for production tuning:
+  - `EXTRACTION_LLM_VISION_CONNECT_TIMEOUT_SECONDS`
+  - `EXTRACTION_LLM_VISION_MAX_TOKENS`
+  - `EXTRACTION_LLM_VISION_RETRY_MAX_TOKENS`
+  - `EXTRACTION_LLM_VISION_IMAGE_MAX_EDGE`
+  - `EXTRACTION_LLM_VISION_IMAGE_QUALITY`
+  - `EXTRACTION_LLM_VISION_RETRY_IMAGE_MAX_EDGE`
+  - `EXTRACTION_LLM_VISION_RETRY_IMAGE_QUALITY`
+  - `EXTRACTION_LLM_VISION_PDF_DPI`
+  - `EXTRACTION_LLM_VISION_RETRY_PDF_DPI`
+- Async flow safety fixes:
+  - async `202` response path now finalizes idempotency metadata immediately.
+  - extraction log method values are truncated to DB-safe length before insert to prevent mismatch-path 500s.
+- Admin observability expanded:
+  - jobs endpoint now supports `llm_failure_reason` filter.
+  - analytics endpoint now returns `llm_failure_breakdown`.
+
+#### Frontend changes pushed
+
+- Scanner extraction polling and recovery:
+  - polling window increased (40 attempts, jittered backoff).
+  - status-check exhaustion now yields retryable timeout behavior instead of false terminal failure.
+  - active background extraction jobs persisted and rehydrated on app revisit.
+  - status check timeout increased to 20s for reconciliation/finalization checks.
+- Home UX:
+  - added a "Recent Extraction Jobs" card so users can quickly jump back to scanner or schedules.
+- Mobile lint cleanup pass completed on touched files without behavior change.
+
+#### Validation
+
+```bash
+backend: api.tests.test_extraction_health --keepdb -> OK (42 tests)
+backend: api.tests.test_llm_normalizer api.tests.test_extraction --keepdb -> OK (80 tests)
+frontend: expo lint app/Home/home.tsx app/Home/scanner.tsx services/courseService.ts -> clean
+```
 
 ### 2026-04-02 (Session 9) — Async Persistence + UX Clarity Hardening ✅ IMPLEMENTED
 

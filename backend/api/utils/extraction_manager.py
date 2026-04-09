@@ -842,7 +842,24 @@ def run_extraction_job(job_id) -> None:
         else:
             # ── 3b. Rejected by quality gate ─────────────────────────────────
             failure_reason = result.get('failure_category', 'low_confidence') or 'low_confidence'
+            raw_method = result.get('extraction_method', 'none')
+            if (
+                'llm_vision_parse' in result.get('attempts', [])
+                or raw_method == 'llm_vision_parse'
+                or 'llm_full_parse' in result.get('attempts', [])
+                or raw_method == 'llm_full_parse'
+                or 'llm_normalize' in result.get('attempts', [])
+            ):
+                failed_job_method = 'llm'
+            elif raw_method and raw_method != 'none':
+                failed_job_method = raw_method
+            elif result.get('attempts'):
+                failed_job_method = result['attempts'][-1]
+            else:
+                failed_job_method = 'none'
+
             job.status = 'failed'
+            job.extraction_method = failed_job_method
             job.failure_category = failure_reason
             job.confidence = result.get('confidence')
             job.error_message = (

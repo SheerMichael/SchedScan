@@ -72,6 +72,7 @@ export interface ExtractionJobTimeoutResponse {
   job_id: string;
   status: 'timeout';
   message: string;
+  retryable?: boolean;
 }
 
 export interface RecentExtractionJob {
@@ -199,7 +200,9 @@ export const courseService = {
     }
     params.append('limit', String(options?.limit ?? 5));
 
-    const response = await api.get(`/extraction-jobs/recent/?${params.toString()}`);
+    const response = await api.get(`/extraction-jobs/recent/?${params.toString()}`, {
+      timeout: 20000,
+    });
     return Array.isArray(response.data?.jobs) ? response.data.jobs : [];
   },
 
@@ -214,7 +217,7 @@ export const courseService = {
       cancelToken?: PollingCancelToken;
     }
   ): Promise<ExtractionJobResult> => {
-    const maxAttempts = options?.maxAttempts ?? 10;
+    const maxAttempts = options?.maxAttempts ?? 40;
     const intervalMs = options?.intervalMs ?? 3000;
     const cancelToken = options?.cancelToken;
 
@@ -227,7 +230,9 @@ export const courseService = {
         };
       }
 
-      await sleep(intervalMs);
+      const jitter = Math.floor(Math.random() * 200);
+      const backoff = Math.min(intervalMs + attempt * 250, 10000);
+      await sleep(backoff + jitter);
 
       if (cancelToken?.isCancelled) {
         return {
@@ -238,7 +243,9 @@ export const courseService = {
       }
 
       try {
-        const response = await api.get(`/extraction-jobs/${jobId}/`);
+        const response = await api.get(`/extraction-jobs/${jobId}/`, {
+          timeout: 20000,
+        });
         const data = response.data as ExtractionJobResult;
 
         if (isTerminalExtractionResult(data)) {
@@ -250,11 +257,10 @@ export const courseService = {
         if (isLastAttempt) {
           return {
             job_id: jobId,
-            status: 'failed',
+            status: 'timeout',
             message:
               error?.response?.data?.message ||
-              'Unable to check extraction status right now. Please try again shortly.',
-            failure_category: 'system_error',
+              'Extraction is still running but status checks are temporarily unavailable. We will notify you when it is done.',
             retryable: true,
           };
         }
@@ -264,7 +270,8 @@ export const courseService = {
     return {
       job_id: jobId,
       status: 'timeout',
-      message: "We'll notify you when done.",
+      message: "Still processing in the background. We'll notify you when done.",
+      retryable: true,
     };
   },
 

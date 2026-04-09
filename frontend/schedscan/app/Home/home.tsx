@@ -1,23 +1,16 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Image, ActivityIndicator, StyleSheet } from 'react-native';
+import React, { useState, useEffect, useMemo } from 'react';
+import { View, Text, TouchableOpacity, ScrollView, Image, ActivityIndicator } from 'react-native';
 import Svg, { Path, Circle, G, Rect, Polygon } from "react-native-svg";
 import { router } from "expo-router";
 import { useAuth } from '../../context/AuthContext';
-import { Course } from '../../services/courseService';
+import { Course, RecentExtractionJob, courseService } from '../../services/courseService';
 import { SavedSchedule } from '../../services/scheduleStorageService';
 import { taskService } from '../../services/taskService';
 import { studentEnrollmentService } from '../../services/facultyTaskService';
 import { useFocusEffect } from '@react-navigation/native';
-import { GestureDetector, Gesture } from 'react-native-gesture-handler';
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-  runOnJS,
-} from 'react-native-reanimated';
 import FacultyModeModal from '../../components/FacultyModeModal';
 import JoinClassModal from '../../components/JoinClassModal';
-import notificationService from '../../services/notificationService';
+import { getUnreadCount } from '../../services/notificationService';
 import { scheduleClassReminders } from '../../services/classReminderService';
 import { getHolidays, buildHolidayMap, formatHolidayDateRange, Holiday } from '../../services/holidayService';
 import { getCalendarEvents, buildCalendarEventMap, formatEventTime, formatCalendarEventDateRange, CalendarEvent } from '../../services/calendarEventService';
@@ -25,14 +18,11 @@ import { getSemesterMonths, getSemesterLabel, getInitialMonth } from '../../util
 
 export default function SchedScanApp() {
   const { user, getActiveSchedule, isOffline, hasPendingFacultyUnlock, activateFacultyMode, setPendingFacultyUnlock } = useAuth();
-  const startYear = 2025;
-  const endYear = 2050;
   const now = new Date();
 
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
   const [selectedDay, setSelectedDay] = useState<number | null>(new Date().getDate());
-  const [selectedFilter, setSelectedFilter] = useState<'all' | 'teaching' | 'attending'>('all');
   const [courses, setCourses] = useState<Course[]>([]);
   const [isLoadingCourses, setIsLoadingCourses] = useState(true);
   const [activeSchedule, setActiveSchedule] = useState<SavedSchedule | null>(null);
@@ -51,10 +41,6 @@ export default function SchedScanApp() {
     source_type?: 'student' | 'faculty' | null;  // For merged schedules
   };
 
-  type WeeklySchedule = {
-    [key: number]: ScheduleItem[];
-  };
-
   // Get color based on source type or schedule type
   const getCourseColor = (item: ScheduleItem): string => {
     // For merged schedules, use the source_type
@@ -71,101 +57,6 @@ export default function SchedScanApp() {
 
     return '#ef4444'; // default red
   };
-
-  // Draggable card component using modern Gesture API
-  const DraggableCard = ({
-    item,
-    index,
-    onDragEnd,
-    totalItems
-  }: {
-    item: ScheduleItem;
-    index: number;
-    onDragEnd: (fromIndex: number, toIndex: number) => void;
-    totalItems: number;
-  }) => {
-    const translateY = useSharedValue(0);
-    const scale = useSharedValue(1);
-    const isActive = useSharedValue(false);
-    const cardHeight = 100; // Approximate card height
-    const courseColor = getCourseColor(item);
-
-    const animatedStyle = useAnimatedStyle(() => {
-      return {
-        transform: [
-          { translateY: translateY.value },
-          { scale: withSpring(isActive.value ? 1.03 : 1) }
-        ],
-        zIndex: isActive.value ? 1000 : 0,
-        shadowOpacity: isActive.value ? 0.3 : 0.1,
-      };
-    });
-
-    const panGesture = Gesture.Pan()
-      .onBegin(() => {
-        isActive.value = true;
-      })
-      .onUpdate((event) => {
-        translateY.value = event.translationY;
-      })
-      .onEnd((event) => {
-        const offsetY = event.translationY;
-        const moveBy = Math.round(offsetY / cardHeight);
-        let newIndex = index + moveBy;
-
-        // Clamp to valid range
-        newIndex = Math.max(0, Math.min(totalItems - 1, newIndex));
-
-        translateY.value = withSpring(0);
-        isActive.value = false;
-
-        if (newIndex !== index) {
-          runOnJS(onDragEnd)(index, newIndex);
-        }
-      })
-      .onFinalize(() => {
-        translateY.value = withSpring(0);
-        isActive.value = false;
-      });
-
-    return (
-      <GestureDetector gesture={panGesture}>
-        <Animated.View
-          style={[
-            animatedStyle,
-            {
-              backgroundColor: 'white',
-              padding: 16,
-              marginBottom: 12,
-              borderRadius: 12,
-              borderLeftWidth: 4,
-              borderLeftColor: courseColor,
-              shadowColor: '#000',
-              shadowOffset: { width: 0, height: 2 },
-              shadowRadius: 4,
-              elevation: 3,
-            }
-          ]}
-        >
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#000' }}>{item.title}</Text>
-              <Text style={{ fontSize: 14, color: '#666' }}>{item.time}</Text>
-              <Text style={{ fontSize: 14, color: '#666' }}>{item.location}</Text>
-              <Text style={{ fontSize: 14, color: '#666' }}>{item.priority_level}</Text>
-            </View>
-            <View style={{ paddingHorizontal: 8, paddingVertical: 4 }}>
-              <Text style={{ color: '#9ca3af', fontSize: 18 }}>≡</Text>
-            </View>
-          </View>
-        </Animated.View>
-      </GestureDetector>
-    );
-  };
-
-  interface Star {
-    value: number;
-  }
   // const StarBadge = ({ value }: Star) => {
   //   return (
   //     <View className="items-center justify-center">
@@ -246,40 +137,47 @@ export default function SchedScanApp() {
   const [taskCounts, setTaskCounts] = useState<Record<string, { total: number; incomplete: number }>>({});
   const [facultyTaskCounts, setFacultyTaskCounts] = useState<Record<string, { total: number; incomplete: number }>>({});
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
+  const [recentExtractionJobs, setRecentExtractionJobs] = useState<RecentExtractionJob[]>([]);
+  const [isLoadingRecentExtractionJobs, setIsLoadingRecentExtractionJobs] = useState(false);
 
   // Modals
   const [showFacultyModeModal, setShowFacultyModeModal] = useState(false);
   const [showJoinClassModal, setShowJoinClassModal] = useState(false);
-
-  // Handle drag end and reorder
-  const handleDragEnd = (fromIndex: number, toIndex: number) => {
-    if (fromIndex !== toIndex) {
-      setDaySchedule(prevSchedule => {
-        const newSchedule = [...prevSchedule];
-        const [movedItem] = newSchedule.splice(fromIndex, 1);
-        newSchedule.splice(toIndex, 0, movedItem);
-        return newSchedule;
-      });
-    }
-  };
-
   // Fetch courses from active local schedule when component mounts or comes into focus
   useFocusEffect(
     React.useCallback(() => {
       loadActiveSchedule();
       loadHolidays();
+      loadRecentExtractionJobs();
       // Fetch unread notification count for badge
-      notificationService.getUnreadCount()
+      getUnreadCount()
         .then(count => setUnreadNotifCount(count))
         .catch(() => { });
-    }, [user?.id])
+    }, [user?.id]) // eslint-disable-line react-hooks/exhaustive-deps
   );
 
-  // Reload holidays and calendar events when the user navigates to a different month/year
+  const loadRecentExtractionJobs = async () => {
+    if (!user?.id) {
+      setRecentExtractionJobs([]);
+      return;
+    }
+
+    try {
+      setIsLoadingRecentExtractionJobs(true);
+      const jobs = await courseService.getRecentExtractionJobs({ limit: 3 });
+      setRecentExtractionJobs(jobs);
+    } catch (e) {
+      console.warn('Failed to load recent extraction jobs:', e);
+    } finally {
+      setIsLoadingRecentExtractionJobs(false);
+    }
+  };
+
+  // Reload holidays and calendar events when the user navigates to a different month/year.
   useEffect(() => {
     loadHolidays();
     loadCalendarEvents();
-  }, [selectedYear, selectedMonth]);
+  }, [selectedYear, selectedMonth]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadHolidays = async () => {
     try {
@@ -433,18 +331,6 @@ export default function SchedScanApp() {
     });
   };
 
-  // Get courses for a specific date (only within semester range)
-  const getCoursesForDate = (day: number): Course[] => {
-    if (!semesterMonths.includes(selectedMonth)) return [];
-
-    const weekday = new Date(selectedYear, selectedMonth, day).getDay();
-
-    return courses.filter(course => {
-      const courseDays = dayCodeToNumbers(course.day);
-      return courseDays.includes(weekday);
-    });
-  };
-
   // Helper function to convert time string to minutes for sorting
   const timeStringToMinutes = (timeStr: string): number => {
     if (!timeStr) return 0;
@@ -500,8 +386,6 @@ export default function SchedScanApp() {
     setDaySchedule(scheduleItems);
   };
 
-  const weeklySchedule: WeeklySchedule = {};
-
   // ✅ One-time Holidays / Events — populated from backend
   const holidaySchedule: { [key: string]: ScheduleItem[] } = useMemo(() => {
     const map = buildHolidayMap(holidays, selectedYear);
@@ -549,7 +433,6 @@ export default function SchedScanApp() {
     return result;
   }, [calendarEvents, selectedYear]);
 
-  const years = Array.from({ length: endYear - startYear + 1 }, (_, i) => startYear + i);
   const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
   const monthsFull = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
   const daysOfWeek = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
@@ -674,25 +557,25 @@ export default function SchedScanApp() {
     setDaySchedule(schedule);
   };
 
-  // Re-calculate day schedule when courses, holidays, events, or selected month/year changes
+  // Re-calculate day schedule when data or selected date context changes.
   useEffect(() => {
     if (selectedDay !== null) {
       selectDay(selectedDay);
     }
-  }, [courses, holidaySchedule, calendarEventSchedule, selectedMonth, selectedYear]);
+  }, [courses, holidaySchedule, calendarEventSchedule, selectedMonth, selectedYear, selectedDay]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // When the active schedule changes, auto-select the correct initial month for its semester
+  // When the active schedule changes, auto-select the correct initial month for its semester.
   useEffect(() => {
     if (activeSchedule) {
       const initialMonth = getInitialMonth(activeSchedule.semester);
       setSelectedMonth(initialMonth);
     }
-  }, [activeSchedule?.id, activeSchedule?.semester]);
+  }, [activeSchedule?.id, activeSchedule?.semester]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Select today on initial load
+  // Select today on initial load.
   useEffect(() => {
     selectDay(new Date().getDate());
-  }, [])
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const classItemsToday = daySchedule.filter(item => item.priority_level === 'Class');
   const classesTodayCount = classItemsToday.length;
@@ -857,6 +740,68 @@ export default function SchedScanApp() {
           >
             <Text className="text-orange-600 font-semibold text-sm">Join a Class with Code</Text>
           </TouchableOpacity>
+        )}
+
+        {/* Recent Extraction Jobs */}
+        {(isLoadingRecentExtractionJobs || recentExtractionJobs.length > 0) && (
+          <View className="mx-4 mt-3 bg-white border border-gray-200 rounded-xl px-4 py-3">
+            <View className="flex-row items-center justify-between mb-2">
+              <Text className="text-sm font-bold text-gray-800">Recent Extraction Jobs</Text>
+              <TouchableOpacity onPress={() => router.push('/Home/scanner')}>
+                <Text className="text-xs font-semibold text-primary-700">Open Scanner</Text>
+              </TouchableOpacity>
+            </View>
+
+            {isLoadingRecentExtractionJobs ? (
+              <View className="py-2 flex-row items-center">
+                <ActivityIndicator size="small" color="#DC2626" />
+                <Text className="text-xs text-gray-500 ml-2">Loading recent jobs...</Text>
+              </View>
+            ) : recentExtractionJobs.map((job) => {
+              const statusStyle =
+                job.status === 'done'
+                  ? 'bg-emerald-100 text-emerald-700'
+                  : job.status === 'failed'
+                    ? 'bg-red-100 text-red-700'
+                    : 'bg-amber-100 text-amber-700';
+              const actionLabel =
+                job.status === 'done'
+                  ? 'View Schedules'
+                  : job.status === 'failed'
+                    ? 'Retry Upload'
+                    : 'View Status';
+
+              return (
+                <View key={job.job_id} className="border border-gray-100 rounded-lg p-3 mb-2 last:mb-0">
+                  <View className="flex-row items-center justify-between mb-1">
+                    <Text className="text-xs font-semibold text-gray-700 flex-1 mr-2" numberOfLines={1}>
+                      {job.file_name || job.job_id}
+                    </Text>
+                    <View className={`px-2 py-0.5 rounded-full ${statusStyle}`}>
+                      <Text className="text-[10px] font-bold uppercase">{job.status}</Text>
+                    </View>
+                  </View>
+
+                  <Text className="text-[11px] text-gray-500 mb-2" numberOfLines={2}>
+                    {job.message || 'Extraction job status available.'}
+                  </Text>
+
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (job.status === 'done') {
+                        router.push('/Home/schedules');
+                      } else {
+                        router.push('/Home/scanner');
+                      }
+                    }}
+                    className="self-start px-3 py-1.5 bg-gray-100 rounded-full"
+                  >
+                    <Text className="text-[10px] font-semibold text-gray-700">{actionLabel}</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+          </View>
         )}
 
         {/* Semester Label */}
