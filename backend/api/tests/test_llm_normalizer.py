@@ -831,3 +831,235 @@ class ParseDocumentMetadataWithLLMVisionTestCase(SimpleTestCase):
         finally:
             os.unlink(tmp_path)
 
+    @override_settings(
+        EXTRACTION_LLM_VISION_PARSE_ENABLED=True,
+        EXTRACTION_LLM_NORMALIZATION_ENABLED=True,
+        EXTRACTION_LLM_MODEL_NAME='granite3.2-vision:2b',
+        EXTRACTION_LLM_VISION_MODEL_NAME='granite3.2-vision:2b',
+        EXTRACTION_LLM_REQUIRE_PINNED_MODEL=False,
+        EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL=False,
+        EXTRACTION_LLM_VISION_RETRY_COUNT=1,
+        EXTRACTION_LLM_TIMEOUT_SECONDS=20,
+        EXTRACTION_LLM_VISION_RETRY_TIMEOUT_SECONDS=5,
+        EXTRACTION_LLM_VISION_ADAPTIVE_BUDGET_ENABLED=False,
+    )
+    @patch('api.utils.extraction.llm_normalizer.requests.post')
+    def test_retry_timeout_profile_can_be_lower_than_base(self, mock_post):
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+            tmp.write(b'fake-image-bytes')
+            tmp_path = tmp.name
+
+        try:
+            success_response = Mock(status_code=200)
+            success_response.raise_for_status = Mock()
+            success_response.json.return_value = {
+                'response': json.dumps(
+                    {
+                        'doc_metadata': {'student_number': '', 'semester': '1ST', 'school_year': '2025-2026'},
+                        'courses': [
+                            {
+                                'subject_code': 'US101',
+                                'subject_name': '',
+                                'day': 'M',
+                                'start_time': '05:30PM',
+                                'end_time': '07:00PM',
+                                'location': 'LR5',
+                            }
+                        ],
+                    }
+                )
+            }
+            mock_post.side_effect = [requests.Timeout('timed out'), success_response]
+
+            courses, _, telemetry = parse_document_with_llm_vision(
+                file_path=tmp_path,
+                upload_type='faculty',
+            )
+
+            self.assertEqual(len(courses), 1)
+            self.assertTrue(telemetry['llm_parse_success'])
+            first_timeout = mock_post.call_args_list[0].kwargs.get('timeout')
+            second_timeout = mock_post.call_args_list[1].kwargs.get('timeout')
+            self.assertEqual(first_timeout[1], 20)
+            self.assertEqual(second_timeout[1], 5)
+        finally:
+            os.unlink(tmp_path)
+
+    @override_settings(
+        EXTRACTION_LLM_VISION_PARSE_ENABLED=True,
+        EXTRACTION_LLM_NORMALIZATION_ENABLED=True,
+        EXTRACTION_LLM_MODEL_NAME='granite3.2-vision:2b',
+        EXTRACTION_LLM_VISION_MODEL_NAME='granite3.2-vision:2b',
+        EXTRACTION_LLM_REQUIRE_PINNED_MODEL=False,
+        EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL=False,
+        EXTRACTION_LLM_VISION_RETRY_COUNT=0,
+        EXTRACTION_LLM_VISION_ADAPTIVE_BUDGET_ENABLED=True,
+        EXTRACTION_LLM_VISION_ADAPTIVE_FILE_SIZE_MB_LARGE=0.001,
+    )
+    @patch('api.utils.extraction.llm_normalizer.requests.post')
+    def test_adaptive_budget_marks_heavy_and_uses_smaller_first_pass(self, mock_post):
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+            tmp.write(b'x' * 8192)
+            tmp_path = tmp.name
+
+        try:
+            mock_post.return_value = Mock(status_code=200)
+            mock_post.return_value.raise_for_status = Mock()
+            mock_post.return_value.json.return_value = {
+                'response': json.dumps(
+                    {
+                        'doc_metadata': {'student_number': '', 'semester': '1ST', 'school_year': '2025-2026'},
+                        'courses': [
+                            {
+                                'subject_code': 'US101',
+                                'subject_name': '',
+                                'day': 'M',
+                                'start_time': '05:30PM',
+                                'end_time': '07:00PM',
+                                'location': 'LR5',
+                            }
+                        ],
+                    }
+                )
+            }
+
+            _, _, telemetry = parse_document_with_llm_vision(
+                file_path=tmp_path,
+                upload_type='faculty',
+            )
+
+            payload = mock_post.call_args.kwargs.get('json', {})
+            self.assertEqual(telemetry.get('llm_complexity_tier'), 'heavy')
+            self.assertLessEqual(payload.get('options', {}).get('num_predict', 9999), 320)
+            attempts = telemetry.get('llm_attempt_metrics') or []
+            self.assertEqual(len(attempts), 1)
+            self.assertTrue(bool(attempts[0].get('grayscale')))
+        finally:
+            os.unlink(tmp_path)
+
+    @override_settings(
+        EXTRACTION_LLM_VISION_PARSE_ENABLED=True,
+        EXTRACTION_LLM_NORMALIZATION_ENABLED=True,
+        EXTRACTION_LLM_MODEL_NAME='granite3.2-vision:2b',
+        EXTRACTION_LLM_VISION_MODEL_NAME='granite3.2-vision:2b',
+        EXTRACTION_LLM_REQUIRE_PINNED_MODEL=False,
+        EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL=False,
+        EXTRACTION_LLM_VISION_RETRY_COUNT=0,
+        EXTRACTION_LLM_VISION_ADAPTIVE_BUDGET_ENABLED=False,
+        EXTRACTION_LLM_VISION_CHUNKING_ENABLED=True,
+        EXTRACTION_LLM_VISION_CHUNKING_FORCE_ENABLED=True,
+        EXTRACTION_LLM_VISION_CHUNK_COUNT=3,
+        EXTRACTION_LLM_VISION_CHUNK_OVERLAP_RATIO=0.1,
+        EXTRACTION_LLM_VISION_CHUNKING_MIN_HEIGHT_PX=200,
+        EXTRACTION_LLM_VISION_CHUNKING_MAX_CHUNKS=4,
+    )
+    @patch('api.utils.extraction.llm_normalizer.requests.post')
+    def test_chunked_requests_merge_and_dedupe_courses(self, mock_post):
+        from PIL import Image
+
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+            tmp_path = tmp.name
+
+        try:
+            image = Image.new('RGB', (1200, 2400), color='white')
+            image.save(tmp_path, format='PNG')
+
+            chunk_payloads = [
+                {
+                    'doc_metadata': {'student_number': '2022-01191', 'semester': '1ST', 'school_year': '2025-2026'},
+                    'courses': [
+                        {
+                            'subject_code': 'US101',
+                            'subject_name': 'ALGEBRA',
+                            'day': 'M',
+                            'start_time': '07:00AM',
+                            'end_time': '09:00AM',
+                            'location': 'LR5',
+                        }
+                    ],
+                },
+                {
+                    'doc_metadata': {'student_number': '', 'semester': '', 'school_year': ''},
+                    'courses': [
+                        {
+                            'subject_code': 'US101',
+                            'subject_name': 'ALGEBRA',
+                            'day': 'M',
+                            'start_time': '07:00AM',
+                            'end_time': '09:00AM',
+                            'location': 'LR5',
+                        },
+                        {
+                            'subject_code': 'US102',
+                            'subject_name': 'PHYSICS',
+                            'day': 'M',
+                            'start_time': '09:00AM',
+                            'end_time': '11:00AM',
+                            'location': 'LAB1',
+                        },
+                    ],
+                },
+                {
+                    'doc_metadata': {'student_number': '', 'semester': '', 'school_year': ''},
+                    'courses': [],
+                },
+            ]
+
+            responses = []
+            for payload in chunk_payloads:
+                resp = Mock(status_code=200)
+                resp.raise_for_status = Mock()
+                resp.json.return_value = {'response': json.dumps(payload)}
+                responses.append(resp)
+            mock_post.side_effect = responses
+
+            courses, meta, telemetry = parse_document_with_llm_vision(
+                file_path=tmp_path,
+                upload_type='student',
+            )
+
+            self.assertEqual(mock_post.call_count, 3)
+            self.assertTrue(telemetry['llm_parse_success'])
+            self.assertEqual(meta.get('student_number'), '2022-01191')
+            self.assertEqual(len(courses), 2)
+            attempts = telemetry.get('llm_attempt_metrics') or []
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(attempts[0].get('chunk_count'), 3)
+            self.assertEqual(attempts[0].get('deduped_course_count'), 2)
+            self.assertEqual(attempts[0].get('outcome'), 'success_chunked')
+        finally:
+            os.unlink(tmp_path)
+
+    @override_settings(
+        EXTRACTION_LLM_VISION_PARSE_ENABLED=True,
+        EXTRACTION_LLM_NORMALIZATION_ENABLED=True,
+        EXTRACTION_LLM_VISION_MODEL_NAME='granite3.2-vision:2b',
+        EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL=False,
+        EXTRACTION_LLM_VISION_CONNECT_TIMEOUT_SECONDS=6,
+    )
+    @patch('api.utils.extraction.llm_normalizer.requests.post')
+    def test_metadata_gate_uses_connect_and_read_timeout_tuple(self, mock_post):
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+            tmp.write(b'fake-image-bytes')
+            tmp_path = tmp.name
+
+        try:
+            mock_post.return_value = Mock(status_code=200)
+            mock_post.return_value.raise_for_status = Mock()
+            mock_post.return_value.json.return_value = {
+                'response': json.dumps({'doc_metadata': {'student_number': '2022-01191'}})
+            }
+
+            parse_document_metadata_with_llm_vision(
+                file_path=tmp_path,
+                upload_type='student',
+                timeout_seconds_override=9,
+                max_pages_override=1,
+                retry_count_override=0,
+            )
+
+            timeout_value = mock_post.call_args.kwargs.get('timeout')
+            self.assertEqual(timeout_value, (6, 9))
+        finally:
+            os.unlink(tmp_path)
+

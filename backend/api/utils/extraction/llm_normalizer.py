@@ -3,6 +3,7 @@ import logging
 import base64
 import os
 import time
+import math
 from io import BytesIO
 from json import JSONDecodeError
 from typing import Any, Dict, List, Tuple
@@ -565,6 +566,211 @@ def _validate_doc_metadata(value: Any) -> bool:
 _VISION_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff'}
 
 
+def _encode_image_to_jpeg_b64(
+    image,
+    *,
+    image_max_edge: int,
+    image_quality: int,
+    grayscale: bool,
+) -> str:
+    prepared = _prepare_image_for_vision(
+        image,
+        image_max_edge=image_max_edge,
+        grayscale=grayscale,
+    )
+    return _encode_prepared_image_to_jpeg_b64(
+        prepared,
+        image_quality=image_quality,
+    )
+
+
+def _prepare_image_for_vision(
+    image,
+    *,
+    image_max_edge: int,
+    grayscale: bool,
+):
+    from PIL import Image
+
+    if grayscale:
+        image = image.convert('L').convert('RGB')
+    else:
+        image = image.convert('RGB')
+
+    width, height = image.size
+    max_edge = max(640, int(image_max_edge))
+    if max(width, height) > max_edge:
+        ratio = max_edge / float(max(width, height))
+        resized = (max(1, int(width * ratio)), max(1, int(height * ratio)))
+        image = image.resize(resized, Image.Resampling.LANCZOS)
+
+    return image
+
+
+def _encode_prepared_image_to_jpeg_b64(
+    image,
+    *,
+    image_quality: int,
+) -> str:
+    quality = max(35, min(95, int(image_quality)))
+    buffer = BytesIO()
+    image.save(buffer, format='JPEG', quality=quality, optimize=True)
+    return base64.b64encode(buffer.getvalue()).decode('ascii')
+
+
+def _slice_image_horizontally(
+    image,
+    *,
+    chunk_count: int,
+    overlap_ratio: float,
+):
+    width, height = image.size
+    slices = []
+
+    chunk_count = max(1, int(chunk_count))
+    if chunk_count == 1 or height <= 1:
+        return [image]
+
+    chunk_height = max(1, int(math.ceil(height / float(chunk_count))))
+    overlap_px = max(0, int(chunk_height * max(0.0, min(0.45, overlap_ratio))))
+
+    for idx in range(chunk_count):
+        start = max(0, idx * chunk_height - overlap_px)
+        end = min(height, (idx + 1) * chunk_height + overlap_px)
+        if start >= end:
+            continue
+        slices.append(image.crop((0, start, width, end)))
+
+    return slices or [image]
+
+
+def _dedupe_courses(courses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    seen = set()
+    deduped: List[Dict[str, Any]] = []
+
+    for course in courses:
+        key = (
+            str(course.get('subject_code') or '').strip().upper(),
+            str(course.get('day') or '').strip().upper(),
+            str(course.get('start_time') or '').strip().upper(),
+            str(course.get('end_time') or '').strip().upper(),
+            str(course.get('location') or '').strip().upper(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(course)
+
+    return deduped
+
+
+def _estimate_document_complexity(file_path: str) -> Dict[str, Any]:
+    extension = os.path.splitext(file_path)[1].lower()
+    file_size_mb = 0.0
+    image_megapixels = 0.0
+
+    try:
+        file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+    except OSError:
+        file_size_mb = 0.0
+
+    if extension in _VISION_IMAGE_EXTENSIONS:
+        try:
+            from PIL import Image
+
+            with Image.open(file_path) as image:
+                width, height = image.size
+                image_megapixels = (width * height) / 1_000_000.0
+        except Exception:
+            image_megapixels = 0.0
+
+    tier = 'normal'
+    huge_file_mb = float(getattr(settings, 'EXTRACTION_LLM_VISION_ADAPTIVE_FILE_SIZE_MB_HUGE', 7.0))
+    large_file_mb = float(getattr(settings, 'EXTRACTION_LLM_VISION_ADAPTIVE_FILE_SIZE_MB_LARGE', 3.0))
+    huge_mp = float(getattr(settings, 'EXTRACTION_LLM_VISION_ADAPTIVE_IMAGE_MP_HUGE', 10.0))
+    large_mp = float(getattr(settings, 'EXTRACTION_LLM_VISION_ADAPTIVE_IMAGE_MP_LARGE', 4.0))
+
+    if file_size_mb >= huge_file_mb or image_megapixels >= huge_mp:
+        tier = 'very_heavy'
+    elif file_size_mb >= large_file_mb or image_megapixels >= large_mp:
+        tier = 'heavy'
+
+    return {
+        'tier': tier,
+        'file_size_mb': round(file_size_mb, 3),
+        'image_megapixels': round(image_megapixels, 3),
+    }
+
+
+def _build_adaptive_attempt_profiles(
+    *,
+    timeout_seconds: int,
+    retry_timeout_seconds: int,
+    max_pages: int,
+    retry_max_pages: int,
+    max_tokens: int,
+    retry_max_tokens: int,
+    image_max_edge: int,
+    retry_image_max_edge: int,
+    image_quality: int,
+    retry_image_quality: int,
+    pdf_dpi: int,
+    retry_pdf_dpi: int,
+    retry_count: int,
+    complexity_tier: str,
+    adaptive_enabled: bool,
+) -> List[Dict[str, int]]:
+    profiles: List[Dict[str, int]] = []
+
+    base_profile = {
+        'timeout_seconds': max(1, int(timeout_seconds)),
+        'max_pages': max(1, int(max_pages)),
+        'max_tokens': max(64, int(max_tokens)),
+        'image_max_edge': max(640, int(image_max_edge)),
+        'image_quality': max(35, min(95, int(image_quality))),
+        'pdf_dpi': max(120, int(pdf_dpi)),
+    }
+    retry_profile = {
+        'timeout_seconds': max(1, int(retry_timeout_seconds)),
+        'max_pages': max(1, int(retry_max_pages)),
+        'max_tokens': max(64, int(retry_max_tokens)),
+        'image_max_edge': max(640, int(retry_image_max_edge)),
+        'image_quality': max(35, min(95, int(retry_image_quality))),
+        'pdf_dpi': max(120, int(retry_pdf_dpi)),
+    }
+
+    if adaptive_enabled and complexity_tier in {'heavy', 'very_heavy'}:
+        first_pass_timeout_cap = int(
+            getattr(settings, 'EXTRACTION_LLM_VISION_ADAPTIVE_FIRST_PASS_TIMEOUT_SECONDS', 90)
+        )
+        if complexity_tier == 'very_heavy':
+            budget = {
+                'timeout_seconds': min(base_profile['timeout_seconds'], max(30, first_pass_timeout_cap)),
+                'max_pages': 1,
+                'max_tokens': min(base_profile['max_tokens'], 256),
+                'image_max_edge': min(base_profile['image_max_edge'], 960),
+                'image_quality': min(base_profile['image_quality'], 52),
+                'pdf_dpi': min(base_profile['pdf_dpi'], 150),
+            }
+        else:
+            budget = {
+                'timeout_seconds': min(base_profile['timeout_seconds'], max(45, first_pass_timeout_cap)),
+                'max_pages': min(base_profile['max_pages'], 1),
+                'max_tokens': min(base_profile['max_tokens'], 320),
+                'image_max_edge': min(base_profile['image_max_edge'], 1024),
+                'image_quality': min(base_profile['image_quality'], 56),
+                'pdf_dpi': min(base_profile['pdf_dpi'], 170),
+            }
+        profiles.append(budget)
+    else:
+        profiles.append(base_profile)
+
+    for _ in range(max(0, int(retry_count))):
+        profiles.append(dict(retry_profile))
+
+    return profiles
+
+
 def _build_vision_parse_prompt(upload_type: str) -> str:
     if upload_type == 'faculty':
         format_hint = (
@@ -642,6 +848,12 @@ def _load_document_images_for_vision(
     image_max_edge: int = 1600,
     image_quality: int = 72,
     pdf_dpi: int = 220,
+    grayscale: bool = False,
+    enable_chunking: bool = False,
+    chunk_count: int = 1,
+    chunk_overlap_ratio: float = 0.0,
+    chunking_min_height_px: int = 0,
+    max_chunks: int = 12,
 ) -> List[str]:
     extension = os.path.splitext(file_path)[1].lower()
 
@@ -661,9 +873,26 @@ def _load_document_images_for_vision(
             fmt='jpeg',
         )
         for page in pages:
-            buffer = BytesIO()
-            page.save(buffer, format='JPEG', quality=85)
-            images_b64.append(base64.b64encode(buffer.getvalue()).decode('ascii'))
+            prepared = _prepare_image_for_vision(
+                page,
+                image_max_edge=image_max_edge,
+                grayscale=grayscale,
+            )
+            chunks = [prepared]
+            if enable_chunking and int(chunk_count) > 1 and prepared.size[1] >= int(chunking_min_height_px):
+                chunks = _slice_image_horizontally(
+                    prepared,
+                    chunk_count=chunk_count,
+                    overlap_ratio=chunk_overlap_ratio,
+                )
+            chunks = chunks[: max(1, int(max_chunks))]
+            for chunk in chunks:
+                images_b64.append(
+                    _encode_prepared_image_to_jpeg_b64(
+                        chunk,
+                        image_quality=image_quality,
+                    )
+                )
         return images_b64
 
     if extension in _VISION_IMAGE_EXTENSIONS:
@@ -673,18 +902,26 @@ def _load_document_images_for_vision(
             from PIL import Image
 
             with Image.open(file_path) as image:
-                image = image.convert('RGB')
-                width, height = image.size
-                max_edge = max(960, int(image_max_edge))
-                if max(width, height) > max_edge:
-                    ratio = max_edge / float(max(width, height))
-                    resized = (max(1, int(width * ratio)), max(1, int(height * ratio)))
-                    image = image.resize(resized, Image.Resampling.LANCZOS)
-
-                buffer = BytesIO()
-                quality = max(40, min(95, int(image_quality)))
-                image.save(buffer, format='JPEG', quality=quality, optimize=True)
-                return [base64.b64encode(buffer.getvalue()).decode('ascii')]
+                prepared = _prepare_image_for_vision(
+                    image,
+                    image_max_edge=image_max_edge,
+                    grayscale=grayscale,
+                )
+                chunks = [prepared]
+                if enable_chunking and int(chunk_count) > 1 and prepared.size[1] >= int(chunking_min_height_px):
+                    chunks = _slice_image_horizontally(
+                        prepared,
+                        chunk_count=chunk_count,
+                        overlap_ratio=chunk_overlap_ratio,
+                    )
+                chunks = chunks[: max(1, int(max_chunks))]
+                return [
+                    _encode_prepared_image_to_jpeg_b64(
+                        chunk,
+                        image_quality=image_quality,
+                    )
+                    for chunk in chunks
+                ]
         except Exception:
             logger.exception('LLM vision image preprocessing failed; falling back to raw bytes')
             with open(file_path, 'rb') as infile:
@@ -692,6 +929,51 @@ def _load_document_images_for_vision(
 
     logger.warning('LLM vision parse skipped: unsupported file extension %s', extension)
     return []
+
+
+def _parse_vision_response_payload(ollama_payload: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, Any], str]:
+    llm_output = _extract_response_text(ollama_payload)
+    if not llm_output:
+        logger.warning('LLM vision parse returned empty response')
+        return [], {'student_number': '', 'semester': '', 'school_year': ''}, 'empty_courses'
+
+    try:
+        parsed = _parse_llm_json(llm_output)
+    except (JSONDecodeError, ValueError):
+        logger.warning('LLM vision parse output was not valid JSON')
+        return [], {'student_number': '', 'semester': '', 'school_year': ''}, 'invalid_json'
+
+    unknown_top = set(parsed.keys()) - {'courses', 'doc_metadata'}
+    if unknown_top:
+        logger.warning(
+            'LLM vision parse response had unknown top-level keys (ignored): %s',
+            sorted(unknown_top),
+        )
+
+    courses_raw = parsed.get('courses')
+    if not isinstance(courses_raw, list):
+        logger.warning('LLM vision parse: "courses" is not a list')
+        return [], {'student_number': '', 'semester': '', 'school_year': ''}, 'schema_reject'
+
+    courses = _coerce_courses(courses_raw)
+    if not courses and courses_raw:
+        logger.warning('LLM vision parse: unusable courses after sanitization')
+        return [], {'student_number': '', 'semester': '', 'school_year': ''}, 'schema_reject'
+
+    if not _validate_normalized_courses(courses):
+        logger.warning('LLM vision parse: course schema validation failed')
+        return [], {'student_number': '', 'semester': '', 'school_year': ''}, 'schema_reject'
+
+    if not courses:
+        logger.warning('LLM vision parse returned zero courses')
+        return [], {'student_number': '', 'semester': '', 'school_year': ''}, 'empty_courses'
+
+    raw_doc_meta = parsed.get('doc_metadata', {})
+    if raw_doc_meta and not _validate_doc_metadata(raw_doc_meta):
+        logger.warning('LLM vision parse: doc_metadata schema validation failed')
+
+    doc_metadata: Dict[str, Any] = _sanitize_doc_metadata(raw_doc_meta)
+    return courses, doc_metadata, ''
 
 
 def parse_document_with_llm_vision(
@@ -717,6 +999,9 @@ def parse_document_with_llm_vision(
         'llm_preprocess_seconds': 0.0,
         'llm_request_seconds': 0.0,
         'llm_total_seconds': 0.0,
+        'llm_complexity_tier': 'normal',
+        'llm_file_size_mb': 0.0,
+        'llm_image_megapixels': 0.0,
         'llm_attempt_metrics': [],
         'stage': 'llm_vision_parse',
     }
@@ -761,6 +1046,24 @@ def parse_document_with_llm_vision(
     timeout_seconds = max(1, int(getattr(settings, 'EXTRACTION_LLM_TIMEOUT_SECONDS', 12)))
     max_pages = int(getattr(settings, 'EXTRACTION_LLM_VISION_MAX_PAGES', 2))
     retry_count = max(0, int(getattr(settings, 'EXTRACTION_LLM_VISION_RETRY_COUNT', 1)))
+    adaptive_enabled = bool(getattr(settings, 'EXTRACTION_LLM_VISION_ADAPTIVE_BUDGET_ENABLED', True))
+    adaptive_grayscale_enabled = bool(
+        getattr(settings, 'EXTRACTION_LLM_VISION_ADAPTIVE_GRAYSCALE_ENABLED', True)
+    )
+    chunking_enabled = bool(getattr(settings, 'EXTRACTION_LLM_VISION_CHUNKING_ENABLED', True))
+    chunking_force_enabled = bool(
+        getattr(settings, 'EXTRACTION_LLM_VISION_CHUNKING_FORCE_ENABLED', False)
+    )
+    chunk_count = max(1, int(getattr(settings, 'EXTRACTION_LLM_VISION_CHUNK_COUNT', 3)))
+    chunk_overlap_ratio = float(getattr(settings, 'EXTRACTION_LLM_VISION_CHUNK_OVERLAP_RATIO', 0.12))
+    chunking_min_height_px = max(
+        1,
+        int(getattr(settings, 'EXTRACTION_LLM_VISION_CHUNKING_MIN_HEIGHT_PX', 900)),
+    )
+    chunking_max_chunks = max(
+        1,
+        int(getattr(settings, 'EXTRACTION_LLM_VISION_CHUNKING_MAX_CHUNKS', 4)),
+    )
     connect_timeout_seconds = max(
         1,
         int(getattr(settings, 'EXTRACTION_LLM_VISION_CONNECT_TIMEOUT_SECONDS', 8)),
@@ -789,12 +1092,45 @@ def parse_document_with_llm_vision(
     pdf_dpi = max(120, int(getattr(settings, 'EXTRACTION_LLM_VISION_PDF_DPI', 220)))
     retry_pdf_dpi = max(120, int(getattr(settings, 'EXTRACTION_LLM_VISION_RETRY_PDF_DPI', 180)))
     retry_timeout_seconds = max(
-        timeout_seconds,
+        1,
         int(getattr(settings, 'EXTRACTION_LLM_VISION_RETRY_TIMEOUT_SECONDS', timeout_seconds)),
     )
     retry_max_pages = max(
         max_pages,
         int(getattr(settings, 'EXTRACTION_LLM_VISION_RETRY_MAX_PAGES', max(max_pages, 2))),
+    )
+
+    complexity_profile = _estimate_document_complexity(file_path)
+    complexity_tier = str(complexity_profile.get('tier') or 'normal')
+    telemetry['llm_complexity_tier'] = complexity_tier
+    telemetry['llm_file_size_mb'] = float(complexity_profile.get('file_size_mb') or 0.0)
+    telemetry['llm_image_megapixels'] = float(complexity_profile.get('image_megapixels') or 0.0)
+
+    attempt_profiles = _build_adaptive_attempt_profiles(
+        timeout_seconds=timeout_seconds,
+        retry_timeout_seconds=retry_timeout_seconds,
+        max_pages=max_pages,
+        retry_max_pages=retry_max_pages,
+        max_tokens=max_tokens,
+        retry_max_tokens=retry_max_tokens,
+        image_max_edge=image_max_edge,
+        retry_image_max_edge=retry_image_max_edge,
+        image_quality=image_quality,
+        retry_image_quality=retry_image_quality,
+        pdf_dpi=pdf_dpi,
+        retry_pdf_dpi=retry_pdf_dpi,
+        retry_count=retry_count,
+        complexity_tier=complexity_tier,
+        adaptive_enabled=adaptive_enabled,
+    )
+
+    logger.info(
+        'LLM vision parse budget profile: tier=%s, retries=%d, first_timeout=%ss, first_pages=%s, first_tokens=%s',
+        complexity_tier,
+        retry_count,
+        attempt_profiles[0]['timeout_seconds'] if attempt_profiles else timeout_seconds,
+        attempt_profiles[0]['max_pages'] if attempt_profiles else max_pages,
+        attempt_profiles[0]['max_tokens'] if attempt_profiles else max_tokens,
     )
     base_url = str(getattr(settings, 'EXTRACTION_LLM_BASE_URL', 'http://127.0.0.1:11434')).rstrip('/')
     generate_url = f'{base_url}{OLLAMA_GENERATE_PATH}'
@@ -814,15 +1150,28 @@ def parse_document_with_llm_vision(
 
     retryable_reasons = {'timeout', 'empty_courses', 'invalid_json', 'schema_reject'}
 
-    for attempt_index in range(retry_count + 1):
+    for attempt_index, attempt_profile in enumerate(attempt_profiles):
         telemetry['llm_retry_count'] = attempt_index
         is_retry = attempt_index > 0
-        attempt_timeout_seconds = retry_timeout_seconds if is_retry else timeout_seconds
-        attempt_max_pages = retry_max_pages if is_retry else max_pages
-        attempt_max_tokens = retry_max_tokens if is_retry else max_tokens
-        attempt_image_max_edge = min(image_max_edge, retry_image_max_edge) if is_retry else image_max_edge
-        attempt_image_quality = min(image_quality, retry_image_quality) if is_retry else image_quality
-        attempt_pdf_dpi = min(pdf_dpi, retry_pdf_dpi) if is_retry else pdf_dpi
+        attempt_timeout_seconds = int(attempt_profile['timeout_seconds'])
+        attempt_max_pages = int(attempt_profile['max_pages'])
+        attempt_max_tokens = int(attempt_profile['max_tokens'])
+        attempt_image_max_edge = int(attempt_profile['image_max_edge'])
+        attempt_image_quality = int(attempt_profile['image_quality'])
+        attempt_pdf_dpi = int(attempt_profile['pdf_dpi'])
+        attempt_grayscale = bool(
+            adaptive_grayscale_enabled
+            and adaptive_enabled
+            and complexity_tier in {'heavy', 'very_heavy'}
+            and attempt_index == 0
+        )
+        attempt_chunking_enabled = bool(
+            chunking_enabled
+            and (
+                chunking_force_enabled
+                or (attempt_index == 0 and complexity_tier in {'heavy', 'very_heavy'})
+            )
+        )
         request_timeout: float | Tuple[float, float] = (
             connect_timeout_seconds,
             max(1, attempt_timeout_seconds),
@@ -833,6 +1182,9 @@ def parse_document_with_llm_vision(
             'timeout_seconds': attempt_timeout_seconds,
             'max_pages': attempt_max_pages,
             'max_tokens': attempt_max_tokens,
+            'complexity_tier': complexity_tier,
+            'grayscale': attempt_grayscale,
+            'chunking_enabled': attempt_chunking_enabled,
             'preprocess_seconds': 0.0,
             'request_seconds': 0.0,
             'timeout_type': '',
@@ -846,9 +1198,20 @@ def parse_document_with_llm_vision(
             image_max_edge=attempt_image_max_edge,
             image_quality=attempt_image_quality,
             pdf_dpi=attempt_pdf_dpi,
+            grayscale=attempt_grayscale,
+            enable_chunking=attempt_chunking_enabled,
+            chunk_count=chunk_count,
+            chunk_overlap_ratio=chunk_overlap_ratio,
+            chunking_min_height_px=chunking_min_height_px,
+            max_chunks=chunking_max_chunks,
         )
         attempt_metric['preprocess_seconds'] = round(
             time.monotonic() - preprocess_started,
+            3,
+        )
+        attempt_metric['image_count'] = len(images_b64)
+        attempt_metric['payload_megabytes_estimate'] = round(
+            sum(len(img) for img in images_b64) / (1024 * 1024),
             3,
         )
         if not images_b64:
@@ -861,6 +1224,86 @@ def parse_document_with_llm_vision(
             request_options: Dict[str, Any] = {'temperature': 0}
             if attempt_max_tokens > 0:
                 request_options['num_predict'] = attempt_max_tokens
+
+            chunked_request_mode = attempt_chunking_enabled and len(images_b64) > 1
+            attempt_metric['chunk_count'] = len(images_b64) if chunked_request_mode else 1
+            if chunked_request_mode:
+                aggregated_courses: List[Dict[str, Any]] = []
+                aggregated_meta: Dict[str, Any] = {'student_number': '', 'semester': '', 'school_year': ''}
+                chunk_error_reasons: List[str] = []
+                chunk_request_seconds = 0.0
+                chunk_success_count = 0
+
+                for chunk_index, image_b64 in enumerate(images_b64):
+                    chunk_payload = {
+                        'model': model_name,
+                        'prompt': _build_vision_parse_prompt(upload_type),
+                        'images': [image_b64],
+                        'stream': False,
+                        'format': 'json',
+                        'options': request_options,
+                    }
+                    request_started = time.monotonic()
+                    response = requests.post(
+                        generate_url,
+                        json=chunk_payload,
+                        timeout=request_timeout,
+                        headers=_build_ollama_headers(content_type=True),
+                    )
+                    elapsed = time.monotonic() - request_started
+                    chunk_request_seconds += elapsed
+                    response.raise_for_status()
+
+                    courses, doc_metadata, parse_failure_reason = _parse_vision_response_payload(
+                        response.json()
+                    )
+                    if parse_failure_reason:
+                        if parse_failure_reason != 'empty_courses':
+                            chunk_error_reasons.append(parse_failure_reason)
+                        continue
+
+                    chunk_success_count += 1
+                    aggregated_courses.extend(courses)
+                    for key in ('student_number', 'semester', 'school_year'):
+                        if doc_metadata.get(key) and not aggregated_meta.get(key):
+                            aggregated_meta[key] = doc_metadata[key]
+
+                    logger.debug(
+                        'LLM vision chunk parsed: attempt=%s chunk=%s/%s courses=%s',
+                        attempt_index,
+                        chunk_index + 1,
+                        len(images_b64),
+                        len(courses),
+                    )
+
+                attempt_metric['request_seconds'] = round(chunk_request_seconds, 3)
+                attempt_metric['chunk_success_count'] = chunk_success_count
+                attempt_metric['chunk_error_count'] = len(chunk_error_reasons)
+
+                if aggregated_courses:
+                    deduped_courses = _dedupe_courses(aggregated_courses)
+                    attempt_metric['deduped_course_count'] = len(deduped_courses)
+                    telemetry['llm_parse_success'] = True
+                    telemetry['llm_failure_reason'] = ''
+                    telemetry['llm_timeout_type'] = ''
+                    _flush_attempt_metric(attempt_metric, 'success_chunked')
+                    return deduped_courses, aggregated_meta, telemetry
+
+                if chunk_error_reasons:
+                    failure_reason = 'schema_reject'
+                    if 'invalid_json' in chunk_error_reasons:
+                        failure_reason = 'invalid_json'
+                else:
+                    failure_reason = 'empty_courses'
+
+                telemetry['llm_failure_reason'] = failure_reason
+                _flush_attempt_metric(
+                    attempt_metric,
+                    'chunked_empty_or_error' if failure_reason == 'empty_courses' else 'chunked_parse_error',
+                )
+                if is_retry or failure_reason not in retryable_reasons:
+                    return [], empty_meta, telemetry
+                continue
 
             request_payload = {
                 'model': model_name,
@@ -882,63 +1325,14 @@ def parse_document_with_llm_vision(
                 3,
             )
             response.raise_for_status()
-            ollama_payload = response.json()
-            llm_output = _extract_response_text(ollama_payload)
-            if not llm_output:
-                telemetry['llm_failure_reason'] = 'empty_courses'
-                logger.warning('LLM vision parse returned empty response')
-                _flush_attempt_metric(attempt_metric, 'empty_response')
-                if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
+            courses, doc_metadata, parse_failure_reason = _parse_vision_response_payload(response.json())
+            if parse_failure_reason:
+                telemetry['llm_failure_reason'] = parse_failure_reason
+                _flush_attempt_metric(attempt_metric, parse_failure_reason)
+                if is_retry or parse_failure_reason not in retryable_reasons:
                     return [], empty_meta, telemetry
                 continue
 
-            parsed = _parse_llm_json(llm_output)
-            unknown_top = set(parsed.keys()) - {'courses', 'doc_metadata'}
-            if unknown_top:
-                logger.warning(
-                    'LLM vision parse response had unknown top-level keys (ignored): %s',
-                    sorted(unknown_top),
-                )
-
-            courses_raw = parsed.get('courses')
-            if not isinstance(courses_raw, list):
-                telemetry['llm_failure_reason'] = 'schema_reject'
-                logger.warning('LLM vision parse: "courses" is not a list')
-                _flush_attempt_metric(attempt_metric, 'schema_reject_non_list')
-                if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
-                    return [], empty_meta, telemetry
-                continue
-
-            courses = _coerce_courses(courses_raw)
-            if not courses and courses_raw:
-                telemetry['llm_failure_reason'] = 'schema_reject'
-                logger.warning('LLM vision parse: unusable courses after sanitization')
-                _flush_attempt_metric(attempt_metric, 'schema_reject_sanitize')
-                if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
-                    return [], empty_meta, telemetry
-                continue
-
-            if not _validate_normalized_courses(courses):
-                telemetry['llm_failure_reason'] = 'schema_reject'
-                logger.warning('LLM vision parse: course schema validation failed')
-                _flush_attempt_metric(attempt_metric, 'schema_reject_validate')
-                if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
-                    return [], empty_meta, telemetry
-                continue
-
-            if not courses:
-                telemetry['llm_failure_reason'] = 'empty_courses'
-                logger.warning('LLM vision parse returned zero courses')
-                _flush_attempt_metric(attempt_metric, 'empty_courses')
-                if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
-                    return [], empty_meta, telemetry
-                continue
-
-            raw_doc_meta = parsed.get('doc_metadata', {})
-            if raw_doc_meta and not _validate_doc_metadata(raw_doc_meta):
-                logger.warning('LLM vision parse: doc_metadata schema validation failed')
-
-            doc_metadata: Dict[str, Any] = _sanitize_doc_metadata(raw_doc_meta)
             telemetry['llm_parse_success'] = True
             telemetry['llm_failure_reason'] = ''
             telemetry['llm_timeout_type'] = ''
@@ -1058,6 +1452,25 @@ def parse_document_metadata_with_llm_vision(
     timeout_seconds = int(timeout_seconds_override or default_timeout)
     max_pages = max(1, int(max_pages_override or 1))
     retry_count = max(0, int(retry_count_override or 0))
+    connect_timeout_seconds = max(
+        1,
+        int(getattr(settings, 'EXTRACTION_LLM_VISION_CONNECT_TIMEOUT_SECONDS', 8)),
+    )
+    metadata_image_max_edge = max(
+        640,
+        int(getattr(settings, 'EXTRACTION_LLM_VISION_METADATA_IMAGE_MAX_EDGE', 960)),
+    )
+    metadata_image_quality = max(
+        35,
+        min(95, int(getattr(settings, 'EXTRACTION_LLM_VISION_METADATA_IMAGE_QUALITY', 52))),
+    )
+    metadata_pdf_dpi = max(
+        120,
+        int(getattr(settings, 'EXTRACTION_LLM_VISION_METADATA_PDF_DPI', 150)),
+    )
+    metadata_grayscale = bool(
+        getattr(settings, 'EXTRACTION_LLM_VISION_METADATA_GRAYSCALE_ENABLED', True)
+    )
     base_url = str(getattr(settings, 'EXTRACTION_LLM_BASE_URL', 'http://127.0.0.1:11434')).rstrip('/')
     generate_url = f'{base_url}{OLLAMA_GENERATE_PATH}'
 
@@ -1080,7 +1493,14 @@ def parse_document_metadata_with_llm_vision(
         telemetry['llm_retry_count'] = attempt_index
         is_retry = attempt_index > 0
 
-        images_b64 = _load_document_images_for_vision(file_path, max_pages=max_pages)
+        images_b64 = _load_document_images_for_vision(
+            file_path,
+            max_pages=max_pages,
+            image_max_edge=metadata_image_max_edge,
+            image_quality=metadata_image_quality,
+            pdf_dpi=metadata_pdf_dpi,
+            grayscale=metadata_grayscale,
+        )
         if not images_b64:
             telemetry['llm_failure_reason'] = 'metadata_missing'
             return empty_meta, telemetry
@@ -1097,7 +1517,7 @@ def parse_document_metadata_with_llm_vision(
             response = requests.post(
                 generate_url,
                 json=request_payload,
-                timeout=timeout_seconds,
+                timeout=(connect_timeout_seconds, max(1, timeout_seconds)),
                 headers=_build_ollama_headers(content_type=True),
             )
             response.raise_for_status()

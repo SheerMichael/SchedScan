@@ -29,6 +29,46 @@ _MAX_RUNNING_THREADS = max(
     int(getattr(settings, 'EXTRACTION_ASYNC_MAX_RUNNING_THREADS', 1)),
 )
 _EXTRACTION_THREAD_SLOTS = threading.BoundedSemaphore(_MAX_RUNNING_THREADS)
+_EXTRACTION_THREAD_SLOT_LOCK = threading.Lock()
+
+
+def _repair_extraction_thread_slots_if_needed():
+    """
+    Defensive slot reconciliation.
+
+    In normal runtime, slots are released by the worker wrapper. During tests
+    (or abnormal thread lifecycle events), mocked thread start routines can
+    leak permits and make the API report false saturation forever.
+    """
+    global _EXTRACTION_THREAD_SLOTS
+
+    with _EXTRACTION_THREAD_SLOT_LOCK:
+        current_value = getattr(_EXTRACTION_THREAD_SLOTS, '_value', None)
+        if current_value is None:
+            return
+
+        active_workers = sum(
+            1
+            for t in threading.enumerate()
+            if t.is_alive() and str(getattr(t, 'name', '')).startswith('extraction-job-')
+        )
+        target_available = max(0, _MAX_RUNNING_THREADS - min(active_workers, _MAX_RUNNING_THREADS))
+        if current_value == target_available:
+            return
+
+        repaired = threading.BoundedSemaphore(_MAX_RUNNING_THREADS)
+        acquired = 0
+        while acquired < (_MAX_RUNNING_THREADS - target_available):
+            if not repaired.acquire(blocking=False):
+                break
+            acquired += 1
+        _EXTRACTION_THREAD_SLOTS = repaired
+        logger.warning(
+            'Repaired extraction thread slots: active_workers=%s, old_available=%s, new_available=%s',
+            active_workers,
+            current_value,
+            target_available,
+        )
 
 
 def _run_extraction_job_with_slot_release(job_id):
@@ -43,6 +83,8 @@ def _run_extraction_job_with_slot_release(job_id):
 
 def _submit_extraction_job(job_id):
     """Submit an extraction job to bounded in-process worker threads."""
+    _repair_extraction_thread_slots_if_needed()
+
     if not _EXTRACTION_THREAD_SLOTS.acquire(blocking=False):
         return False
 
