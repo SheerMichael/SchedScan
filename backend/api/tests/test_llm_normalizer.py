@@ -735,6 +735,41 @@ class ParseDocumentMetadataWithLLMVisionTestCase(SimpleTestCase):
         EXTRACTION_LLM_VISION_MODEL_NAME='granite3.2-vision:2b',
         EXTRACTION_LLM_REQUIRE_PINNED_MODEL=False,
         EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL=False,
+        EXTRACTION_LLM_VISION_RETRY_COUNT=0,
+    )
+    @patch('api.utils.extraction.llm_normalizer.requests.post')
+    def test_read_timeout_sets_timeout_type_and_attempt_timing(self, mock_post):
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+            tmp.write(b'fake-image-bytes')
+            tmp_path = tmp.name
+
+        try:
+            mock_post.side_effect = requests.ReadTimeout('read timed out')
+
+            courses, meta, telemetry = parse_document_with_llm_vision(
+                file_path=tmp_path,
+                upload_type='faculty',
+            )
+
+            self.assertEqual(courses, [])
+            self.assertFalse(telemetry['llm_parse_success'])
+            self.assertEqual(telemetry['llm_failure_reason'], 'timeout')
+            self.assertEqual(telemetry.get('llm_timeout_type'), 'read')
+            self.assertGreaterEqual(float(telemetry.get('llm_total_seconds') or 0.0), 0.0)
+            self.assertGreaterEqual(float(telemetry.get('llm_request_seconds') or 0.0), 0.0)
+            attempts = telemetry.get('llm_attempt_metrics') or []
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(attempts[0].get('outcome'), 'timeout_read')
+        finally:
+            os.unlink(tmp_path)
+
+    @override_settings(
+        EXTRACTION_LLM_VISION_PARSE_ENABLED=True,
+        EXTRACTION_LLM_NORMALIZATION_ENABLED=True,
+        EXTRACTION_LLM_MODEL_NAME='granite3.2-vision:2b',
+        EXTRACTION_LLM_VISION_MODEL_NAME='granite3.2-vision:2b',
+        EXTRACTION_LLM_REQUIRE_PINNED_MODEL=False,
+        EXTRACTION_LLM_VISION_REQUIRE_PINNED_MODEL=False,
         EXTRACTION_LLM_VISION_RETRY_COUNT=1,
     )
     @patch('api.utils.extraction.llm_normalizer.requests.post')

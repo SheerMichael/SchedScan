@@ -1056,6 +1056,86 @@ class AdminExtractionAnalyticsView(APIView):
 
     permission_classes = [IsAdminUser]
 
+    @staticmethod
+    def _percentile(values, q: float) -> float:
+        if not values:
+            return 0.0
+        ordered = sorted(values)
+        if len(ordered) == 1:
+            return float(ordered[0])
+
+        q = max(0.0, min(1.0, float(q)))
+        pos = (len(ordered) - 1) * q
+        lower = int(pos)
+        upper = min(lower + 1, len(ordered) - 1)
+        weight = pos - lower
+        return float(ordered[lower] + (ordered[upper] - ordered[lower]) * weight)
+
+    def _build_llm_timing_summary(self, score_breakdowns):
+        timing_samples = {
+            'total_seconds': [],
+            'request_seconds': [],
+            'preprocess_seconds': [],
+            'attempt_count': [],
+        }
+        timeout_type_breakdown = {}
+
+        for score_breakdown in score_breakdowns:
+            if not isinstance(score_breakdown, dict):
+                continue
+            llm_timing = score_breakdown.get('llm_timing')
+            if not isinstance(llm_timing, dict):
+                continue
+
+            timeout_type = str(llm_timing.get('timeout_type') or '').strip().lower()
+            if timeout_type:
+                timeout_type_breakdown[timeout_type] = timeout_type_breakdown.get(timeout_type, 0) + 1
+
+            for key in ('total_seconds', 'request_seconds', 'preprocess_seconds'):
+                raw_value = llm_timing.get(key)
+                try:
+                    numeric_value = float(raw_value)
+                except (TypeError, ValueError):
+                    continue
+                if numeric_value >= 0:
+                    timing_samples[key].append(numeric_value)
+
+            raw_attempts = llm_timing.get('attempt_count')
+            try:
+                attempts = int(raw_attempts)
+            except (TypeError, ValueError):
+                attempts = None
+            if attempts is not None and attempts >= 0:
+                timing_samples['attempt_count'].append(attempts)
+
+        def summarize(values):
+            if not values:
+                return {
+                    'samples': 0,
+                    'avg': 0.0,
+                    'p50': 0.0,
+                    'p95': 0.0,
+                    'p99': 0.0,
+                }
+            return {
+                'samples': len(values),
+                'avg': round(sum(values) / len(values), 3),
+                'p50': round(self._percentile(values, 0.50), 3),
+                'p95': round(self._percentile(values, 0.95), 3),
+                'p99': round(self._percentile(values, 0.99), 3),
+            }
+
+        sample_count = len(timing_samples['total_seconds'])
+
+        return {
+            'samples': sample_count,
+            'timeout_type_breakdown': timeout_type_breakdown,
+            'total_seconds': summarize(timing_samples['total_seconds']),
+            'request_seconds': summarize(timing_samples['request_seconds']),
+            'preprocess_seconds': summarize(timing_samples['preprocess_seconds']),
+            'attempt_count': summarize(timing_samples['attempt_count']),
+        }
+
     def get(self, request):
         try:
             days = min(365, max(1, int(request.query_params.get("days", 30))))
@@ -1106,6 +1186,10 @@ class AdminExtractionAnalyticsView(APIView):
             r["llm_failure_reason"]: r["n"] for r in failure_reason_raw
         }
 
+        llm_timing_summary = self._build_llm_timing_summary(
+            qs.values_list('score_breakdown', flat=True)
+        )
+
         return Response({
             "period_days": days,
             "total_extractions": total,
@@ -1117,6 +1201,7 @@ class AdminExtractionAnalyticsView(APIView):
             "method_breakdown": method_breakdown,
             "upload_type_breakdown": type_breakdown,
             "llm_failure_breakdown": llm_failure_breakdown,
+            "llm_timing_summary": llm_timing_summary,
         })
 
 

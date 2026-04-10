@@ -24,6 +24,42 @@ from ..utils.extraction_manager import ExtractionManager, run_extraction_job
 User = get_user_model()
 logger = logging.getLogger(__name__)
 
+_MAX_RUNNING_THREADS = max(
+    1,
+    int(getattr(settings, 'EXTRACTION_ASYNC_MAX_RUNNING_THREADS', 1)),
+)
+_EXTRACTION_THREAD_SLOTS = threading.BoundedSemaphore(_MAX_RUNNING_THREADS)
+
+
+def _run_extraction_job_with_slot_release(job_id):
+    try:
+        run_extraction_job(job_id)
+    finally:
+        try:
+            _EXTRACTION_THREAD_SLOTS.release()
+        except ValueError:
+            logger.exception("Extraction thread slot release mismatch for job %s", job_id)
+
+
+def _submit_extraction_job(job_id):
+    """Submit an extraction job to bounded in-process worker threads."""
+    if not _EXTRACTION_THREAD_SLOTS.acquire(blocking=False):
+        return False
+
+    thread = threading.Thread(
+        target=_run_extraction_job_with_slot_release,
+        args=(job_id,),
+        daemon=True,
+        name=f"extraction-job-{job_id}",
+    )
+    try:
+        thread.start()
+    except Exception:
+        _EXTRACTION_THREAD_SLOTS.release()
+        raise
+
+    return True
+
 
 class BaseCORUploadView(APIView):
     """
@@ -37,6 +73,7 @@ class BaseCORUploadView(APIView):
     _student_number_flexible_pattern = re.compile(r"\b(\d{4})[-\s]?(\d{5})\b")
     _student_number_digits_pattern = re.compile(r"\b(\d{9})\b")
     _email_pattern = re.compile(r"\b([A-Za-z0-9._%+-])([A-Za-z0-9._%+-]*)([A-Za-z0-9._%+-])@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b")
+    _active_job_statuses = ('pending', 'processing')
 
     def _normalize_student_number(self, value: str) -> str:
         text = str(value or '').strip()
@@ -303,6 +340,63 @@ class BaseCORUploadView(APIView):
                     'hit': True,
                 }
                 return Response(replay_payload, status=existing_run.response_status)
+
+            # Backpressure guard: avoid piling up unbounded async jobs while
+            # the vision runtime is saturated.
+            per_user_limit = max(
+                1,
+                int(getattr(settings, 'EXTRACTION_ASYNC_MAX_INFLIGHT_PER_USER', 1)),
+            )
+            global_limit = max(
+                1,
+                int(getattr(settings, 'EXTRACTION_ASYNC_MAX_INFLIGHT_GLOBAL', 2)),
+            )
+            user_inflight = ExtractionJob.objects.filter(
+                user=request.user,
+                status__in=self._active_job_statuses,
+            ).count()
+            global_inflight = ExtractionJob.objects.filter(
+                status__in=self._active_job_statuses,
+            ).count()
+
+            if user_inflight >= per_user_limit or global_inflight >= global_limit:
+                logger.warning(
+                    "Rejecting upload due to extraction backpressure: user=%s, user_inflight=%s/%s, global_inflight=%s/%s",
+                    request.user.id,
+                    user_inflight,
+                    per_user_limit,
+                    global_inflight,
+                    global_limit,
+                )
+                payload = {
+                    "error": "Extraction queue is busy. Please retry shortly.",
+                    "code": "EXTRACTION_BUSY",
+                    "retryable": True,
+                    "message": (
+                        "Another extraction is still in progress. "
+                        "Please wait for it to finish before uploading again."
+                    ),
+                    "inflight": {
+                        "user": user_inflight,
+                        "user_limit": per_user_limit,
+                        "global": global_inflight,
+                        "global_limit": global_limit,
+                    },
+                }
+                payload, final_status, replayed = self._finalize_idempotent_response(
+                    user=request.user,
+                    context=idempotency_context,
+                    payload=payload,
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                )
+                payload['idempotency'] = {
+                    **{
+                        k: idempotency_context[k]
+                        for k in ('request_id', 'idempotency_key', 'extraction_run_id', 'schema_version')
+                    },
+                    'hit': replayed,
+                }
+                return Response(payload, status=final_status)
             
             logger.info(f"Processing {self.upload_type.upper()} COR for user {request.user.id}: {uploaded_file.name}")
 
@@ -494,19 +588,42 @@ class BaseCORUploadView(APIView):
                 status='pending',
                 _temp_file_path=temp_file_path,
             )
-            # Transfer temp-file ownership to the background thread
+            if not _submit_extraction_job(job.job_id):
+                logger.warning(
+                    "Rejecting upload due to worker saturation: user=%s, job=%s",
+                    request.user.id,
+                    job.job_id,
+                )
+                job.delete()
+                payload = {
+                    "error": "Extraction workers are currently saturated. Please retry shortly.",
+                    "code": "EXTRACTION_BUSY",
+                    "retryable": True,
+                    "message": (
+                        "Our extraction workers are currently handling other uploads. "
+                        "Please retry in a moment."
+                    ),
+                }
+                payload, final_status, replayed = self._finalize_idempotent_response(
+                    user=request.user,
+                    context=idempotency_context,
+                    payload=payload,
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                )
+                payload['idempotency'] = {
+                    **{
+                        k: idempotency_context[k]
+                        for k in ('request_id', 'idempotency_key', 'extraction_run_id', 'schema_version')
+                    },
+                    'hit': replayed,
+                }
+                return Response(payload, status=final_status)
+
+            # Transfer temp-file ownership to the background worker.
             temp_file_path = None  # Prevent the finally block from deleting it
 
-            thread = threading.Thread(
-                target=run_extraction_job,
-                args=(job.job_id,),
-                daemon=True,
-                name=f"extraction-job-{job.job_id}",
-            )
-            thread.start()
-
             logger.info(
-                "Launched async extraction thread for job %s (user=%s, type=%s)",
+                "Queued async extraction worker for job %s (user=%s, type=%s)",
                 job.job_id, request.user.id, self.upload_type,
             )
             payload = {

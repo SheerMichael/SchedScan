@@ -2,6 +2,7 @@ import json
 import logging
 import base64
 import os
+import time
 from io import BytesIO
 from json import JSONDecodeError
 from typing import Any, Dict, List, Tuple
@@ -709,11 +710,35 @@ def parse_document_with_llm_vision(
         'llm_used': False,
         'llm_parse_success': False,
         'llm_failure_reason': '',
+        'llm_timeout_type': '',
         'llm_model': '',
         'llm_timeout_seconds': int(getattr(settings, 'EXTRACTION_LLM_TIMEOUT_SECONDS', 12)),
         'llm_retry_count': 0,
+        'llm_preprocess_seconds': 0.0,
+        'llm_request_seconds': 0.0,
+        'llm_total_seconds': 0.0,
+        'llm_attempt_metrics': [],
         'stage': 'llm_vision_parse',
     }
+    parse_started = time.monotonic()
+
+    def _flush_attempt_metric(metric: Dict[str, Any], outcome: str) -> None:
+        metric['outcome'] = outcome
+        attempts = telemetry.get('llm_attempt_metrics')
+        if not isinstance(attempts, list):
+            attempts = []
+            telemetry['llm_attempt_metrics'] = attempts
+        attempts.append(metric)
+
+        preprocess_total = 0.0
+        request_total = 0.0
+        for entry in attempts:
+            preprocess_total += float(entry.get('preprocess_seconds') or 0.0)
+            request_total += float(entry.get('request_seconds') or 0.0)
+
+        telemetry['llm_preprocess_seconds'] = round(preprocess_total, 3)
+        telemetry['llm_request_seconds'] = round(request_total, 3)
+        telemetry['llm_total_seconds'] = round(time.monotonic() - parse_started, 3)
 
     if not bool(getattr(settings, 'EXTRACTION_LLM_VISION_PARSE_ENABLED', False)):
         telemetry['llm_failure_reason'] = 'schema_reject'
@@ -803,6 +828,18 @@ def parse_document_with_llm_vision(
             max(1, attempt_timeout_seconds),
         )
 
+        attempt_metric: Dict[str, Any] = {
+            'attempt': attempt_index,
+            'timeout_seconds': attempt_timeout_seconds,
+            'max_pages': attempt_max_pages,
+            'max_tokens': attempt_max_tokens,
+            'preprocess_seconds': 0.0,
+            'request_seconds': 0.0,
+            'timeout_type': '',
+        }
+
+        preprocess_started = time.monotonic()
+
         images_b64 = _load_document_images_for_vision(
             file_path,
             max_pages=attempt_max_pages,
@@ -810,10 +847,16 @@ def parse_document_with_llm_vision(
             image_quality=attempt_image_quality,
             pdf_dpi=attempt_pdf_dpi,
         )
+        attempt_metric['preprocess_seconds'] = round(
+            time.monotonic() - preprocess_started,
+            3,
+        )
         if not images_b64:
             telemetry['llm_failure_reason'] = 'empty_courses'
+            _flush_attempt_metric(attempt_metric, 'empty_input')
             return [], empty_meta, telemetry
 
+        request_started = None
         try:
             request_options: Dict[str, Any] = {'temperature': 0}
             if attempt_max_tokens > 0:
@@ -827,11 +870,16 @@ def parse_document_with_llm_vision(
                 'format': 'json',
                 'options': request_options,
             }
+            request_started = time.monotonic()
             response = requests.post(
                 generate_url,
                 json=request_payload,
                 timeout=request_timeout,
                 headers=_build_ollama_headers(content_type=True),
+            )
+            attempt_metric['request_seconds'] = round(
+                time.monotonic() - request_started,
+                3,
             )
             response.raise_for_status()
             ollama_payload = response.json()
@@ -839,6 +887,7 @@ def parse_document_with_llm_vision(
             if not llm_output:
                 telemetry['llm_failure_reason'] = 'empty_courses'
                 logger.warning('LLM vision parse returned empty response')
+                _flush_attempt_metric(attempt_metric, 'empty_response')
                 if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
                     return [], empty_meta, telemetry
                 continue
@@ -855,6 +904,7 @@ def parse_document_with_llm_vision(
             if not isinstance(courses_raw, list):
                 telemetry['llm_failure_reason'] = 'schema_reject'
                 logger.warning('LLM vision parse: "courses" is not a list')
+                _flush_attempt_metric(attempt_metric, 'schema_reject_non_list')
                 if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
                     return [], empty_meta, telemetry
                 continue
@@ -863,6 +913,7 @@ def parse_document_with_llm_vision(
             if not courses and courses_raw:
                 telemetry['llm_failure_reason'] = 'schema_reject'
                 logger.warning('LLM vision parse: unusable courses after sanitization')
+                _flush_attempt_metric(attempt_metric, 'schema_reject_sanitize')
                 if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
                     return [], empty_meta, telemetry
                 continue
@@ -870,6 +921,7 @@ def parse_document_with_llm_vision(
             if not _validate_normalized_courses(courses):
                 telemetry['llm_failure_reason'] = 'schema_reject'
                 logger.warning('LLM vision parse: course schema validation failed')
+                _flush_attempt_metric(attempt_metric, 'schema_reject_validate')
                 if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
                     return [], empty_meta, telemetry
                 continue
@@ -877,6 +929,7 @@ def parse_document_with_llm_vision(
             if not courses:
                 telemetry['llm_failure_reason'] = 'empty_courses'
                 logger.warning('LLM vision parse returned zero courses')
+                _flush_attempt_metric(attempt_metric, 'empty_courses')
                 if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
                     return [], empty_meta, telemetry
                 continue
@@ -888,22 +941,72 @@ def parse_document_with_llm_vision(
             doc_metadata: Dict[str, Any] = _sanitize_doc_metadata(raw_doc_meta)
             telemetry['llm_parse_success'] = True
             telemetry['llm_failure_reason'] = ''
+            telemetry['llm_timeout_type'] = ''
+            _flush_attempt_metric(attempt_metric, 'success')
             return courses, doc_metadata, telemetry
-        except requests.Timeout:
+        except requests.ConnectTimeout:
+            if request_started is not None:
+                attempt_metric['request_seconds'] = round(
+                    time.monotonic() - request_started,
+                    3,
+                )
+            attempt_metric['timeout_type'] = 'connect'
             telemetry['llm_failure_reason'] = 'timeout'
+            telemetry['llm_timeout_type'] = 'connect'
+            logger.warning('LLM vision parse connect timeout after %ss', attempt_timeout_seconds)
+            _flush_attempt_metric(attempt_metric, 'timeout_connect')
+            if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
+                return [], empty_meta, telemetry
+            continue
+        except requests.ReadTimeout:
+            if request_started is not None:
+                attempt_metric['request_seconds'] = round(
+                    time.monotonic() - request_started,
+                    3,
+                )
+            attempt_metric['timeout_type'] = 'read'
+            telemetry['llm_failure_reason'] = 'timeout'
+            telemetry['llm_timeout_type'] = 'read'
+            logger.warning('LLM vision parse read timeout after %ss', attempt_timeout_seconds)
+            _flush_attempt_metric(attempt_metric, 'timeout_read')
+            if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
+                return [], empty_meta, telemetry
+            continue
+        except requests.Timeout:
+            if request_started is not None:
+                attempt_metric['request_seconds'] = round(
+                    time.monotonic() - request_started,
+                    3,
+                )
+            attempt_metric['timeout_type'] = 'unknown'
+            telemetry['llm_failure_reason'] = 'timeout'
+            telemetry['llm_timeout_type'] = 'unknown'
             logger.warning('LLM vision parse timed out after %ss', attempt_timeout_seconds)
+            _flush_attempt_metric(attempt_metric, 'timeout_unknown')
             if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
                 return [], empty_meta, telemetry
             continue
         except requests.RequestException:
+            if request_started is not None:
+                attempt_metric['request_seconds'] = round(
+                    time.monotonic() - request_started,
+                    3,
+                )
             telemetry['llm_failure_reason'] = 'schema_reject'
             logger.warning('LLM vision parse request failed', exc_info=True)
+            _flush_attempt_metric(attempt_metric, 'request_error')
             if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
                 return [], empty_meta, telemetry
             continue
         except (JSONDecodeError, ValueError):
+            if request_started is not None:
+                attempt_metric['request_seconds'] = round(
+                    time.monotonic() - request_started,
+                    3,
+                )
             telemetry['llm_failure_reason'] = 'invalid_json'
             logger.warning('LLM vision parse output was not valid JSON')
+            _flush_attempt_metric(attempt_metric, 'invalid_json')
             if is_retry or telemetry['llm_failure_reason'] not in retryable_reasons:
                 return [], empty_meta, telemetry
             continue

@@ -501,10 +501,7 @@ class ExtractionViewIntegrationTestCase(TestCase):
             content_type="application/pdf"
         )
 
-        with patch('threading.Thread') as mock_thread_class:
-            mock_thread = Mock()
-            mock_thread_class.return_value = mock_thread
-
+        with patch('api.views.upload_views._submit_extraction_job', return_value=True) as mock_submit_job:
             response = self.client.post(
                 '/api/upload-cor/student/',
                 {'file': pdf_file},
@@ -516,7 +513,7 @@ class ExtractionViewIntegrationTestCase(TestCase):
         self.assertIn('job_id', response.data)
         self.assertEqual(response.data['status'], 'processing')
         self.assertIn('message', response.data)
-        mock_thread.start.assert_called_once()
+        mock_submit_job.assert_called_once()
 
     @patch('api.views.upload_views.ExtractionManager')
     def test_retry_response_preserves_legacy_keys_with_enhanced_metadata(self, mock_manager_class):
@@ -541,10 +538,7 @@ class ExtractionViewIntegrationTestCase(TestCase):
             content_type='application/pdf'
         )
 
-        with patch('threading.Thread') as mock_thread_class:
-            mock_thread = Mock()
-            mock_thread_class.return_value = mock_thread
-
+        with patch('api.views.upload_views._submit_extraction_job', return_value=True):
             response = self.client.post(
                 '/api/upload-cor/student/',
                 {'file': pdf_file},
@@ -651,10 +645,7 @@ class AsyncExtractionJobTestCase(TestCase):
             'test_cor.pdf', b'fake pdf content', content_type='application/pdf'
         )
 
-        with patch('threading.Thread') as mock_thread_class:
-            mock_thread = Mock()
-            mock_thread_class.return_value = mock_thread
-
+        with patch('api.views.upload_views._submit_extraction_job', return_value=True) as mock_submit_job:
             response = self.client.post(
                 '/api/upload-cor/student/',
                 {'file': pdf_file},
@@ -665,8 +656,109 @@ class AsyncExtractionJobTestCase(TestCase):
         self.assertIn('job_id', response.data)
         self.assertEqual(response.data['status'], 'processing')
         self.assertIn('message', response.data)
-        # Thread should have been started
-        mock_thread.start.assert_called_once()
+        mock_submit_job.assert_called_once()
+
+    @override_settings(
+        EXTRACTION_ASYNC_MAX_INFLIGHT_PER_USER=1,
+        EXTRACTION_ASYNC_MAX_INFLIGHT_GLOBAL=5,
+    )
+    @patch('api.views.upload_views.ExtractionManager')
+    def test_student_upload_rejected_when_user_inflight_limit_reached(self, mock_manager_class):
+        from api.models import ExtractionJob
+
+        ExtractionJob.objects.create(
+            user=self.user,
+            upload_type='student',
+            file_name='existing.pdf',
+            status='processing',
+        )
+
+        pdf_file = SimpleUploadedFile(
+            'test_cor.pdf', b'fake pdf content', content_type='application/pdf'
+        )
+
+        with patch('api.views.upload_views._submit_extraction_job') as mock_submit_job:
+            response = self.client.post(
+                '/api/upload-cor/student/',
+                {'file': pdf_file},
+                format='multipart',
+            )
+
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.data.get('code'), 'EXTRACTION_BUSY')
+        self.assertTrue(response.data.get('retryable', False))
+        self.assertEqual(response.data.get('inflight', {}).get('user_limit'), 1)
+        mock_manager_class.assert_not_called()
+        mock_submit_job.assert_not_called()
+
+    @override_settings(
+        EXTRACTION_ASYNC_MAX_INFLIGHT_PER_USER=3,
+        EXTRACTION_ASYNC_MAX_INFLIGHT_GLOBAL=1,
+    )
+    def test_faculty_upload_rejected_when_global_inflight_limit_reached(self):
+        from api.models import ExtractionJob
+
+        ExtractionJob.objects.create(
+            user=self.other_user,
+            upload_type='student',
+            file_name='other-user-job.pdf',
+            status='pending',
+        )
+
+        pdf_file = SimpleUploadedFile(
+            'faculty_cor.pdf', b'faculty bytes', content_type='application/pdf'
+        )
+
+        with patch('api.views.upload_views._submit_extraction_job') as mock_submit_job:
+            response = self.client.post(
+                '/api/upload-cor/faculty/',
+                {'file': pdf_file},
+                format='multipart',
+            )
+
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.data.get('code'), 'EXTRACTION_BUSY')
+        self.assertEqual(response.data.get('inflight', {}).get('global_limit'), 1)
+        mock_submit_job.assert_not_called()
+
+    @override_settings(
+        EXTRACTION_ASYNC_MAX_INFLIGHT_PER_USER=5,
+        EXTRACTION_ASYNC_MAX_INFLIGHT_GLOBAL=5,
+    )
+    @patch('api.views.upload_views._submit_extraction_job')
+    @patch('api.views.upload_views.ExtractionManager')
+    def test_upload_rejected_when_worker_slots_saturated(self, mock_manager_class, mock_submit_job):
+        from api.models import ExtractionJob
+
+        mock_submit_job.return_value = False
+        mock_manager = Mock()
+        mock_manager.extract_student_number_for_ownership_gate.return_value = {
+            'student_number': '2022-09999',
+            'extraction_method': 'llm_vision_metadata_gate',
+            'confidence': 1.0,
+            'processing_time': 0.3,
+            'attempts': ['llm_vision_metadata_gate'],
+            'failure_category': 'none',
+            'validator_errors': [],
+            'score_breakdown': {},
+            'llm_failure_reason': '',
+        }
+        mock_manager_class.return_value = mock_manager
+
+        pdf_file = SimpleUploadedFile(
+            'test_cor.pdf', b'fake pdf content', content_type='application/pdf'
+        )
+
+        response = self.client.post(
+            '/api/upload-cor/student/',
+            {'file': pdf_file},
+            format='multipart',
+        )
+
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.data.get('code'), 'EXTRACTION_BUSY')
+        self.assertTrue(response.data.get('retryable', False))
+        self.assertEqual(ExtractionJob.objects.count(), 0)
 
     @patch('api.utils.extraction_manager._send_extraction_job_notification')
     @patch('api.utils.extraction_manager._write_extraction_log_for_job')
@@ -734,10 +826,7 @@ class AsyncExtractionJobTestCase(TestCase):
 
         self.client.force_authenticate(user=self.user)
 
-        with patch('threading.Thread') as mock_thread_class:
-            mock_thread = Mock()
-            mock_thread_class.return_value = mock_thread
-
+        with patch('api.views.upload_views._submit_extraction_job', return_value=True):
             response = self.client.post(
                 '/api/upload-cor/faculty/',
                 {'file': pdf_file},
@@ -758,10 +847,7 @@ class AsyncExtractionJobTestCase(TestCase):
 
         self.client.force_authenticate(user=self.user)
 
-        with patch('threading.Thread') as mock_thread_class:
-            mock_thread = Mock()
-            mock_thread_class.return_value = mock_thread
-
+        with patch('api.views.upload_views._submit_extraction_job', return_value=True):
             response = self.client.post(
                 '/api/upload-cor/student/',
                 {'file': image_file},
@@ -781,10 +867,7 @@ class AsyncExtractionJobTestCase(TestCase):
 
         self.client.force_authenticate(user=self.user)
 
-        with patch('threading.Thread') as mock_thread_class:
-            mock_thread = Mock()
-            mock_thread_class.return_value = mock_thread
-
+        with patch('api.views.upload_views._submit_extraction_job', return_value=True):
             response = self.client.post(
                 '/api/upload-cor/student/',
                 {'file': image_file},

@@ -190,6 +190,7 @@ class ExtractionManager:
         llm_used = False
         llm_parse_success = False
         llm_failure_reason = ''
+        llm_timing = {}
 
         _vision_stage_result = None
 
@@ -206,6 +207,13 @@ class ExtractionManager:
             )
             llm_used = llm_used or bool(v_telemetry.get('llm_used', False))
             llm_failure_reason = str(v_telemetry.get('llm_failure_reason') or '').strip()
+            llm_timing = {
+                'timeout_type': str(v_telemetry.get('llm_timeout_type') or ''),
+                'preprocess_seconds': float(v_telemetry.get('llm_preprocess_seconds') or 0.0),
+                'request_seconds': float(v_telemetry.get('llm_request_seconds') or 0.0),
+                'total_seconds': float(v_telemetry.get('llm_total_seconds') or 0.0),
+                'attempt_count': len(v_telemetry.get('llm_attempt_metrics') or []),
+            }
 
             if v_telemetry.get('llm_parse_success') and v_courses:
                 llm_parse_success = True
@@ -231,11 +239,15 @@ class ExtractionManager:
                     result['courses'] = v_validation.courses
                     result['confidence'] = v_score.confidence
                     result['validator_errors'] = v_validation.errors
-                    result['score_breakdown'] = v_score.breakdown
+                    score_breakdown = dict(v_score.breakdown)
+                    if llm_timing:
+                        score_breakdown['llm_timing'] = llm_timing
+                    result['score_breakdown'] = score_breakdown
                     result['failure_category'] = 'none'
                     result['llm_used'] = llm_used
                     result['llm_parse_success'] = True
                     result['llm_failure_reason'] = ''
+                    result['llm_timing'] = llm_timing
                     result['score_policy_upload_type'] = (upload_type or '').lower() or 'student'
                     result['schema_version'] = str(getattr(settings, 'EXTRACTION_SCHEMA_VERSION', 'v1'))
                     result['score_version'] = str(getattr(settings, 'EXTRACTION_SCORE_VERSION', 'v1'))
@@ -314,11 +326,15 @@ class ExtractionManager:
         result['courses'] = validation.courses
         result['confidence'] = confidence
         result['validator_errors'] = validation.errors
-        result['score_breakdown'] = score.breakdown
+        score_breakdown = dict(score.breakdown)
+        if llm_timing:
+            score_breakdown['llm_timing'] = llm_timing
+        result['score_breakdown'] = score_breakdown
         result['failure_category'] = failure_category
         result['llm_used'] = llm_used
         result['llm_parse_success'] = llm_parse_success
         result['llm_failure_reason'] = llm_failure_reason
+        result['llm_timing'] = llm_timing
         result['score_policy_upload_type'] = (upload_type or '').lower() or 'student'
         result['schema_version'] = str(getattr(settings, 'EXTRACTION_SCHEMA_VERSION', 'v1'))
         result['score_version'] = str(getattr(settings, 'EXTRACTION_SCORE_VERSION', 'v1'))

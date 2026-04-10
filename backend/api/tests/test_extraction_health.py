@@ -404,6 +404,77 @@ class AdminExtractionAnalyticsViewTestCase(AdminEndpointMixin, TestCase):
         self.assertEqual(resp.data["llm_failure_breakdown"].get("timeout"), 1)
         self.assertEqual(resp.data["llm_failure_breakdown"].get("invalid_json"), 1)
 
+    def test_llm_timing_summary_aggregates_percentiles_and_timeout_type(self):
+        ExtractionLog.objects.create(
+            file_name="llm_timing_1.pdf",
+            file_type="pdf",
+            upload_type="student",
+            extraction_method="llm",
+            confidence=0.7,
+            courses_extracted=3,
+            success=True,
+            score_breakdown={
+                "llm_timing": {
+                    "total_seconds": 1.0,
+                    "request_seconds": 0.8,
+                    "preprocess_seconds": 0.2,
+                    "attempt_count": 1,
+                    "timeout_type": "",
+                }
+            },
+        )
+        ExtractionLog.objects.create(
+            file_name="llm_timing_2.pdf",
+            file_type="pdf",
+            upload_type="student",
+            extraction_method="llm",
+            confidence=0.0,
+            courses_extracted=0,
+            success=False,
+            llm_failure_reason="timeout",
+            score_breakdown={
+                "llm_timing": {
+                    "total_seconds": 2.0,
+                    "request_seconds": 1.7,
+                    "preprocess_seconds": 0.3,
+                    "attempt_count": 1,
+                    "timeout_type": "read",
+                }
+            },
+        )
+        ExtractionLog.objects.create(
+            file_name="llm_timing_3.pdf",
+            file_type="pdf",
+            upload_type="student",
+            extraction_method="llm",
+            confidence=0.0,
+            courses_extracted=0,
+            success=False,
+            llm_failure_reason="timeout",
+            score_breakdown={
+                "llm_timing": {
+                    "total_seconds": 3.0,
+                    "request_seconds": 2.4,
+                    "preprocess_seconds": 0.6,
+                    "attempt_count": 2,
+                    "timeout_type": "connect",
+                }
+            },
+        )
+
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.get("/api/admin/extraction/analytics/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("llm_timing_summary", resp.data)
+
+        timing = resp.data["llm_timing_summary"]
+        self.assertGreaterEqual(timing.get("samples", 0), 3)
+        self.assertEqual(timing["timeout_type_breakdown"].get("read"), 1)
+        self.assertEqual(timing["timeout_type_breakdown"].get("connect"), 1)
+        self.assertGreaterEqual(timing["total_seconds"].get("p50", 0.0), 2.0)
+        self.assertGreaterEqual(timing["request_seconds"].get("p95", 0.0), 2.0)
+        self.assertGreaterEqual(timing["attempt_count"].get("avg", 0.0), 1.0)
+
 
 class AdminExtractionChartViewTestCase(AdminEndpointMixin, TestCase):
     """Test GET /api/admin/extraction/analytics/chart/"""

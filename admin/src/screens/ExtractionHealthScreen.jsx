@@ -206,6 +206,10 @@ function AnalyticsTab({ refreshKey }) {
         </div>
       )}
 
+      {stats && (
+        <LlmTimingSummaryCard summary={stats.llm_timing_summary || null} />
+      )}
+
       {/* Chart */}
       <div className="bg-white border-2 border-slate-200 p-6 shadow-[4px_4px_0px_0px_rgba(185,28,28,0.08)]">
         <div className="flex items-center justify-between mb-6">
@@ -263,6 +267,76 @@ function BreakdownCard({ title, data, labels }) {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+function LlmTimingSummaryCard({ summary }) {
+  const timeoutBreakdown = summary?.timeout_type_breakdown || {};
+  const timeoutTotal = Object.values(timeoutBreakdown).reduce((a, b) => a + b, 0);
+
+  const metrics = [
+    { key: 'total_seconds', label: 'Total Time (s)' },
+    { key: 'request_seconds', label: 'Request Time (s)' },
+    { key: 'preprocess_seconds', label: 'Preprocess Time (s)' },
+    { key: 'attempt_count', label: 'Attempt Count' },
+  ];
+
+  const fmtMetric = (value, key) => {
+    if (value === null || value === undefined) return '—';
+    if (key === 'attempt_count') return Number(value).toFixed(2);
+    return Number(value).toFixed(3);
+  };
+
+  return (
+    <div className="mb-10 bg-white border-2 border-slate-200 p-6 shadow-[4px_4px_0px_0px_rgba(15,23,42,0.06)]">
+      <div className="flex items-center justify-between mb-5">
+        <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">LLM Timing Summary</h3>
+        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+          Samples: {fmt(summary?.samples || 0)}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+        {metrics.map(({ key, label }) => {
+          const metric = summary?.[key] || {};
+          return (
+            <div key={key} className="border border-slate-200 p-4 bg-slate-50">
+              <div className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-2">{label}</div>
+              <div className="space-y-1 text-xs text-slate-700 font-bold">
+                <div>Avg: <span className="text-slate-900">{fmtMetric(metric.avg, key)}</span></div>
+                <div>P50: <span className="text-slate-900">{fmtMetric(metric.p50, key)}</span></div>
+                <div>P95: <span className="text-slate-900">{fmtMetric(metric.p95, key)}</span></div>
+                <div>P99: <span className="text-slate-900">{fmtMetric(metric.p99, key)}</span></div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div>
+        <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Timeout Type Breakdown</h4>
+        {timeoutTotal === 0 ? (
+          <div className="text-xs text-slate-400 font-semibold">No timeout telemetry captured for this period.</div>
+        ) : (
+          <div className="space-y-2">
+            {Object.entries(timeoutBreakdown).map(([timeoutType, count]) => {
+              const percentage = timeoutTotal > 0 ? (Number(count) / timeoutTotal) * 100 : 0;
+              return (
+                <div key={timeoutType} className="flex items-center gap-3">
+                  <span className="w-32 text-xs font-bold text-slate-700 uppercase tracking-wide">{timeoutType}</span>
+                  <div className="flex-1 bg-slate-100 h-4 rounded-sm overflow-hidden">
+                    <div className="h-full bg-slate-800" style={{ width: `${percentage.toFixed(1)}%` }} />
+                  </div>
+                  <span className="w-20 text-right text-[11px] font-black text-slate-600">
+                    {count} ({percentage.toFixed(1)}%)
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
