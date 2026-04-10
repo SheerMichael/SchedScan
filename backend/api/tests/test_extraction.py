@@ -428,6 +428,38 @@ class ExtractionManagerTestCase(TestCase):
         self.assertTrue(result.get('fallback_triggered', False))
         self.assertGreaterEqual(len(result.get('courses', [])), 1)
 
+    @override_settings(
+        EXTRACTION_LLM_DIRECT_FILE_PARSE_ENABLED=True,
+        EXTRACTION_LLM_DIRECT_FILE_FALLBACK_ON_REJECT=True,
+        EXTRACTION_VISION_ONLY_MODE=True,
+    )
+    @patch('api.utils.extraction_manager.parse_document_with_llm_vision')
+    @patch('api.utils.extraction_manager.StagedExtractionOrchestrator')
+    def test_vision_only_mode_disables_staged_fallback_on_timeout(
+        self,
+        mock_orchestrator_class,
+        mock_parse_vision,
+    ):
+        """Vision-only mode must not run staged OCR fallback when vision times out."""
+        mock_parse_vision.return_value = (
+            [],
+            {'student_number': '', 'semester': '', 'school_year': ''},
+            {
+                'llm_used': True,
+                'llm_parse_success': False,
+                'llm_failure_reason': 'timeout',
+            },
+        )
+
+        manager = ExtractionManager()
+        result = manager.extract_schedule('/fake/path.jpg', 'student')
+
+        mock_orchestrator_class.assert_not_called()
+        self.assertEqual(result.get('failure_category'), 'timeout')
+        self.assertEqual(result.get('confidence'), 0.0)
+        self.assertEqual(result.get('extraction_method'), 'llm_vision_parse')
+        self.assertFalse(result.get('accepted', True))
+
 
 class ExtractionViewIntegrationTestCase(TestCase):
     """Integration tests for extraction views"""

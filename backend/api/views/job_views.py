@@ -140,8 +140,16 @@ class ExtractionJobStatusView(APIView):
 
         if job_status == 'failed':
             failure_messages = {
+                'timeout': (
+                    "The vision model timed out while reading your document. "
+                    "Please retry in a moment."
+                ),
                 'low_confidence': (
                     "The document quality was too low to extract your schedule reliably. "
+                    "Please re-upload a clearer document."
+                ),
+                'parse_error': (
+                    "We couldn't parse the extracted schedule structure. "
                     "Please re-upload a clearer document."
                 ),
                 'metadata_mismatch': (

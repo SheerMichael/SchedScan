@@ -193,6 +193,9 @@ class ExtractionManager:
 
         _vision_stage_result = None
 
+        if source_file_path and result.get('extraction_method') in (None, '', 'none'):
+            result['extraction_method'] = 'llm_vision_parse'
+
         # ====================================================================
         # Stage 0: Vision direct-file parser (optional, primary when enabled)
         # ====================================================================
@@ -252,6 +255,8 @@ class ExtractionManager:
         # Stage 1: Score regex/OCR output
         # ====================================================================
         normalized_courses = normalize_candidates(result.get('courses', []))
+        if source_file_path and not attempts:
+            attempts.append('llm_vision_parse')
         validation = validate_candidates(normalized_courses)
         score = score_candidates(
             validation.courses,
@@ -286,8 +291,19 @@ class ExtractionManager:
         # Finalize result
         # ====================================================================
         confidence = score.confidence
-        if validation.errors and not validation.courses:
-            failure_category = 'parse_error'
+        if not validation.courses:
+            # No extracted rows should never carry a mid-range confidence value.
+            confidence = 0.0
+
+        if not validation.courses:
+            if llm_failure_reason == 'timeout':
+                failure_category = 'timeout'
+            elif llm_failure_reason == 'empty_courses':
+                failure_category = 'no_text'
+            elif validation.errors or llm_failure_reason in {'invalid_json', 'schema_reject'}:
+                failure_category = 'parse_error'
+            else:
+                failure_category = 'low_confidence'
         elif confidence < retry_threshold:
             failure_category = 'low_confidence'
         elif confidence < accept_threshold:
@@ -331,6 +347,8 @@ class ExtractionManager:
         
         logger.info(f"Starting extraction for {upload_type} COR: {file_path}")
         logger.info(f"File extension: {file_extension}")
+
+        vision_only_mode = bool(getattr(settings, 'EXTRACTION_VISION_ONLY_MODE', False))
         
         # force_ocr_fallback is used by the student ownership gate to recover
         # metadata (especially student number) when direct vision parsing does
@@ -339,6 +357,11 @@ class ExtractionManager:
             bool(getattr(settings, 'EXTRACTION_LLM_DIRECT_FILE_PARSE_ENABLED', False))
             and not force_ocr_fallback
         )
+        if vision_only_mode:
+            direct_file_parse_enabled = True
+            if force_ocr_fallback:
+                logger.info('Vision-only mode is enabled; ignoring force_ocr_fallback for %s', file_path)
+
         if direct_file_parse_enabled:
             # Vision-first mode: bypass OCR/pdf text extraction entirely.
             result = {
@@ -408,6 +431,7 @@ class ExtractionManager:
         )
         should_fallback_from_direct = (
             direct_file_parse_enabled
+            and not vision_only_mode
             and not result.get('accepted', False)
             and fallback_on_reject
             and (
