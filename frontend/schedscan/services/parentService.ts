@@ -47,6 +47,10 @@ export interface StudentSearchResult {
     first_name: string;
     last_name: string;
     full_name: string;
+    email: string;
+    student_number: string | null;
+    is_already_linked: boolean;
+    has_pending_request: boolean;
 }
 
 export interface ParentLinkRequest {

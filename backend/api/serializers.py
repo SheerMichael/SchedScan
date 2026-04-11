@@ -532,11 +532,22 @@ class ChildScheduleSerializer(serializers.Serializer):
 class StudentSearchResultSerializer(serializers.ModelSerializer):
     """Lightweight student profile for parent search results."""
     full_name = serializers.SerializerMethodField()
+    is_already_linked = serializers.BooleanField(read_only=True)
+    has_pending_request = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = User
-        fields = ['id', 'first_name', 'last_name', 'full_name']
-        read_only_fields = ['id', 'first_name', 'last_name', 'full_name']
+        fields = [
+            'id',
+            'first_name',
+            'last_name',
+            'full_name',
+            'email',
+            'student_number',
+            'is_already_linked',
+            'has_pending_request',
+        ]
+        read_only_fields = fields
 
     def get_full_name(self, obj):
         return obj.get_full_name()

@@ -200,6 +200,10 @@ const ParentHomePage = () => {
   };
 
   const handleRequestChildLink = async (child: StudentSearchResult) => {
+    if (child.is_already_linked || child.has_pending_request) {
+      return;
+    }
+
     try {
       setIsSendingRequest(true);
       setRequestError("");
@@ -397,7 +401,7 @@ const ParentHomePage = () => {
             <View className="flex-row items-center mb-4">
               <Calendar size={18} color="#374151" />
               <Text className="text-lg font-bold text-gray-800 ml-2">
-                {selectedChild.first_name}'s Schedule
+                {`${selectedChild.first_name}'s Schedule`}
               </Text>
             </View>
 
@@ -608,6 +612,8 @@ const ParentHomePage = () => {
                 placeholderTextColor="#9CA3AF"
                 value={searchQuery}
                 onChangeText={(text) => { setSearchQuery(text); setRequestError(""); }}
+                onSubmitEditing={handleSearchChildren}
+                returnKeyType="search"
                 autoCapitalize="none"
               />
               <TouchableOpacity
@@ -624,23 +630,38 @@ const ParentHomePage = () => {
             </View>
 
             <ScrollView className="max-h-64 mb-4">
-              {searchResults.map((child) => (
+              {searchResults.map((child) => {
+                const isDisabled = isSendingRequest || child.is_already_linked || child.has_pending_request;
+                const buttonLabel = child.is_already_linked
+                  ? 'Linked'
+                  : child.has_pending_request
+                    ? 'Pending'
+                    : 'Request';
+
+                return (
                 <View
                   key={child.id}
                   className="border border-gray-200 rounded-xl p-3 mb-2 flex-row items-center justify-between"
                 >
                   <View className="flex-1 pr-3">
                     <Text className="font-semibold text-gray-800">{child.full_name}</Text>
+                    <Text className="text-xs text-gray-500 mt-0.5">{child.email}</Text>
+                    {child.student_number ? (
+                      <Text className="text-xs text-gray-500">{child.student_number}</Text>
+                    ) : null}
                   </View>
                   <TouchableOpacity
-                    className={`bg-primary-600 rounded-lg px-3 py-2 ${isSendingRequest ? 'opacity-50' : ''}`}
+                    className={`rounded-lg px-3 py-2 ${isDisabled ? 'bg-gray-300' : 'bg-primary-600'}`}
                     onPress={() => handleRequestChildLink(child)}
-                    disabled={isSendingRequest}
+                    disabled={isDisabled}
                   >
-                    <Text className="text-white font-semibold text-sm">Request</Text>
+                    <Text className={`font-semibold text-sm ${isDisabled ? 'text-gray-600' : 'text-white'}`}>
+                      {buttonLabel}
+                    </Text>
                   </TouchableOpacity>
                 </View>
-              ))}
+                );
+              })}
             </ScrollView>
 
             {/* Buttons */}
@@ -692,7 +713,7 @@ const ParentHomePage = () => {
             <View className="mb-6">
               <View className="flex-row items-center mb-2">
                 <Text className="text-green-500 mr-2">✓</Text>
-                <Text className="text-gray-700 text-sm">View your child's schedule</Text>
+                <Text className="text-gray-700 text-sm">View your child&apos;s schedule</Text>
               </View>
               <View className="flex-row items-center mb-2">
                 <Text className="text-green-500 mr-2">✓</Text>

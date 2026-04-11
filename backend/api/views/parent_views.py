@@ -4,7 +4,8 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, Exists, OuterRef, Value, F
+from django.db.models.functions import Concat, Replace
 from django.utils import timezone
 import logging
 
@@ -18,6 +19,7 @@ from ..serializers import (
     StudentSearchResultSerializer,
 )
 from ..models import Schedule, ParentChildLink, ParentLinkRequest, Notification, Payment
+from ..utils.notification_service import NotificationService
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -62,14 +64,52 @@ class ParentChildSearchView(APIView):
         if len(query) < 2:
             return Response({"results": [], "count": 0})
 
+        query_tokens = [token for token in query.split() if token]
+        normalized_query = ''.join(ch for ch in query if ch.isalnum())
+
+        # Query contained only punctuation/symbols after trimming.
+        if not query_tokens and not normalized_query:
+            return Response({"results": [], "count": 0})
+
+        token_filter = None
+        for token in query_tokens:
+            current = (
+                Q(first_name__icontains=token)
+                | Q(last_name__icontains=token)
+                | Q(email__icontains=token)
+                | Q(student_number__icontains=token)
+            )
+            token_filter = current if token_filter is None else (token_filter & current)
+
+        search_filter = Q(full_name_text__icontains=query)
+        if token_filter is not None:
+            search_filter |= token_filter
+        if normalized_query:
+            search_filter |= Q(normalized_student_number__icontains=normalized_query)
+
+        active_link_exists = ParentChildLink.objects.filter(
+            parent=user,
+            child=OuterRef('pk'),
+            status='active',
+        )
+        pending_request_exists = ParentLinkRequest.objects.filter(
+            parent=user,
+            child=OuterRef('pk'),
+            status='pending',
+        )
+
         students = User.objects.filter(
             user_type='student'
-        ).filter(
-            Q(first_name__icontains=query) |
-            Q(last_name__icontains=query) |
-            Q(email__icontains=query) |
-            Q(student_number__icontains=query)
-        ).order_by('first_name', 'last_name')[:20]
+        ).annotate(
+            normalized_student_number=Replace(
+                Replace(F('student_number'), Value('-'), Value('')),
+                Value(' '),
+                Value(''),
+            ),
+            full_name_text=Concat(F('first_name'), Value(' '), F('last_name')),
+            is_already_linked=Exists(active_link_exists),
+            has_pending_request=Exists(pending_request_exists),
+        ).filter(search_filter).order_by('is_already_linked', 'has_pending_request', 'first_name', 'last_name')[:20]
 
         data = StudentSearchResultSerializer(students, many=True).data
         return Response({"results": data, "count": len(data)})
@@ -131,17 +171,41 @@ class ParentLinkRequestView(APIView):
 
         link_request = ParentLinkRequest.objects.create(parent=user, child=child)
 
+        parent_display_name = user.get_full_name() or user.email
+        notification_title = 'New parent connection request'
+        notification_message = (
+            f"{parent_display_name} requested to connect as your parent. "
+            "Review this in Share with Parent."
+        )
+        notification_data = {
+            'type': 'parent_link_request',
+            'request_id': link_request.id,
+            'parent_id': user.id,
+        }
+
         Notification.objects.create(
             user=child,
             notification_type='general',
-            title='New parent connection request',
-            message=f"{user.get_full_name()} requested to connect as your parent.",
-            data={
-                'type': 'parent_link_request',
-                'request_id': link_request.id,
-                'parent_id': user.id,
-            },
+            title=notification_title,
+            message=notification_message,
+            data=notification_data,
         )
+
+        if child.expo_push_token:
+            try:
+                NotificationService().send_push_notification(
+                    token=child.expo_push_token,
+                    title=notification_title,
+                    body=notification_message,
+                    data=notification_data,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to send parent-link push notification: parent_id=%s child_id=%s request_id=%s",
+                    user.id,
+                    child.id,
+                    link_request.id,
+                )
 
         logger.info(f"Parent {user.id} requested link with student {child.id}")
         return Response(
@@ -226,6 +290,26 @@ class StudentParentLinkRequestApproveView(APIView):
             },
         )
 
+        if link_request.parent.expo_push_token:
+            try:
+                NotificationService().send_push_notification(
+                    token=link_request.parent.expo_push_token,
+                    title='Parent request approved',
+                    body=f"{user.get_full_name()} approved your parent connection request.",
+                    data={
+                        'type': 'parent_link_approved',
+                        'request_id': link_request.id,
+                        'child_id': user.id,
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to send parent-link approval push notification: parent_id=%s child_id=%s request_id=%s",
+                    link_request.parent.id,
+                    user.id,
+                    link_request.id,
+                )
+
         return Response(
             {
                 "message": f"Approved request from {link_request.parent.get_full_name()}",
@@ -270,6 +354,26 @@ class StudentParentLinkRequestRejectView(APIView):
                 'child_id': user.id,
             },
         )
+
+        if link_request.parent.expo_push_token:
+            try:
+                NotificationService().send_push_notification(
+                    token=link_request.parent.expo_push_token,
+                    title='Parent request rejected',
+                    body=f"{user.get_full_name()} rejected your parent connection request.",
+                    data={
+                        'type': 'parent_link_rejected',
+                        'request_id': link_request.id,
+                        'child_id': user.id,
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to send parent-link rejection push notification: parent_id=%s child_id=%s request_id=%s",
+                    link_request.parent.id,
+                    user.id,
+                    link_request.id,
+                )
 
         return Response(
             {"message": f"Rejected request from {link_request.parent.get_full_name()}"},

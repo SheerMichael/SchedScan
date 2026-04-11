@@ -1,8 +1,10 @@
+from unittest.mock import patch
+
 from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from api.models import ParentChildLink, ParentLinkRequest, User
+from api.models import Notification, ParentChildLink, ParentLinkRequest, User
 
 
 class ParentRegistrationAndLinkRequestTests(TestCase):
@@ -107,3 +109,143 @@ class ParentRegistrationAndLinkRequestTests(TestCase):
         self.assertTrue(
             ParentLinkRequest.objects.filter(id=request_id, status='rejected').exists()
         )
+
+    def test_parent_search_supports_normalized_number_and_status_flags(self):
+        parent = User.objects.create_user(
+            email='parent_search@test.com',
+            password='testpass123',
+            first_name='Parent',
+            last_name='Search',
+            user_type='parent',
+        )
+        another_student = User.objects.create_user(
+            email='second_student@test.com',
+            password='testpass123',
+            first_name='Jane',
+            last_name='Learner',
+            user_type='student',
+            student_number='2026-81002',
+        )
+
+        ParentChildLink.objects.create(parent=parent, child=self.student, status='active')
+        ParentLinkRequest.objects.create(parent=parent, child=another_student, status='pending')
+
+        self.parent_client.force_authenticate(user=parent)
+
+        normalized_response = self.parent_client.get('/api/parent/children/search/', {'q': '202681001'})
+        self.assertEqual(normalized_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(normalized_response.data['count'], 1)
+        self.assertEqual(normalized_response.data['results'][0]['id'], self.student.id)
+
+        status_response = self.parent_client.get('/api/parent/children/search/', {'q': '2026'})
+        self.assertEqual(status_response.status_code, status.HTTP_200_OK)
+        by_id = {item['id']: item for item in status_response.data['results']}
+
+        self.assertTrue(by_id[self.student.id]['is_already_linked'])
+        self.assertFalse(by_id[self.student.id]['has_pending_request'])
+        self.assertFalse(by_id[another_student.id]['is_already_linked'])
+        self.assertTrue(by_id[another_student.id]['has_pending_request'])
+
+    @patch('api.views.parent_views.NotificationService.send_push_notification')
+    def test_parent_request_notifies_student_and_sends_push(self, mock_send_push):
+        parent = User.objects.create_user(
+            email='parent_notify@test.com',
+            password='testpass123',
+            first_name='Penny',
+            last_name='Parent',
+            user_type='parent',
+        )
+        self.student.expo_push_token = 'ExponentPushToken[test123]'
+        self.student.save(update_fields=['expo_push_token'])
+
+        self.parent_client.force_authenticate(user=parent)
+
+        response = self.parent_client.post(
+            '/api/parent/link-requests/',
+            {'child_id': self.student.id},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        notification = Notification.objects.filter(user=self.student).latest('created_at')
+        self.assertEqual(notification.notification_type, 'general')
+        self.assertEqual(notification.title, 'New parent connection request')
+        self.assertEqual(notification.data.get('type'), 'parent_link_request')
+
+        mock_send_push.assert_called_once()
+        self.assertEqual(mock_send_push.call_args.kwargs['token'], self.student.expo_push_token)
+
+    @patch('api.views.parent_views.NotificationService.send_push_notification')
+    def test_student_approval_notifies_parent_and_sends_push(self, mock_send_push):
+        parent = User.objects.create_user(
+            email='parent_approved_push@test.com',
+            password='testpass123',
+            first_name='Pat',
+            last_name='Parent',
+            user_type='parent',
+            expo_push_token='ExponentPushToken[parentApprove123]',
+        )
+
+        self.parent_client.force_authenticate(user=parent)
+        self.student_client.force_authenticate(user=self.student)
+
+        request_response = self.parent_client.post(
+            '/api/parent/link-requests/',
+            {'child_id': self.student.id},
+            format='json',
+        )
+        self.assertEqual(request_response.status_code, status.HTTP_201_CREATED)
+        request_id = request_response.data['request']['id']
+
+        approve_response = self.student_client.post(
+            f'/api/student/parent-link-requests/{request_id}/approve/',
+            {},
+            format='json',
+        )
+        self.assertEqual(approve_response.status_code, status.HTTP_200_OK)
+
+        notification = Notification.objects.filter(user=parent).latest('created_at')
+        self.assertEqual(notification.notification_type, 'general')
+        self.assertEqual(notification.title, 'Parent request approved')
+        self.assertEqual(notification.data.get('type'), 'parent_link_approved')
+
+        self.assertEqual(mock_send_push.call_count, 1)
+        self.assertEqual(mock_send_push.call_args.kwargs['token'], parent.expo_push_token)
+
+    @patch('api.views.parent_views.NotificationService.send_push_notification')
+    def test_student_rejection_notifies_parent_and_sends_push(self, mock_send_push):
+        parent = User.objects.create_user(
+            email='parent_rejected_push@test.com',
+            password='testpass123',
+            first_name='Rhea',
+            last_name='Parent',
+            user_type='parent',
+            expo_push_token='ExponentPushToken[parentReject123]',
+        )
+
+        self.parent_client.force_authenticate(user=parent)
+        self.student_client.force_authenticate(user=self.student)
+
+        request_response = self.parent_client.post(
+            '/api/parent/link-requests/',
+            {'child_id': self.student.id},
+            format='json',
+        )
+        self.assertEqual(request_response.status_code, status.HTTP_201_CREATED)
+        request_id = request_response.data['request']['id']
+
+        reject_response = self.student_client.post(
+            f'/api/student/parent-link-requests/{request_id}/reject/',
+            {},
+            format='json',
+        )
+        self.assertEqual(reject_response.status_code, status.HTTP_200_OK)
+
+        notification = Notification.objects.filter(user=parent).latest('created_at')
+        self.assertEqual(notification.notification_type, 'general')
+        self.assertEqual(notification.title, 'Parent request rejected')
+        self.assertEqual(notification.data.get('type'), 'parent_link_rejected')
+
+        self.assertEqual(mock_send_push.call_count, 1)
+        self.assertEqual(mock_send_push.call_args.kwargs['token'], parent.expo_push_token)
