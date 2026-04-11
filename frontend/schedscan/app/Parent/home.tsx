@@ -3,7 +3,7 @@ import React, { useState, useCallback } from "react";
 import { router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "../../context/AuthContext";
-import { parentService, LinkedChild, ChildInfo, StudentSearchResult } from "../../services/parentService";
+import { parentService, LinkedChild, ChildInfo, StudentSearchResult, ParentLinkRequest } from "../../services/parentService";
 import { parentRemarkService, FacultyRemark } from "../../services/remarkService";
 import { paymentService } from "../../services/paymentService";
 import * as WebBrowser from 'expo-web-browser';
@@ -27,6 +27,7 @@ const ParentHomePage = () => {
   // State
   const [isLoading, setIsLoading] = useState(true);
   const [children, setChildren] = useState<LinkedChild[]>([]);
+  const [myLinkRequests, setMyLinkRequests] = useState<ParentLinkRequest[]>([]);
   const [selectedChild, setSelectedChild] = useState<ChildInfo | null>(null);
   const [schedule, setSchedule] = useState<any | null>(null);
   const [todaysCourses, setTodaysCourses] = useState<Course[]>([]);
@@ -37,6 +38,7 @@ const ParentHomePage = () => {
   const [searchResults, setSearchResults] = useState<StudentSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isSendingRequest, setIsSendingRequest] = useState(false);
+  const [isCancellingRequestId, setIsCancellingRequestId] = useState<number | null>(null);
   const [requestError, setRequestError] = useState("");
 
   // Payment state
@@ -59,12 +61,17 @@ const ParentHomePage = () => {
     try {
       setIsLoading(true);
 
-      const response = await parentService.getLinkedChildren();
-      setChildren(response.children);
+      const [childrenResponse, requestsResponse] = await Promise.all([
+        parentService.getLinkedChildren(),
+        parentService.getMyLinkRequests(),
+      ]);
+
+      setChildren(childrenResponse.children);
+      setMyLinkRequests(requestsResponse);
 
       // Auto-select first child if available
-      if (response.children.length > 0 && !selectedChild) {
-        await selectChild(response.children[0].child);
+      if (childrenResponse.children.length > 0 && !selectedChild) {
+        await selectChild(childrenResponse.children[0].child);
       } else if (selectedChild) {
         // Refresh current child's schedule and remarks
         await loadChildSchedule(selectedChild.id);
@@ -211,6 +218,7 @@ const ParentHomePage = () => {
       const result = await parentService.requestChildLink(child.id);
 
       Alert.alert("Request Sent", result.message || `Request sent to ${child.full_name}.`);
+      setMyLinkRequests(prev => [result.request, ...prev]);
       setShowLinkModal(false);
       setSearchQuery("");
       setSearchResults([]);
@@ -225,6 +233,54 @@ const ParentHomePage = () => {
     } finally {
       setIsSendingRequest(false);
     }
+  };
+
+  const getRequestStatusStyle = (status: ParentLinkRequest['status']) => {
+    if (status === 'pending') {
+      return { badge: 'bg-amber-100', text: 'text-amber-700', label: 'Pending' };
+    }
+    if (status === 'approved') {
+      return { badge: 'bg-green-100', text: 'text-green-700', label: 'Approved' };
+    }
+    if (status === 'rejected') {
+      return { badge: 'bg-red-100', text: 'text-red-700', label: 'Rejected' };
+    }
+    return { badge: 'bg-gray-200', text: 'text-gray-700', label: 'Cancelled' };
+  };
+
+  const formatDateTime = (value: string) => {
+    return new Date(value).toLocaleString();
+  };
+
+  const handleCancelRequest = (request: ParentLinkRequest) => {
+    if (request.status !== 'pending' || isCancellingRequestId === request.id) {
+      return;
+    }
+
+    Alert.alert(
+      "Cancel Request",
+      `Cancel your request to ${request.child_name}?`,
+      [
+        { text: "No", style: "cancel" },
+        {
+          text: "Yes, Cancel",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setIsCancellingRequestId(request.id);
+              const result = await parentService.cancelMyLinkRequest(request.id);
+              setMyLinkRequests(prev => prev.map(item => item.id === request.id ? result.request : item));
+              Alert.alert("Request Cancelled", result.message);
+            } catch (error: any) {
+              const message = error.response?.data?.error || "Failed to cancel request.";
+              Alert.alert("Error", message);
+            } finally {
+              setIsCancellingRequestId(null);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleUnlink = async (child: ChildInfo) => {
@@ -391,6 +447,57 @@ const ParentHomePage = () => {
                 </TouchableOpacity>
               ))}
             </ScrollView>
+          )}
+        </View>
+
+        {/* Request Progress Section */}
+        <View className="px-4 mb-4">
+          <Text className="text-lg font-bold text-gray-800 mb-3">Request Progress</Text>
+
+          {myLinkRequests.length === 0 ? (
+            <View className="bg-white rounded-xl p-6 border border-dashed border-gray-300">
+              <Text className="text-gray-500 text-center">
+                No parent-link requests yet. Search for a student to send your first request.
+              </Text>
+            </View>
+          ) : (
+            myLinkRequests.map((request) => {
+              const status = getRequestStatusStyle(request.status);
+              const canCancel = request.status === 'pending' && isCancellingRequestId !== request.id;
+
+              return (
+                <View key={request.id} className="bg-white rounded-xl p-4 border border-gray-200 mb-2">
+                  <View className="flex-row justify-between items-start mb-2">
+                    <View className="flex-1 pr-2">
+                      <Text className="font-semibold text-gray-800">{request.child_name}</Text>
+                      <Text className="text-xs text-gray-500">{request.child_email}</Text>
+                    </View>
+                    <View className={`rounded-full px-2 py-1 ${status.badge}`}>
+                      <Text className={`text-xs font-semibold ${status.text}`}>{status.label}</Text>
+                    </View>
+                  </View>
+
+                  <Text className="text-xs text-gray-500">Requested: {formatDateTime(request.requested_at)}</Text>
+                  {request.resolved_at ? (
+                    <Text className="text-xs text-gray-500 mt-0.5">
+                      Updated: {formatDateTime(request.resolved_at)}
+                    </Text>
+                  ) : null}
+
+                  {request.status === 'pending' ? (
+                    <TouchableOpacity
+                      className={`mt-3 rounded-lg py-2 ${canCancel ? 'bg-red-50' : 'bg-gray-200'}`}
+                      onPress={() => handleCancelRequest(request)}
+                      disabled={!canCancel}
+                    >
+                      <Text className={`text-center text-sm font-semibold ${canCancel ? 'text-red-600' : 'text-gray-500'}`}>
+                        {isCancellingRequestId === request.id ? 'Cancelling...' : 'Cancel Request'}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              );
+            })
           )}
         </View>
 

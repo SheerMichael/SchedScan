@@ -63,6 +63,7 @@ export interface ParentLinkRequest {
     parent_name: string;
     parent_email: string;
     child_name: string;
+    child_email: string;
 }
 
 export interface ApiError {
@@ -143,6 +144,14 @@ export const parentService = {
     getMyLinkRequests: async (): Promise<ParentLinkRequest[]> => {
         const response = await api.get('/parent/link-requests/');
         return response.data.requests || [];
+    },
+
+    /**
+     * Parent cancels a pending connection request.
+     */
+    cancelMyLinkRequest: async (requestId: number): Promise<{ message: string; request: ParentLinkRequest }> => {
+        const response = await api.post(`/parent/link-requests/${requestId}/cancel/`);
+        return response.data;
     },
 
     /**

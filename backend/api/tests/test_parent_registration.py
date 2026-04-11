@@ -249,3 +249,68 @@ class ParentRegistrationAndLinkRequestTests(TestCase):
 
         self.assertEqual(mock_send_push.call_count, 1)
         self.assertEqual(mock_send_push.call_args.kwargs['token'], parent.expo_push_token)
+
+    @patch('api.views.parent_views.NotificationService.send_push_notification')
+    def test_parent_can_cancel_pending_request_and_student_is_notified(self, mock_send_push):
+        parent = User.objects.create_user(
+            email='parent_cancel@test.com',
+            password='testpass123',
+            first_name='Casey',
+            last_name='Parent',
+            user_type='parent',
+        )
+        self.student.expo_push_token = 'ExponentPushToken[studentCancel123]'
+        self.student.save(update_fields=['expo_push_token'])
+
+        self.parent_client.force_authenticate(user=parent)
+
+        request_response = self.parent_client.post(
+            '/api/parent/link-requests/',
+            {'child_id': self.student.id},
+            format='json',
+        )
+        self.assertEqual(request_response.status_code, status.HTTP_201_CREATED)
+        request_id = request_response.data['request']['id']
+
+        cancel_response = self.parent_client.post(
+            f'/api/parent/link-requests/{request_id}/cancel/',
+            {},
+            format='json',
+        )
+        self.assertEqual(cancel_response.status_code, status.HTTP_200_OK)
+
+        cancelled = ParentLinkRequest.objects.get(id=request_id)
+        self.assertEqual(cancelled.status, 'cancelled')
+        self.assertIsNotNone(cancelled.resolved_at)
+
+        notification = Notification.objects.filter(user=self.student).latest('created_at')
+        self.assertEqual(notification.title, 'Parent request cancelled')
+        self.assertEqual(notification.data.get('type'), 'parent_link_cancelled')
+
+        # One push for initial request + one push for cancellation.
+        self.assertEqual(mock_send_push.call_count, 2)
+        self.assertEqual(mock_send_push.call_args.kwargs['token'], self.student.expo_push_token)
+
+    def test_parent_cannot_cancel_non_pending_request(self):
+        parent = User.objects.create_user(
+            email='parent_cancel_blocked@test.com',
+            password='testpass123',
+            first_name='Blocked',
+            last_name='Parent',
+            user_type='parent',
+        )
+        request = ParentLinkRequest.objects.create(
+            parent=parent,
+            child=self.student,
+            status='rejected',
+        )
+
+        self.parent_client.force_authenticate(user=parent)
+        response = self.parent_client.post(
+            f'/api/parent/link-requests/{request.id}/cancel/',
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data['error'], 'Only pending requests can be cancelled')

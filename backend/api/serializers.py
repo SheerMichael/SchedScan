@@ -558,6 +558,7 @@ class ParentLinkRequestSerializer(serializers.ModelSerializer):
     parent_name = serializers.SerializerMethodField()
     parent_email = serializers.SerializerMethodField()
     child_name = serializers.SerializerMethodField()
+    child_email = serializers.SerializerMethodField()
 
     class Meta:
         model = ParentLinkRequest
@@ -571,6 +572,7 @@ class ParentLinkRequestSerializer(serializers.ModelSerializer):
             'parent_name',
             'parent_email',
             'child_name',
+            'child_email',
         ]
         read_only_fields = fields
 
@@ -582,6 +584,9 @@ class ParentLinkRequestSerializer(serializers.ModelSerializer):
 
     def get_child_name(self, obj):
         return obj.child.get_full_name()
+
+    def get_child_email(self, obj):
+        return obj.child.email
 
 
 # ============================================

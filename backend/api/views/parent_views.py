@@ -127,7 +127,7 @@ class ParentLinkRequestView(APIView):
         if user.user_type != 'parent':
             return Response({"error": "This endpoint is for parents only"}, status=status.HTTP_403_FORBIDDEN)
 
-        requests = ParentLinkRequest.objects.filter(parent=user).select_related('parent', 'child')
+        requests = ParentLinkRequest.objects.filter(parent=user).select_related('parent', 'child').order_by('-requested_at')
         return Response({"requests": ParentLinkRequestSerializer(requests, many=True).data})
 
     def post(self, request):
@@ -214,6 +214,80 @@ class ParentLinkRequestView(APIView):
                 "request": ParentLinkRequestSerializer(link_request).data,
             },
             status=status.HTTP_201_CREATED,
+        )
+
+
+class ParentLinkRequestCancelView(APIView):
+    """
+    POST /api/parent/link-requests/<request_id>/cancel/
+    Parent cancels a pending request sent to a student.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, request_id):
+        user = request.user
+        if user.user_type != 'parent':
+            return Response({"error": "This endpoint is for parents only"}, status=status.HTTP_403_FORBIDDEN)
+
+        link_request = ParentLinkRequest.objects.select_related('child').filter(
+            id=request_id,
+            parent=user,
+        ).first()
+
+        if not link_request:
+            return Response({"error": "Request not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if link_request.status != 'pending':
+            return Response(
+                {"error": "Only pending requests can be cancelled"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        link_request.status = 'cancelled'
+        link_request.resolved_at = timezone.now()
+        link_request.save(update_fields=['status', 'resolved_at'])
+
+        parent_display_name = user.get_full_name() or user.email
+        notification_title = 'Parent request cancelled'
+        notification_message = (
+            f"{parent_display_name} cancelled their parent connection request."
+        )
+        notification_data = {
+            'type': 'parent_link_cancelled',
+            'request_id': link_request.id,
+            'parent_id': user.id,
+        }
+
+        Notification.objects.create(
+            user=link_request.child,
+            notification_type='general',
+            title=notification_title,
+            message=notification_message,
+            data=notification_data,
+        )
+
+        if link_request.child.expo_push_token:
+            try:
+                NotificationService().send_push_notification(
+                    token=link_request.child.expo_push_token,
+                    title=notification_title,
+                    body=notification_message,
+                    data=notification_data,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to send parent-link cancellation push notification: parent_id=%s child_id=%s request_id=%s",
+                    user.id,
+                    link_request.child.id,
+                    link_request.id,
+                )
+
+        return Response(
+            {
+                "message": f"Cancelled request to {link_request.child.get_full_name()}",
+                "request": ParentLinkRequestSerializer(link_request).data,
+            },
+            status=status.HTTP_200_OK,
         )
 
 

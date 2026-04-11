@@ -64,6 +64,7 @@ urlpatterns = [
     path('parent/child/schedule/', views.ChildScheduleView.as_view(), name='child_schedule'),
     path('parent/children/search/', views.ParentChildSearchView.as_view(), name='parent_child_search'),
     path('parent/link-requests/', views.ParentLinkRequestView.as_view(), name='parent_link_requests'),
+    path('parent/link-requests/<int:request_id>/cancel/', views.ParentLinkRequestCancelView.as_view(), name='parent_link_request_cancel'),
     
     # Parental view endpoints - Student side
     path('student/parents/', views.LinkedParentsView.as_view(), name='linked_parents'),
