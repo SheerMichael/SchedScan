@@ -982,11 +982,51 @@ def parse_document_with_llm_vision(
     upload_type: str,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
     """
-    Parse document images directly with a vision-capable LLM via Ollama.
+    Parse document images directly with a vision-capable LLM.
 
-    This bypasses OCR/pdf text extraction and asks the model to interpret the
-    source document pixels directly.
+    When EXTRACTION_LLM_PROVIDER is set to a cloud provider (gemini, groq,
+    cloud, auto), the request is routed to the cloud client first.  In
+    'auto' mode, a cloud failure falls through to the Ollama code path
+    below.  When the provider is 'ollama' (default), only the Ollama path
+    is used.
     """
+    # --- Cloud provider routing -------------------------------------------
+    _provider = str(
+        getattr(settings, 'EXTRACTION_LLM_PROVIDER', 'ollama')
+    ).strip().lower()
+    if _provider in ('gemini', 'groq', 'cloud', 'auto'):
+        try:
+            from .cloud_llm_client import parse_document_with_cloud_vision
+
+            cloud_courses, cloud_meta, cloud_telemetry = (
+                parse_document_with_cloud_vision(
+                    file_path=file_path,
+                    upload_type=upload_type,
+                )
+            )
+            # If a dedicated cloud provider succeeded or failed definitively,
+            # return its result.  In 'auto' mode, only fall through on
+            # total failure (llm_parse_success=False) so Ollama can try.
+            if (
+                cloud_telemetry.get('llm_parse_success')
+                or _provider != 'auto'
+            ):
+                return cloud_courses, cloud_meta, cloud_telemetry
+            # 'auto' mode: cloud failed — fall through to Ollama below
+            logger.warning(
+                'Cloud vision providers exhausted (failure_reason=%s); '
+                'falling back to Ollama.',
+                cloud_telemetry.get('llm_failure_reason', ''),
+            )
+        except Exception:
+            if _provider != 'auto':
+                raise
+            logger.exception(
+                'Cloud vision client raised an unexpected error; '
+                'falling back to Ollama.',
+            )
+    # --- End cloud routing ------------------------------------------------
+
     empty_meta: Dict[str, Any] = {'student_number': '', 'semester': '', 'school_year': ''}
     telemetry: Dict[str, Any] = {
         'llm_used': False,
@@ -1421,7 +1461,41 @@ def parse_document_metadata_with_llm_vision(
 
     Extracts only doc_metadata.student_number using a smaller budget
     (page/timeout/retry overrides), reducing synchronous request latency.
+
+    When EXTRACTION_LLM_PROVIDER is set to a cloud provider, the request
+    is routed to the cloud client which is significantly faster.
     """
+    # --- Cloud provider routing -------------------------------------------
+    _provider = str(
+        getattr(settings, 'EXTRACTION_LLM_PROVIDER', 'ollama')
+    ).strip().lower()
+    if _provider in ('gemini', 'groq', 'cloud', 'auto'):
+        try:
+            from .cloud_llm_client import parse_document_metadata_with_cloud_vision
+
+            cloud_meta, cloud_telemetry = (
+                parse_document_metadata_with_cloud_vision(
+                    file_path=file_path,
+                    upload_type=upload_type,
+                )
+            )
+            if (
+                cloud_telemetry.get('llm_parse_success')
+                or _provider != 'auto'
+            ):
+                return cloud_meta, cloud_telemetry
+            logger.warning(
+                'Cloud metadata gate providers exhausted; falling back to Ollama.',
+            )
+        except Exception:
+            if _provider != 'auto':
+                raise
+            logger.exception(
+                'Cloud metadata gate raised an unexpected error; '
+                'falling back to Ollama.',
+            )
+    # --- End cloud routing ------------------------------------------------
+
     empty_meta: Dict[str, Any] = {'student_number': '', 'semester': '', 'school_year': ''}
     telemetry: Dict[str, Any] = {
         'llm_used': False,
