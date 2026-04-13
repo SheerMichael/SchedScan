@@ -738,16 +738,19 @@ export default function Scanner() {
   const uploadFile = async (
     file: any,
     uploadType: 'student' | 'faculty',
-    options?: { isRetry?: boolean }
+    options?: { isRetry?: boolean; confirmOldSchedule?: boolean }
   ) => {
     const isRetry = options?.isRetry === true;
+    const confirmOldSchedule = options?.confirmOldSchedule === true;
     setFailureRetryable(true);
     setUploadErrorTitle('Upload Failed');
     setUploadFailureCategory('unknown');
     setIsUploading(true);
     setProcessingSubtitle('Uploading document...');
     try {
-      const response = await courseService.uploadCOR(file, uploadType);
+      const response = await courseService.uploadCOR(file, uploadType, {
+        confirmOldSchedule,
+      });
 
       if (isAsyncUploadResponse(response)) {
         if (!isRetry && user?.id) {
@@ -760,6 +763,46 @@ export default function Scanner() {
 
       await handleExtractionSuccess(response, uploadType, { isRetry });
     } catch (error: any) {
+      const responsePayload = error?.response?.data || {};
+
+      if (responsePayload.code === 'OLD_SCHEDULE_CONFIRM_REQUIRED' && !confirmOldSchedule) {
+        setIsUploading(false);
+        setShowBehindScenesModal(false);
+
+        const detectedTerm = [responsePayload.detected_semester, responsePayload.detected_school_year]
+          .filter(Boolean)
+          .join(' ');
+        const currentTerm = [responsePayload.current_semester, responsePayload.current_school_year]
+          .filter(Boolean)
+          .join(' ');
+        const fallbackMessage = detectedTerm && currentTerm
+          ? `Detected ${detectedTerm}, which looks older than current term ${currentTerm}. Continue anyway?`
+          : 'This document appears to be from an older term. Continue extraction anyway?';
+
+        Alert.alert(
+          'Old Schedule Detected',
+          responsePayload.message || fallbackMessage,
+          [
+            {
+              text: 'Cancel',
+              style: 'cancel',
+            },
+            {
+              text: 'Continue Extraction',
+              onPress: () => {
+                uploadFile(file, uploadType, {
+                  isRetry,
+                  confirmOldSchedule: true,
+                }).catch((confirmError) => {
+                  console.error('Confirmed old-schedule upload failed:', confirmError);
+                });
+              },
+            },
+          ]
+        );
+        return;
+      }
+
       if (isRecoverableUploadError(error)) {
         try {
           setProcessingSubtitle('Checking extraction status...');
@@ -772,7 +815,6 @@ export default function Scanner() {
         }
       }
 
-      const responsePayload = error?.response?.data || {};
       showExtractionFailure({
         message:
           responsePayload.error ||

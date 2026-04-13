@@ -129,7 +129,11 @@ export const courseService = {
    * @param file - The file object to upload
    * @param uploadType - Either 'student' or 'faculty'
    */
-  uploadCOR: async (file: any, uploadType: 'student' | 'faculty' = 'student'): Promise<UploadCORResponse> => {
+  uploadCOR: async (
+    file: any,
+    uploadType: 'student' | 'faculty' = 'student',
+    options?: { confirmOldSchedule?: boolean }
+  ): Promise<UploadCORResponse> => {
     try {
       const formData = new FormData();
 
@@ -160,6 +164,10 @@ export const courseService = {
         name: safeFilename,
         type: type,
       } as any);
+
+      if (options?.confirmOldSchedule) {
+        formData.append('confirm_old_schedule', 'true');
+      }
 
       // Use appropriate endpoint based on upload type
       const endpoint = `/upload-cor/${uploadType}/`;

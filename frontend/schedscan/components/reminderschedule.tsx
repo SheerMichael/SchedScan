@@ -7,9 +7,10 @@ type Props = {
   end_time: string;
   day: string;
   onEdit: () => void;
+  editable?: boolean;
 };
 
-export default function ScheduleItem({ subject, start_time, end_time, day, onEdit } : Props) {
+export default function ScheduleItem({ subject, start_time, end_time, day, onEdit, editable = true } : Props) {
   return (
     <View className="flex-row bg-white rounded-2xl p-4 mb-3 shadow-sm border border-gray-100 items-center justify-between">
       
@@ -28,10 +29,11 @@ export default function ScheduleItem({ subject, start_time, end_time, day, onEdi
 
       <TouchableOpacity
         onPress={onEdit}
-        activeOpacity={0.7}
-        className="h-10 w-10 bg-gray-50 rounded-full items-center justify-center border border-gray-100 ml-3"
+        disabled={!editable}
+        activeOpacity={editable ? 0.7 : 1}
+        className={`h-10 w-10 rounded-full items-center justify-center border ml-3 ${editable ? 'bg-gray-50 border-gray-100' : 'bg-gray-100 border-gray-200'}`}
       >
-        <PencilLine size={18} color="#374151" />
+        <PencilLine size={18} color={editable ? '#374151' : '#9CA3AF'} />
       </TouchableOpacity>
 
     </View>

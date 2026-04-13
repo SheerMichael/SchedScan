@@ -177,3 +177,71 @@ class FacultyScheduleReconciliationTests(TestCase):
                 data__type='enrollment_removed',
             ).exists()
         )
+
+
+class ExtractedScheduleReadOnlyTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email='readonly_student@test.com',
+            password='testpass123',
+            first_name='ReadOnly',
+            last_name='Student',
+            user_type='student',
+            student_number='2026-40002',
+        )
+        self.client.force_authenticate(user=self.user)
+
+        self.schedule = Schedule.objects.create(
+            user=self.user,
+            title='Extracted Schedule',
+            upload_type='student',
+            is_active=False,
+        )
+        self.course = Course.objects.create(
+            user=self.user,
+            schedule=self.schedule,
+            subject_code='CS401',
+            subject_name='Advanced Topics',
+            start_time='08:00AM',
+            end_time='09:30AM',
+            day='M',
+            location='LR8',
+            source_type='student',
+        )
+
+    def test_extracted_schedule_rejects_course_updates(self):
+        response = self.client.patch(
+            f'/api/schedules/{self.schedule.id}/',
+            {
+                'courses': [
+                    {
+                        'subject_code': 'CS401',
+                        'subject_name': 'Edited Name',
+                        'start_time': '09:00AM',
+                        'end_time': '10:30AM',
+                        'day': 'T',
+                        'location': 'LR9',
+                    }
+                ]
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('courses', response.data)
+
+        self.course.refresh_from_db()
+        self.assertEqual(self.course.subject_name, 'Advanced Topics')
+        self.assertEqual(self.course.day, 'M')
+
+    def test_extracted_schedule_allows_metadata_updates(self):
+        response = self.client.patch(
+            f'/api/schedules/{self.schedule.id}/',
+            {'title': 'Renamed Extracted Schedule'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.schedule.refresh_from_db()
+        self.assertEqual(self.schedule.title, 'Renamed Extracted Schedule')

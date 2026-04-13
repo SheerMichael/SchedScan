@@ -132,6 +132,8 @@ class ExtractionManager:
         processing_time = round(time.time() - start_time, 3)
         return {
             'student_number': student_number,
+            'semester': str(doc_meta.get('semester') or '').strip().upper(),
+            'school_year': str(doc_meta.get('school_year') or '').strip(),
             'extraction_method': attempts[-1] if student_number else 'none',
             'confidence': 1.0 if student_number else 0.0,
             'processing_time': processing_time,

@@ -278,6 +278,13 @@ const EditRemindersScreen = () => {
                 return;
             }
 
+            if (activeSchedule.courses.some(
+                (course) => course.source_type === 'student' || course.source_type === 'faculty'
+            )) {
+                Alert.alert('Read-Only Schedule', 'Extracted courses are read-only and cannot be edited.');
+                return;
+            }
+
             // Check for conflicts with other courses on overlapping days (excluding the current course being edited)
             const conflictingCourse = activeSchedule.courses.find(course => {
                 // Skip the course being edited

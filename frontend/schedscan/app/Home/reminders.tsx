@@ -19,6 +19,12 @@ const RemindersScreen = () => {
   const [searchFocused, setSearchFocused] = useState(false);
   const [activeSchedule, setActiveSchedule] = useState<SavedSchedule | null>(null);
 
+  const activeScheduleIsExtracted = Boolean(
+    activeSchedule?.courses?.some(
+      (course) => course.source_type === 'student' || course.source_type === 'faculty'
+    )
+  );
+
   const [openSemester, setOpenSemester] = useState(false);
   const [semesterValue, setSemesterValue] = useState("1st");
   const [semesterItems, setSemesterItems] = useState([
@@ -170,6 +176,14 @@ const RemindersScreen = () => {
   const scheduleData = transformCoursesToScheduleData(courses);
 
   const onEdit = (item: ScheduleItemType) => {
+    if (activeScheduleIsExtracted) {
+      Alert.alert(
+        'Read-Only Schedule',
+        'Extracted courses are read-only and cannot be edited.',
+      );
+      return;
+    }
+
     router.push({
     pathname: '/Home/Reminders/edit_reminders',
     params: {
@@ -302,6 +316,14 @@ const RemindersScreen = () => {
           */}
 
           <View>
+            {activeScheduleIsExtracted ? (
+              <View className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-4">
+                <Text className="text-amber-700 text-xs font-semibold">
+                  This schedule came from extraction. Course edits are disabled.
+                </Text>
+              </View>
+            ) : null}
+
             {scheduleData.map((day) => (
               <View key={day.day}>
                 {/* Day Header */}
@@ -315,6 +337,7 @@ const RemindersScreen = () => {
                     start_time={item.start_time}
                     end_time={item.end_time}
                     day={day.day}
+                    editable={!activeScheduleIsExtracted}
                     onEdit={() => onEdit({...item, day: day.day})}
                   />
                 ))}

@@ -377,6 +377,12 @@ class ScheduleSerializer(serializers.ModelSerializer):
         
         instance.save()
         
+        # Extracted courses are immutable: only schedule metadata can be edited.
+        if courses_data is not None and instance.courses.filter(source_type__in=['student', 'faculty']).exists():
+            raise serializers.ValidationError({
+                'courses': 'Extracted courses are read-only and cannot be edited.'
+            })
+
         # If courses are provided, replace all existing courses
         if courses_data is not None:
             old_count = instance.courses.count()

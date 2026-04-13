@@ -20,9 +20,102 @@ from ..serializers import CourseSerializer
 from ..models import Course, ExtractionLog, IncidentReport, ExtractionRequest, ExtractionJob
 from ..permissions import IsAdminUser
 from ..utils.extraction_manager import ExtractionManager, run_extraction_job
+from ..utils.extraction.llm_normalizer import parse_document_metadata_with_llm_vision
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
+
+_SCHOOL_YEAR_PATTERN = re.compile(r'^\s*(\d{4})\s*-\s*(\d{4})\s*$')
+_TERM_ORDER = {
+    '1ST': 1,
+    '2ND': 2,
+    'SUMMER': 3,
+}
+_SEMESTER_ALIASES = {
+    '1ST': '1ST',
+    'FIRST': '1ST',
+    '1': '1ST',
+    '2ND': '2ND',
+    'SECOND': '2ND',
+    '2': '2ND',
+    'SUMMER': 'SUMMER',
+    'MIDYEAR': 'SUMMER',
+    'MID-YEAR': 'SUMMER',
+}
+
+
+def _coerce_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _normalize_semester(value: str) -> str:
+    token = str(value or '').strip().upper().replace(' ', '')
+    return _SEMESTER_ALIASES.get(token, '')
+
+
+def _normalize_school_year(value: str) -> str:
+    match = _SCHOOL_YEAR_PATTERN.match(str(value or ''))
+    if not match:
+        return ''
+    start = int(match.group(1))
+    end = int(match.group(2))
+    if end != start + 1:
+        return ''
+    return f"{start}-{end}"
+
+
+def _parse_school_year_start(value: str):
+    normalized = _normalize_school_year(value)
+    if not normalized:
+        return None
+    try:
+        return int(normalized.split('-', 1)[0])
+    except (TypeError, ValueError):
+        return None
+
+
+def _current_academic_term(now=None) -> dict:
+    current = timezone.localtime(now or timezone.now())
+    month = current.month
+    year = current.year
+
+    if 8 <= month <= 12:
+        semester = '1ST'
+        school_year_start = year
+    elif 1 <= month <= 5:
+        semester = '2ND'
+        school_year_start = year - 1
+    else:
+        semester = 'SUMMER'
+        school_year_start = year - 1
+
+    return {
+        'semester': semester,
+        'school_year_start': school_year_start,
+        'school_year': f"{school_year_start}-{school_year_start + 1}",
+    }
+
+
+def _is_old_schedule_term(semester: str, school_year: str, now=None) -> bool:
+    normalized_semester = _normalize_semester(semester)
+    school_year_start = _parse_school_year_start(school_year)
+    if not normalized_semester or school_year_start is None:
+        return False
+
+    current_term = _current_academic_term(now=now)
+    current_start = current_term['school_year_start']
+    if school_year_start < current_start:
+        return True
+    if school_year_start > current_start:
+        return False
+
+    current_order = _TERM_ORDER.get(current_term['semester'], 0)
+    candidate_order = _TERM_ORDER.get(normalized_semester, 0)
+    return candidate_order < current_order
 
 _MAX_RUNNING_THREADS = max(
     1,
@@ -244,7 +337,7 @@ class BaseCORUploadView(APIView):
         except Exception:
             logger.exception("Failed to write ExtractionLog")
 
-    def _build_idempotency_context(self, request, user, file_hash: str) -> dict:
+    def _build_idempotency_context(self, request, user, file_hash: str, *, confirm_old_schedule: bool = False) -> dict:
         request_id = str(
             request.headers.get('X-Request-ID')
             or request.data.get('request_id')
@@ -260,7 +353,7 @@ class BaseCORUploadView(APIView):
         else:
             minute_bucket = timezone.now().strftime('%Y%m%d%H%M')
             idempotency_key = hashlib.sha256(
-                f"{user.id}:{file_hash}:{self.upload_type}:{minute_bucket}".encode('utf-8')
+                f"{user.id}:{file_hash}:{self.upload_type}:{minute_bucket}:{int(confirm_old_schedule)}".encode('utf-8')
             ).hexdigest()
 
         return {
@@ -269,6 +362,60 @@ class BaseCORUploadView(APIView):
             'extraction_run_id': str(uuid4()),
             'schema_version': str(getattr(settings, 'EXTRACTION_SCHEMA_VERSION', 'v1')),
             'file_hash': file_hash,
+        }
+
+    def _extract_document_metadata_for_confirmation(self, file_path: str) -> dict:
+        if not bool(getattr(settings, 'EXTRACTION_OLD_SCHEDULE_CONFIRMATION_ENABLED', True)):
+            return {'semester': '', 'school_year': ''}
+
+        timeout_seconds = int(getattr(settings, 'EXTRACTION_OLD_SCHEDULE_METADATA_TIMEOUT_SECONDS', 8))
+        max_pages = int(getattr(settings, 'EXTRACTION_OLD_SCHEDULE_METADATA_MAX_PAGES', 1))
+        retry_count = int(getattr(settings, 'EXTRACTION_OLD_SCHEDULE_METADATA_RETRY_COUNT', 0))
+
+        try:
+            doc_meta, _telemetry = parse_document_metadata_with_llm_vision(
+                file_path=file_path,
+                upload_type=self.upload_type,
+                timeout_seconds_override=timeout_seconds,
+                max_pages_override=max_pages,
+                retry_count_override=retry_count,
+            )
+            return {
+                'semester': _normalize_semester(doc_meta.get('semester', '')),
+                'school_year': _normalize_school_year(doc_meta.get('school_year', '')),
+            }
+        except Exception:
+            logger.exception('Old-schedule metadata extraction failed for confirmation gate')
+            return {'semester': '', 'school_year': ''}
+
+    def _build_old_schedule_confirmation_payload(self, semester: str, school_year: str):
+        normalized_semester = _normalize_semester(semester)
+        normalized_school_year = _normalize_school_year(school_year)
+        if not normalized_semester or not normalized_school_year:
+            return None
+
+        if not _is_old_schedule_term(normalized_semester, normalized_school_year):
+            return None
+
+        current_term = _current_academic_term()
+        return {
+            'error': (
+                'This document appears to be from an older academic term. '
+                'Please confirm if you want to continue extraction.'
+            ),
+            'code': 'OLD_SCHEDULE_CONFIRM_REQUIRED',
+            'confirmation_required': True,
+            'retryable': True,
+            'message': (
+                f"Detected {normalized_semester} {normalized_school_year}, "
+                f"which is older than the current term "
+                f"{current_term['semester']} {current_term['school_year']}. "
+                'Continue only if you intentionally want to upload an old schedule.'
+            ),
+            'detected_semester': normalized_semester,
+            'detected_school_year': normalized_school_year,
+            'current_semester': current_term['semester'],
+            'current_school_year': current_term['school_year'],
         }
 
     def _find_finalized_request(self, *, user, idempotency_key: str):
@@ -350,6 +497,9 @@ class BaseCORUploadView(APIView):
         
         temp_file_path = None
         idempotency_context = None
+        confirm_old_schedule = _coerce_bool(request.data.get('confirm_old_schedule'))
+        detected_semester = ''
+        detected_school_year = ''
         
         try:
             # Save uploaded file to a local temporary file
@@ -366,7 +516,12 @@ class BaseCORUploadView(APIView):
                     file_hash_builder.update(chunk)
                 temp_file_path = tmp.name
             file_hash = file_hash_builder.hexdigest()
-            idempotency_context = self._build_idempotency_context(request, request.user, file_hash)
+            idempotency_context = self._build_idempotency_context(
+                request,
+                request.user,
+                file_hash,
+                confirm_old_schedule=confirm_old_schedule,
+            )
 
             existing_run = self._find_finalized_request(
                 user=request.user,
@@ -489,6 +644,8 @@ class BaseCORUploadView(APIView):
                     'rule_version': result.get('rule_version', str(getattr(settings, 'EXTRACTION_RULE_VERSION', 'v1'))),
                     'score_policy_upload_type': result.get('score_policy_upload_type', self.upload_type),
                 }
+                detected_semester = _normalize_semester(result.get('semester', ''))
+                detected_school_year = _normalize_school_year(result.get('school_year', ''))
                 redacted_preview = self._build_raw_text_preview(uploaded_file, result)
 
                 logger.info(
@@ -617,6 +774,33 @@ class BaseCORUploadView(APIView):
                     uploaded_file.name,
                     request.user.id,
                 )
+
+            if (
+                self.upload_type == 'student'
+                and bool(getattr(settings, 'EXTRACTION_OLD_SCHEDULE_CONFIRMATION_ENABLED', True))
+                and not confirm_old_schedule
+            ):
+                if not (detected_semester and detected_school_year):
+                    metadata = self._extract_document_metadata_for_confirmation(temp_file_path)
+                    detected_semester = detected_semester or metadata.get('semester', '')
+                    detected_school_year = detected_school_year or metadata.get('school_year', '')
+
+                old_schedule_payload = self._build_old_schedule_confirmation_payload(
+                    detected_semester,
+                    detected_school_year,
+                )
+                if old_schedule_payload:
+                    payload, final_status, replayed = self._finalize_idempotent_response(
+                        user=request.user,
+                        context=idempotency_context,
+                        payload=old_schedule_payload,
+                        status_code=status.HTTP_409_CONFLICT,
+                    )
+                    payload['idempotency'] = {
+                        **{k: idempotency_context[k] for k in ('request_id', 'idempotency_key', 'extraction_run_id', 'schema_version')},
+                        'hit': replayed,
+                    }
+                    return Response(payload, status=final_status)
 
             # ------------------------------------------------------------------
             # Launch async extraction job

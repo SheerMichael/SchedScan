@@ -27,6 +27,11 @@ const FacultySchedule = () => {
   const [dayPickerCourseIndex, setDayPickerCourseIndex] = useState<number | null>(null);
   const [isAssigningDay, setIsAssigningDay] = useState(false);
 
+  const isExtractedSchedule = (schedule: SavedSchedule) =>
+    schedule.courses.some(
+      (course) => course.source_type === 'student' || course.source_type === 'faculty'
+    );
+
   const loadSchedules = useCallback(async (forceRefresh: boolean = false) => {
     if (!user?.id) {
       console.error('No user ID available');
@@ -339,7 +344,11 @@ const FacultySchedule = () => {
               onApplyReminders={() => handleApplyReminders(schedule.id)}
               onDownload={() => handleDownload(schedule.id, schedule.title)}
               onDelete={() => handleDeleteSchedule(schedule)}
-              onAssignDay={(course, courseIndex) => handleOpenDayPicker(schedule.id, course, courseIndex)}
+              onAssignDay={
+                isExtractedSchedule(schedule)
+                  ? undefined
+                  : (course, courseIndex) => handleOpenDayPicker(schedule.id, course, courseIndex)
+              }
             />
           ))}
         </ScrollView>

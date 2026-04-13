@@ -483,6 +483,8 @@ class ExtractionViewIntegrationTestCase(TestCase):
         mock_manager = Mock()
         mock_manager.extract_student_number_for_ownership_gate.return_value = {
             'student_number': '2022-01191',
+            'semester': '2ND',
+            'school_year': '2099-2100',
             'extraction_method': 'llm_vision_metadata_gate',
             'confidence': 1.0,
             'processing_time': 0.3,
@@ -521,6 +523,8 @@ class ExtractionViewIntegrationTestCase(TestCase):
         mock_manager = Mock()
         mock_manager.extract_student_number_for_ownership_gate.return_value = {
             'student_number': '2022-99999',
+            'semester': '2ND',
+            'school_year': '2099-2100',
             'extraction_method': 'llm_vision_metadata_gate',
             'confidence': 0.99,
             'processing_time': 0.35,
@@ -558,6 +562,8 @@ class ExtractionViewIntegrationTestCase(TestCase):
         mock_manager = Mock()
         mock_manager.extract_student_number_for_ownership_gate.return_value = {
             'student_number': '2022-01191',
+            'semester': '2ND',
+            'school_year': '2099-2100',
             'extraction_method': 'llm_vision_metadata_gate',
             'confidence': 1.0,
             'processing_time': 0.35,
@@ -586,6 +592,82 @@ class ExtractionViewIntegrationTestCase(TestCase):
         # and hands off to the async thread which will fail internally.
         self.assertEqual(response.status_code, 202)
         self.assertIn('job_id', response.data)
+
+    @patch('api.views.upload_views.ExtractionManager')
+    def test_student_upload_old_term_requires_confirmation(self, mock_manager_class):
+        """Old student term metadata should require explicit confirmation before queueing."""
+        mock_manager = Mock()
+        mock_manager.extract_student_number_for_ownership_gate.return_value = {
+            'student_number': '2022-01191',
+            'semester': '1ST',
+            'school_year': '2020-2021',
+            'extraction_method': 'llm_vision_metadata_gate',
+            'confidence': 1.0,
+            'processing_time': 0.3,
+            'attempts': ['llm_vision_metadata_gate'],
+            'failure_category': 'none',
+            'validator_errors': [],
+            'score_breakdown': {},
+            'llm_failure_reason': '',
+        }
+        mock_manager_class.return_value = mock_manager
+
+        pdf_file = SimpleUploadedFile(
+            'old_term_cor.pdf',
+            b'fake pdf content',
+            content_type='application/pdf'
+        )
+
+        with patch('api.views.upload_views._submit_extraction_job') as mock_submit_job:
+            response = self.client.post(
+                '/api/upload-cor/student/',
+                {'file': pdf_file},
+                format='multipart'
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data.get('code'), 'OLD_SCHEDULE_CONFIRM_REQUIRED')
+        self.assertTrue(response.data.get('confirmation_required', False))
+        mock_submit_job.assert_not_called()
+
+    @patch('api.views.upload_views.ExtractionManager')
+    def test_student_upload_old_term_with_confirmation_continues(self, mock_manager_class):
+        """Confirmed old-term uploads should continue to async extraction."""
+        mock_manager = Mock()
+        mock_manager.extract_student_number_for_ownership_gate.return_value = {
+            'student_number': '2022-01191',
+            'semester': '1ST',
+            'school_year': '2020-2021',
+            'extraction_method': 'llm_vision_metadata_gate',
+            'confidence': 1.0,
+            'processing_time': 0.3,
+            'attempts': ['llm_vision_metadata_gate'],
+            'failure_category': 'none',
+            'validator_errors': [],
+            'score_breakdown': {},
+            'llm_failure_reason': '',
+        }
+        mock_manager_class.return_value = mock_manager
+
+        pdf_file = SimpleUploadedFile(
+            'old_term_confirmed_cor.pdf',
+            b'fake pdf content',
+            content_type='application/pdf'
+        )
+
+        with patch('api.views.upload_views._submit_extraction_job', return_value=True) as mock_submit_job:
+            response = self.client.post(
+                '/api/upload-cor/student/',
+                {
+                    'file': pdf_file,
+                    'confirm_old_schedule': 'true',
+                },
+                format='multipart'
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.data.get('status'), 'processing')
+        mock_submit_job.assert_called_once()
 
 
 class PerformanceTestCase(TestCase):
@@ -664,6 +746,8 @@ class AsyncExtractionJobTestCase(TestCase):
         mock_manager = Mock()
         mock_manager.extract_student_number_for_ownership_gate.return_value = {
             'student_number': '2022-09999',
+            'semester': '2ND',
+            'school_year': '2099-2100',
             'extraction_method': 'llm_vision_metadata_gate',
             'confidence': 1.0,
             'processing_time': 0.3,
@@ -771,6 +855,8 @@ class AsyncExtractionJobTestCase(TestCase):
         mock_manager = Mock()
         mock_manager.extract_student_number_for_ownership_gate.return_value = {
             'student_number': '2022-09999',
+            'semester': '2ND',
+            'school_year': '2099-2100',
             'extraction_method': 'llm_vision_metadata_gate',
             'confidence': 1.0,
             'processing_time': 0.3,
