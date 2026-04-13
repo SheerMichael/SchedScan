@@ -810,7 +810,12 @@ def _build_vision_parse_prompt(upload_type: str) -> str:
         '- Handwritten rows may look like: "OS 7:00AM-9:00AM LR1" or "SE 1:00PM-3:00PM LP2".\n'
         '- Column headers may be abbreviated: Subject/Subj, Time, Loc/Location.\n'
         '- Student number can appear as 9 contiguous digits (e.g. 202201191); normalize to YYYY-NNNNN.\n'
-        '- Normalize times to HH:MMAM/PM.\n'
+        '- Normalize times to HH:MMAM/PM (e.g. 7:00AM, 1:00PM, 10:30AM).\n'
+        '- If the document has AM/PM written with spaces ("7:00 AM"), normalize to "7:00AM" (no space).\n'
+        '- If timestrings omit AM/PM, infer from context (7:00-9:00 is likely AM morning; 1:00-3:00 is likely PM afternoon).\n'
+        '- If no day column/header is present in the document, set day to "" (empty string). '
+        'Do NOT guess or fabricate day values.\n'
+        '- Even if the day column is missing, STILL extract all course rows with their subjects, times, and locations.\n'
         '- Keep unknown fields empty instead of guessing.\n'
         '- No markdown, no prose, JSON only.'
     )

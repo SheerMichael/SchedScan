@@ -241,6 +241,24 @@ const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
             </Text>
           </View>
         )}
+
+        {/* Unscheduled courses (no day assigned) */}
+        {courses.filter(c => !c.day || c.day.trim() === '').length > 0 && (
+          <View className="bg-amber-50 p-3 rounded-b-lg border-t border-amber-200">
+            <Text className="text-xs font-semibold text-amber-700 mb-1">📋 No day assigned:</Text>
+            {courses.filter(c => !c.day || c.day.trim() === '').map((course, idx) => (
+              <View key={idx} className="flex-row items-center justify-between py-1">
+                <Text className="text-xs font-medium text-amber-800">{course.subject_code}</Text>
+                <Text className="text-xs text-amber-600">
+                  {course.start_time} - {course.end_time}
+                </Text>
+                {course.location ? (
+                  <Text className="text-xs text-amber-500">{course.location}</Text>
+                ) : null}
+              </View>
+            ))}
+          </View>
+        )}
       </View>
 
       {/* Apply Reminders Button */}

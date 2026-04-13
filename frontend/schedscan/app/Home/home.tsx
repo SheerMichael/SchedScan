@@ -51,9 +51,10 @@ export default function SchedScanApp() {
     if (activeSchedule?.uploadType === 'faculty') return '#f97316'; // orange
     if (activeSchedule?.uploadType === 'student') return '#ef4444'; // red
 
-    // Fallback for holidays and calendar events
+    // Fallback for holidays, calendar events, and unscheduled
     if (item.priority_level === 'Holiday') return '#16a34a'; // green
     if (item.priority_level === 'Event') return '#3b82f6'; // blue
+    if (item.priority_level === 'Unscheduled') return '#d97706'; // amber
 
     return '#ef4444'; // default red
   };
@@ -553,7 +554,35 @@ export default function SchedScanApp() {
         source_type: course.source_type || null,  // Include source_type for color coding
       }));
 
-    const schedule = [...holiday, ...calEvent, ...realCourses];
+    // Include courses with no day assigned (common in handwritten schedules)
+    const unscheduledCourses = !semesterMonths.includes(selectedMonth) ? [] : courses
+      .filter(course => !course.day || course.day.trim() === '')
+      .sort((a, b) => {
+        const parseTime = (timeStr: string): number => {
+          const match = timeStr.match(/(\d{1,2}):(\d{2})(AM|PM)/i);
+          if (!match) return 0;
+          let hours = parseInt(match[1], 10);
+          const minutes = parseInt(match[2], 10);
+          const period = match[3].toUpperCase();
+          if (period === 'PM' && hours !== 12) hours += 12;
+          if (period === 'AM' && hours === 12) hours = 0;
+          return hours * 60 + minutes;
+        };
+        return parseTime(a.start_time) - parseTime(b.start_time);
+      })
+      .map(course => ({
+        title: course.subject_code,
+        subjectName: course.subject_name || '',
+        time: `${course.start_time} - ${course.end_time}`,
+        startTime: course.start_time,
+        endTime: course.end_time,
+        location: course.location || '',
+        day: '',
+        priority_level: 'Unscheduled',
+        source_type: course.source_type || null,
+      }));
+
+    const schedule = [...holiday, ...calEvent, ...realCourses, ...unscheduledCourses];
     setDaySchedule(schedule);
   };
 
@@ -577,7 +606,7 @@ export default function SchedScanApp() {
     selectDay(new Date().getDate());
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const classItemsToday = daySchedule.filter(item => item.priority_level === 'Class');
+  const classItemsToday = daySchedule.filter(item => item.priority_level === 'Class' || item.priority_level === 'Unscheduled');
   const classesTodayCount = classItemsToday.length;
   const teachingTodayCount =
     activeSchedule?.uploadType === 'faculty'
@@ -898,9 +927,10 @@ export default function SchedScanApp() {
           ) : daySchedule.length === 0 ? (
             <Text className="text-gray-500">No classes / events today</Text>
           ) : (
-            daySchedule.map((item, index) => {
-              const courseColor = getCourseColor(item);
-              return (
+            <>
+              {daySchedule.filter(item => item.priority_level !== 'Unscheduled').map((item, index) => {
+                const courseColor = getCourseColor(item);
+                return (
                 <TouchableOpacity
                   key={`${item.title}-${index}`}
                   onPress={() => {
@@ -975,8 +1005,56 @@ export default function SchedScanApp() {
                     )}
                   </View>
                 </TouchableOpacity>
-              );
-            })
+                );
+              })}
+
+              {/* Unscheduled courses (no day assigned — common in handwritten schedules) */}
+              {daySchedule.filter(item => item.priority_level === 'Unscheduled').length > 0 && (
+                <View className="mt-2">
+                  <View className="flex-row items-center mb-2">
+                    <Text className="text-sm font-semibold text-amber-700">📋 No day assigned</Text>
+                    <View className="flex-1 h-px bg-amber-200 ml-2" />
+                  </View>
+                  {daySchedule.filter(item => item.priority_level === 'Unscheduled').map((item, index) => {
+                    const courseColor = getCourseColor(item);
+                    return (
+                      <TouchableOpacity
+                        key={`unsched-${item.title}-${index}`}
+                        onPress={() => {
+                          router.push({
+                            pathname: "/Home/Subject/subjectdetails",
+                            params: {
+                              title: item.title,
+                              subjectName: item.subjectName,
+                              time: item.time,
+                              startTime: item.startTime,
+                              endTime: item.endTime,
+                              location: item.location,
+                              day: '',
+                              priorityLevel: 'Class',
+                              sourceType: item.source_type || activeSchedule?.uploadType || '',
+                            }
+                          });
+                        }}
+                        className="bg-amber-50 p-3 mb-2 rounded-xl border border-amber-200"
+                        style={{ borderLeftWidth: 4, borderLeftColor: courseColor }}
+                      >
+                        <View className="flex-row justify-between items-center">
+                          <View className="flex-1">
+                            <Text className="font-bold text-sm text-amber-900">{item.title}</Text>
+                            <Text className="text-xs text-amber-700">{item.time}</Text>
+                            {item.location ? <Text className="text-xs text-amber-600">{item.location}</Text> : null}
+                          </View>
+                          <View className="bg-amber-200 px-2 py-0.5 rounded-full">
+                            <Text className="text-xs font-medium text-amber-800">No day</Text>
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+            </>
           )}
         </View>
 
