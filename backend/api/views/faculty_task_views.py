@@ -27,6 +27,7 @@ from ..serializers import (
     FacultyTaskSerializer, FacultyTaskWithStatsSerializer,
     FacultyTaskStudentSerializer, UserSerializer,
 )
+from ..utils.enrollment_auto_link import sync_auto_enrollments_for_user
 from ..utils.timetable_generator import generate_and_save_timetable
 
 import logging
@@ -1515,56 +1516,10 @@ class StudentEnrollSyncView(APIView):
 
 def auto_enroll_on_schedule_create(user, subject_codes):
     """
-    Auto-enroll students/faculty based on matching subject codes.
-    Called after a schedule is created.
+    Backward-compatible wrapper used by older call sites/tests.
 
-    - If user is a student: find faculty with matching subject codes and enroll.
-    - If user is faculty: find students with matching subject codes and enroll.
+    The `subject_codes` argument is now informational only; syncing is driven by
+    persisted schedule rows so we can enforce day/time alignment as well.
     """
-    if not subject_codes:
-        return
-
-    unique_codes = list(set(subject_codes))
-    created_count = 0
-
-    if user.user_type == 'student':
-        # Find faculty who teach these subjects (from their courses/schedules)
-        faculty_courses = Course.objects.filter(
-            subject_code__in=unique_codes,
-            user__user_type='faculty'
-        ).values('user_id', 'subject_code').distinct()
-
-        for fc in faculty_courses:
-            _, created = ClassEnrollment.objects.get_or_create(
-                student=user,
-                faculty_id=fc['user_id'],
-                subject_code=fc['subject_code'],
-                status='active',
-                defaults={'enrollment_type': 'auto'}
-            )
-            if created:
-                created_count += 1
-
-    elif user.user_type == 'faculty':
-        # Find students who have these subjects
-        student_courses = Course.objects.filter(
-            subject_code__in=unique_codes,
-            user__user_type='student'
-        ).values('user_id', 'subject_code').distinct()
-
-        for sc in student_courses:
-            _, created = ClassEnrollment.objects.get_or_create(
-                student_id=sc['user_id'],
-                faculty=user,
-                subject_code=sc['subject_code'],
-                status='active',
-                defaults={'enrollment_type': 'auto'}
-            )
-            if created:
-                created_count += 1
-
-    if created_count > 0:
-        logger.info(
-            f"Auto-enrolled {created_count} connections for {user.email} "
-            f"with subject codes: {unique_codes}"
-        )
+    del subject_codes
+    sync_auto_enrollments_for_user(user)

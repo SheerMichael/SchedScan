@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from "react";
-import { View, Text, TouchableOpacity, ScrollView, Image, Alert, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Image, Alert, RefreshControl } from 'react-native';
 import { router, useFocusEffect } from "expo-router";
 import Svg, { Path } from 'react-native-svg';
 import { File, Paths } from 'expo-file-system';
@@ -7,14 +7,25 @@ import { fetch } from 'expo/fetch';
 import * as Sharing from 'expo-sharing';
 import * as SecureStore from 'expo-secure-store';
 import SchedulePreviewCard from '../../../components/schedulepreviewcard';
+import DayPickerModal from '../../../components/DayPickerModal';
 import { scheduleStorageService, SavedSchedule } from '../../../services/scheduleStorageService';
+import { Course } from '../../../services/courseService';
 import { useAuth } from '../../../context/AuthContext';
+import { getReadableDayLabel } from '../../../utils/dayCode';
+import { formatDayAssignmentConflictMessage, validateDayAssignment } from '../../../utils/dayAssignmentValidation';
 
 const FacultySchedule = () => {
   const { user, invalidateScheduleCache, getFacultySchedules, invalidateFacultyDataCache } = useAuth();
   const [facultySchedules, setFacultySchedules] = useState<SavedSchedule[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Day picker modal state
+  const [dayPickerVisible, setDayPickerVisible] = useState(false);
+  const [dayPickerCourse, setDayPickerCourse] = useState<Course | null>(null);
+  const [dayPickerScheduleId, setDayPickerScheduleId] = useState<number | null>(null);
+  const [dayPickerCourseIndex, setDayPickerCourseIndex] = useState<number | null>(null);
+  const [isAssigningDay, setIsAssigningDay] = useState(false);
 
   const loadSchedules = useCallback(async (forceRefresh: boolean = false) => {
     if (!user?.id) {
@@ -174,13 +185,120 @@ const FacultySchedule = () => {
         });
 
         // Clean up after sharing dialog closes
-        try { file.delete(); } catch (e) { }
+        try { file.delete(); } catch { }
       } else {
         Alert.alert('Error', 'Sharing is not available on this device');
       }
     } catch (error: any) {
       console.error('Error downloading timetable:', error);
       Alert.alert('Error', `Failed to download timetable: ${error.message}`);
+    }
+  };
+
+  // ── Day assignment handler ──────────────────────────────────────────────
+  const resetDayPicker = () => {
+    setDayPickerVisible(false);
+    setDayPickerCourse(null);
+    setDayPickerScheduleId(null);
+    setDayPickerCourseIndex(null);
+    setIsAssigningDay(false);
+  };
+
+  const handleOpenDayPicker = (scheduleId: number, course: Course, courseIndex: number) => {
+    setDayPickerScheduleId(scheduleId);
+    setDayPickerCourse(course);
+    setDayPickerCourseIndex(courseIndex);
+    setDayPickerVisible(true);
+  };
+
+  const handleAssignDay = async (course: Course, selectedDay: string): Promise<boolean> => {
+    if (!user?.id || dayPickerScheduleId === null) {
+      Alert.alert('Error', 'Unable to identify the selected schedule. Please try again.');
+      return false;
+    }
+
+    const schedule = facultySchedules.find(s => s.id === dayPickerScheduleId);
+    if (!schedule) {
+      Alert.alert('Error', 'Selected schedule was not found. Please refresh and try again.');
+      return false;
+    }
+
+    try {
+      setIsAssigningDay(true);
+
+      const updatedCourses = [...schedule.courses];
+
+      const isSameCourse = (candidate: Course) => (
+        candidate.subject_code === course.subject_code
+        && candidate.start_time === course.start_time
+        && candidate.end_time === course.end_time
+        && (candidate.location || '') === (course.location || '')
+      );
+
+      let targetIndex = -1;
+
+      if (
+        dayPickerCourseIndex !== null
+        && updatedCourses[dayPickerCourseIndex]
+        && (!updatedCourses[dayPickerCourseIndex].day || updatedCourses[dayPickerCourseIndex].day.trim() === '')
+        && isSameCourse(updatedCourses[dayPickerCourseIndex])
+      ) {
+        targetIndex = dayPickerCourseIndex;
+      } else {
+        targetIndex = updatedCourses.findIndex((candidate) => (
+          (!candidate.day || candidate.day.trim() === '') && isSameCourse(candidate)
+        ));
+      }
+
+      if (targetIndex < 0) {
+        Alert.alert('Not Found', 'That course may have already been updated. Please refresh and try again.');
+        return false;
+      }
+
+      const validation = validateDayAssignment(updatedCourses, targetIndex, selectedDay);
+
+      if (!validation.isValid) {
+        Alert.alert('Cannot Assign Day', validation.validationError || 'Please review course details and try again.');
+        return false;
+      }
+
+      if (validation.conflicts.length > 0) {
+        Alert.alert('Schedule Conflict', formatDayAssignmentConflictMessage(validation.conflicts));
+        return false;
+      }
+
+      updatedCourses[targetIndex] = {
+        ...updatedCourses[targetIndex],
+        day: selectedDay,
+      };
+
+      await scheduleStorageService.updateSchedule(
+        dayPickerScheduleId,
+        'faculty',
+        user.id,
+        { courses: updatedCourses }
+      );
+
+      if (schedule.isActive) {
+        invalidateScheduleCache();
+        invalidateFacultyDataCache();
+      }
+
+      resetDayPicker();
+
+      await loadSchedules(true);
+
+      Alert.alert(
+        'Day Assigned!',
+        `${course.subject_code} is now scheduled on ${getReadableDayLabel(selectedDay)}.`,
+      );
+      return true;
+    } catch (error: any) {
+      console.error('Error assigning day:', error);
+      Alert.alert('Error', 'Failed to assign day. Please try again.');
+      return false;
+    } finally {
+      setIsAssigningDay(false);
     }
   };
 
@@ -221,6 +339,7 @@ const FacultySchedule = () => {
               onApplyReminders={() => handleApplyReminders(schedule.id)}
               onDownload={() => handleDownload(schedule.id, schedule.title)}
               onDelete={() => handleDeleteSchedule(schedule)}
+              onAssignDay={(course, courseIndex) => handleOpenDayPicker(schedule.id, course, courseIndex)}
             />
           ))}
         </ScrollView>
@@ -233,6 +352,17 @@ const FacultySchedule = () => {
           <Text className="text-gray-500">Scan your schedule now</Text>
         </View>
       )}
+
+      {/* Day Picker Modal */}
+      <DayPickerModal
+        visible={dayPickerVisible}
+        course={dayPickerCourse}
+        courseIndex={dayPickerCourseIndex}
+        coursesContext={facultySchedules.find((s) => s.id === dayPickerScheduleId)?.courses || []}
+        onDismiss={resetDayPicker}
+        onConfirm={handleAssignDay}
+        isSubmitting={isAssigningDay}
+      />
 
     </>
   );

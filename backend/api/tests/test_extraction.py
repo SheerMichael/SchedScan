@@ -516,6 +516,43 @@ class ExtractionViewIntegrationTestCase(TestCase):
         mock_submit_job.assert_called_once()
 
     @patch('api.views.upload_views.ExtractionManager')
+    def test_student_upload_ownership_mismatch_returns_non_retryable_payload(self, mock_manager_class):
+        """Sync ownership mismatch should return explicit non-retryable failure metadata."""
+        mock_manager = Mock()
+        mock_manager.extract_student_number_for_ownership_gate.return_value = {
+            'student_number': '2022-99999',
+            'extraction_method': 'llm_vision_metadata_gate',
+            'confidence': 0.99,
+            'processing_time': 0.35,
+            'attempts': ['llm_vision_metadata_gate'],
+            'failure_category': 'none',
+            'validator_errors': [],
+            'score_breakdown': {},
+            'llm_failure_reason': '',
+        }
+        mock_manager_class.return_value = mock_manager
+
+        pdf_file = SimpleUploadedFile(
+            'other_student_cor.pdf',
+            b'fake pdf content',
+            content_type='application/pdf'
+        )
+
+        with patch('api.views.upload_views._submit_extraction_job') as mock_submit_job:
+            response = self.client.post(
+                '/api/upload-cor/student/',
+                {'file': pdf_file},
+                format='multipart'
+            )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data.get('code'), 'OWNERSHIP_MISMATCH')
+        self.assertEqual(response.data.get('failure_category'), 'ownership_mismatch')
+        self.assertFalse(response.data.get('retryable', True))
+        self.assertIn('Please upload your own COR', response.data.get('message', ''))
+        mock_submit_job.assert_not_called()
+
+    @patch('api.views.upload_views.ExtractionManager')
     def test_retry_response_preserves_legacy_keys_with_enhanced_metadata(self, mock_manager_class):
         """Low-confidence student upload still returns 202 (quality rejection now async)."""
         mock_manager = Mock()
@@ -995,6 +1032,23 @@ class AsyncExtractionJobTestCase(TestCase):
         self.assertIn('message', response.data)
         self.assertTrue(response.data.get('retryable', False))
 
+    def test_poll_failed_ownership_mismatch_returns_specific_message_and_not_retryable(self):
+        from api.models import ExtractionJob
+        job = ExtractionJob.objects.create(
+            user=self.user,
+            upload_type='student',
+            file_name='test.pdf',
+            status='failed',
+            failure_category='ownership_mismatch',
+        )
+
+        response = self.client.get(f'/api/extraction-jobs/{job.job_id}/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['status'], 'failed')
+        self.assertEqual(response.data.get('failure_category'), 'ownership_mismatch')
+        self.assertFalse(response.data.get('retryable', True))
+        self.assertIn('did not match your registered number', response.data.get('message', ''))
+
     def test_poll_another_users_job_returns_403(self):
         job = self._make_job(user=self.other_user)
         response = self.client.get(f'/api/extraction-jobs/{job.job_id}/')
@@ -1103,6 +1157,88 @@ class AsyncExtractionJobTestCase(TestCase):
         self.assertEqual(linked_courses.first().subject_code, 'BSCS101')
         mock_notify.assert_called_once_with(job, success=True)
         # Temp file should be cleaned up
+        self.assertFalse(os.path.exists(temp_path))
+
+    @patch('api.utils.extraction_manager._send_extraction_job_notification')
+    @patch('api.utils.extraction_manager._write_extraction_log_for_job')
+    @patch('api.utils.extraction_manager.ExtractionManager')
+    def test_run_extraction_job_triggers_schedule_based_auto_linking(self, mock_manager_class, mock_log, mock_notify):
+        """Async extraction should auto-link student to faculty when schedule slots align."""
+        import tempfile, os
+        from api.models import ExtractionJob, ClassEnrollment, Schedule, Course
+        from api.utils.extraction_manager import run_extraction_job
+
+        faculty = User.objects.create_user(
+            email='faculty_autolink@test.com',
+            password='testpass123',
+            first_name='Faculty',
+            last_name='Auto',
+            user_type='faculty',
+        )
+        faculty_schedule = Schedule.objects.create(
+            user=faculty,
+            title='Faculty Schedule',
+            upload_type='faculty',
+            is_active=True,
+        )
+        Course.objects.create(
+            user=faculty,
+            schedule=faculty_schedule,
+            subject_code='BSCS101',
+            subject_name='Programming',
+            start_time='08:00AM',
+            end_time='10:00AM',
+            day='M',
+            location='LR1',
+        )
+
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as f:
+            f.write(b'fake pdf')
+            temp_path = f.name
+
+        job = ExtractionJob.objects.create(
+            user=self.user,
+            upload_type='student',
+            file_name='test.pdf',
+            status='pending',
+            _temp_file_path=temp_path,
+        )
+
+        mock_manager = Mock()
+        mock_manager.extract_schedule.return_value = {
+            'courses': [
+                {
+                    'subject_code': 'BSCS101',
+                    'subject_name': 'Programming',
+                    'start_time': '08:05AM',
+                    'end_time': '10:00AM',
+                    'day': 'M',
+                    'location': 'LR1',
+                }
+            ],
+            'extraction_method': 'pdf_text',
+            'confidence': 0.95,
+            'processing_time': 0.3,
+            'attempts': ['pdf_text'],
+            'student_number': '2022-09999',
+            'failure_category': 'none',
+            'validator_errors': [],
+            'score_breakdown': {},
+            'accepted': True,
+        }
+        mock_manager_class.return_value = mock_manager
+
+        run_extraction_job(job.job_id)
+
+        self.assertTrue(
+            ClassEnrollment.objects.filter(
+                student=self.user,
+                faculty=faculty,
+                subject_code='BSCS101',
+                enrollment_type='auto',
+                status='active',
+            ).exists()
+        )
         self.assertFalse(os.path.exists(temp_path))
 
     @patch('api.utils.extraction_manager._send_extraction_job_notification')

@@ -10,6 +10,7 @@ import logging
 
 from ..serializers import ScheduleSerializer, ScheduleListSerializer
 from ..models import Course, Schedule, ClassEnrollment, ClassCode, Notification
+from ..utils.enrollment_auto_link import sync_auto_enrollments_for_user
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -233,23 +234,16 @@ class ScheduleListCreateView(generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         """
-        After creating a schedule, auto-enroll the user with matching
-        faculty/students based on shared subject codes.
+        After creating a schedule, synchronize auto-link enrollments based on
+        schedule similarity (subject + day + time alignment).
         """
-        schedule = serializer.save()
+        serializer.save()
 
-        # Extract subject codes from the newly created courses
-        subject_codes = list(
-            schedule.courses.values_list('subject_code', flat=True)
-        )
-
-        if subject_codes:
-            from .faculty_task_views import auto_enroll_on_schedule_create
-            try:
-                auto_enroll_on_schedule_create(self.request.user, subject_codes)
-            except Exception as e:
-                logger.error(f"Auto-enrollment failed for user {self.request.user.email}: {e}")
-                # Don't fail the schedule creation if auto-enrollment fails
+        try:
+            sync_auto_enrollments_for_user(self.request.user)
+        except Exception as e:
+            logger.error(f"Auto-link sync failed for user {self.request.user.email}: {e}")
+            # Don't fail schedule creation when link sync fails.
 
 
 class ScheduleDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -309,6 +303,9 @@ class ScheduleDetailView(generics.RetrieveUpdateDestroyAPIView):
                     removed_subject_codes=removed_candidates,
                 )
 
+            # Keep auto-enrollment links aligned with the latest schedule data.
+            sync_auto_enrollments_for_user(self.request.user)
+
     def perform_destroy(self, instance):
         removed_candidates = []
         if instance.upload_type == 'faculty':
@@ -322,6 +319,8 @@ class ScheduleDetailView(generics.RetrieveUpdateDestroyAPIView):
                     faculty_user=self.request.user,
                     removed_subject_codes=removed_candidates,
                 )
+
+            sync_auto_enrollments_for_user(self.request.user)
 
 
 class ScheduleSetActiveView(APIView):

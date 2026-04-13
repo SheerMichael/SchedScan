@@ -28,6 +28,7 @@ from .extraction.llm_normalizer import (
     parse_document_metadata_with_llm_vision,
     parse_document_with_llm_vision,
 )
+from .enrollment_auto_link import sync_auto_enrollments_for_user
 
 # Try to import OCR module - uses pytesseract (lightweight)
 try:
@@ -872,6 +873,16 @@ def run_extraction_job(job_id) -> None:
                 "run_extraction_job: job %s → done (%d courses written, confidence=%.2f, method=%s)",
                 job_id, written_count, result.get('confidence', 0.0), job_method,
             )
+
+            # Keep faculty/student auto-links in sync after async schedule persistence.
+            try:
+                sync_auto_enrollments_for_user(job.user)
+            except Exception:
+                logger.exception(
+                    "run_extraction_job: auto-link sync failed for user %s (job=%s)",
+                    job.user.id,
+                    job_id,
+                )
 
             # ── Telemetry ────────────────────────────────────────────────────
             _write_extraction_log_for_job(job, result, success=True)

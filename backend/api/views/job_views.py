@@ -156,6 +156,10 @@ class ExtractionJobStatusView(APIView):
                     "The student number in the document did not match your registered number. "
                     "Please upload your own COR."
                 ),
+                'ownership_mismatch': (
+                    "The student number in the document did not match your registered number. "
+                    "Please upload your own COR."
+                ),
                 'no_text': (
                     "No schedule text could be found in the document. "
                     "Please ensure the schedule is clearly visible."
@@ -176,7 +180,7 @@ class ExtractionJobStatusView(APIView):
                     "status": "failed",
                     "failure_category": failure_category,
                     "message": user_message,
-                    "retryable": failure_category != 'metadata_mismatch',
+                    "retryable": failure_category not in {'metadata_mismatch', 'ownership_mismatch'},
                 },
                 status=status.HTTP_200_OK,
             )
@@ -254,7 +258,7 @@ class ExtractionJobRecentView(APIView):
                 entry.update(
                     {
                         "message": "Extraction failed. Please try re-uploading your document.",
-                        "retryable": (job.failure_category or '') != 'metadata_mismatch',
+                        "retryable": (job.failure_category or '') not in {'metadata_mismatch', 'ownership_mismatch'},
                     }
                 )
             else:

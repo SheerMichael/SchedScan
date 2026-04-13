@@ -481,6 +481,13 @@ EXTRACTION_GROQ_API_KEY = os.getenv('EXTRACTION_GROQ_API_KEY', '')
 EXTRACTION_GROQ_MODEL = os.getenv('EXTRACTION_GROQ_MODEL', 'meta-llama/llama-4-scout-17b-16e-instruct')
 EXTRACTION_CLOUD_TIMEOUT_SECONDS = int(os.getenv('EXTRACTION_CLOUD_TIMEOUT_SECONDS', '30'))
 
+# Auto-linking tolerance for schedule matching (subject + day + time).
+# Two class slots are considered aligned when start/end times are within this
+# many minutes.
+ENROLLMENT_AUTO_LINK_TIME_TOLERANCE_MINUTES = int(
+    os.getenv('ENROLLMENT_AUTO_LINK_TIME_TOLERANCE_MINUTES', '10')
+)
+
 # Optional override for parser priors used by composite confidence scoring.
 EXTRACTION_PARSER_RELIABILITY_PRIOR = {
     'pdf_text': float(os.getenv('EXTRACTION_PRIOR_PDF_TEXT', '0.92')),

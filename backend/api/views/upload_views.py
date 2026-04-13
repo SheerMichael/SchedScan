@@ -532,6 +532,7 @@ class BaseCORUploadView(APIView):
                     payload = {
                         "error": "Unable to verify COR ownership because student number could not be extracted.",
                         "code": "STUDENT_NUMBER_MISSING",
+                        "failure_category": "metadata_mismatch",
                         "retryable": True,
                         "message": "Please upload a clearer COR with visible header details including your student number.",
                         "courses": [],
@@ -591,6 +592,11 @@ class BaseCORUploadView(APIView):
                                  "this COR does not match your registered student "
                                  f"number ({user_student_number}). "
                                  "Please upload your own COR.",
+                        "code": "OWNERSHIP_MISMATCH",
+                        "failure_category": "ownership_mismatch",
+                        "retryable": False,
+                        "message": "The student number in the document did not match your registered number. "
+                                   "Please upload your own COR.",
                     }
                     payload, final_status, replayed = self._finalize_idempotent_response(
                         user=request.user,

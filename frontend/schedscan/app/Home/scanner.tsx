@@ -35,7 +35,43 @@ type PersistedBackgroundJobState = {
   updatedAt: string;
 };
 
+type ExtractionFailureCategory =
+  | 'ownership_mismatch'
+  | 'metadata_mismatch'
+  | 'timeout'
+  | 'low_confidence'
+  | 'parse_error'
+  | 'no_text'
+  | 'system_error'
+  | 'unknown';
+
+type ExtractionFailureInput = {
+  message?: string;
+  retryable?: boolean;
+  failureCategory?: string | null;
+  code?: string | null;
+};
+
+type ExtractionFailureDescriptor = {
+  title: string;
+  message: string;
+  retryable: boolean;
+  category: ExtractionFailureCategory;
+};
+
 const BACKGROUND_EXTRACTION_JOB_KEY = '@schedscan/background-extraction-job';
+
+const normalizeFailureCategory = (value: unknown): ExtractionFailureCategory => {
+  const normalized = String(value || '').toLowerCase();
+  if (normalized === 'ownership_mismatch') return 'ownership_mismatch';
+  if (normalized === 'metadata_mismatch') return 'metadata_mismatch';
+  if (normalized === 'timeout') return 'timeout';
+  if (normalized === 'low_confidence') return 'low_confidence';
+  if (normalized === 'parse_error') return 'parse_error';
+  if (normalized === 'no_text') return 'no_text';
+  if (normalized === 'system_error') return 'system_error';
+  return 'unknown';
+};
 
 export default function Scanner() {
   const router = useRouter();
@@ -52,6 +88,9 @@ export default function Scanner() {
   const [reportModal, setReportModal] = useState(false);
   const [incidentDetails, setIncidentDetails] = useState('');
   const [uploadError, setUploadError] = useState('');
+  const [uploadErrorTitle, setUploadErrorTitle] = useState('Upload Failed');
+  const [uploadFailureCategory, setUploadFailureCategory] = useState<ExtractionFailureCategory>('unknown');
+  const [failureRetryable, setFailureRetryable] = useState(true);
   const [processingSubtitle, setProcessingSubtitle] = useState('Extracting course data...');
   const [showBehindScenesModal, setShowBehindScenesModal] = useState(false);
   const [backgroundJobId, setBackgroundJobId] = useState('');
@@ -151,6 +190,55 @@ export default function Scanner() {
     );
   };
 
+  const buildFailureDescriptor = useCallback((input: ExtractionFailureInput): ExtractionFailureDescriptor => {
+    const rawMessage = String(input.message || '').trim();
+    const messageLower = rawMessage.toLowerCase();
+    const code = String(input.code || '').toUpperCase();
+
+    let category = normalizeFailureCategory(input.failureCategory);
+    if (category === 'unknown') {
+      if (code === 'STUDENT_NUMBER_MISSING') {
+        category = 'metadata_mismatch';
+      } else if (
+        code === 'OWNERSHIP_MISMATCH'
+        || messageLower.includes('does not match your registered student number')
+        || messageLower.includes('please upload your own cor')
+      ) {
+        category = 'ownership_mismatch';
+      }
+    }
+
+    let retryable = input.retryable !== false;
+    if (category === 'ownership_mismatch') {
+      retryable = false;
+    }
+
+    let title = 'Upload Failed';
+    if (category === 'ownership_mismatch') {
+      title = 'COR Ownership Check Failed';
+    } else if (category === 'metadata_mismatch') {
+      title = code === 'STUDENT_NUMBER_MISSING' ? 'Student Number Not Detected' : 'COR Verification Failed';
+    }
+
+    let message = rawMessage;
+    if (!message) {
+      if (category === 'ownership_mismatch') {
+        message = 'The student number in the document did not match your registered number. Please upload your own COR.';
+      } else if (category === 'metadata_mismatch') {
+        message = 'We could not verify the student number from your COR. Please upload a clearer document.';
+      } else {
+        message = 'Extraction failed. Please try again.';
+      }
+    }
+
+    return {
+      title,
+      message,
+      retryable,
+      category,
+    };
+  }, []);
+
   const handleExtractionSuccess = useCallback(async (
     response: { courses: Course[]; semester?: string; school_year?: string },
     uploadType: 'student' | 'faculty',
@@ -205,6 +293,18 @@ export default function Scanner() {
     );
   }, [clearPersistedBackgroundJobState, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const showExtractionFailure = useCallback((input: ExtractionFailureInput) => {
+    const failure = buildFailureDescriptor(input);
+    setShowBehindScenesModal(false);
+    setIsUploading(false);
+    setBackgroundJobId('');
+    setFailureRetryable(failure.retryable);
+    setUploadErrorTitle(failure.title);
+    setUploadFailureCategory(failure.category);
+    setUploadError(failure.message);
+    setReportModal(true);
+  }, [buildFailureDescriptor]);
+
   const finalizeJobFromPush = useCallback(async (activePoll: ActivePollState) => {
     try {
       setProcessingSubtitle('Finalizing extraction...');
@@ -223,11 +323,11 @@ export default function Scanner() {
 
       if (jobStatus.status === 'failed') {
         await clearPersistedBackgroundJobState();
-        setShowBehindScenesModal(false);
-        setIsUploading(false);
-        setBackgroundJobId('');
-        setUploadError(jobStatus.message || 'Extraction failed. Please try again.');
-        setReportModal(true);
+        showExtractionFailure({
+          message: jobStatus.message,
+          retryable: jobStatus.retryable,
+          failureCategory: jobStatus.failure_category,
+        });
         return;
       }
 
@@ -237,7 +337,7 @@ export default function Scanner() {
       setIsUploading(false);
       Alert.alert('Status Check Failed', 'Unable to fetch extraction result. Please check your schedules shortly.');
     }
-  }, [clearPersistedBackgroundJobState, handleExtractionSuccess]);
+  }, [clearPersistedBackgroundJobState, handleExtractionSuccess, showExtractionFailure]);
 
   const reconcileBackgroundJob = useCallback(async (): Promise<boolean> => {
     if (!backgroundJobId) {
@@ -268,11 +368,11 @@ export default function Scanner() {
       if (jobStatus.status === 'failed') {
         clearActivePolling();
         await clearPersistedBackgroundJobState();
-        setShowBehindScenesModal(false);
-        setIsUploading(false);
-        setBackgroundJobId('');
-        setUploadError(jobStatus.message || 'Extraction failed. Please try again.');
-        setReportModal(true);
+        showExtractionFailure({
+          message: jobStatus.message,
+          retryable: jobStatus.retryable,
+          failureCategory: jobStatus.failure_category,
+        });
         return true;
       }
 
@@ -283,7 +383,14 @@ export default function Scanner() {
       setProcessingSubtitle('Still processing. You can check again shortly.');
       return false;
     }
-  }, [backgroundJobId, clearActivePolling, clearPersistedBackgroundJobState, handleExtractionSuccess, selectedRole]);
+  }, [
+    backgroundJobId,
+    clearActivePolling,
+    clearPersistedBackgroundJobState,
+    handleExtractionSuccess,
+    selectedRole,
+    showExtractionFailure,
+  ]);
 
   useEffect(() => {
     if (!backgroundJobId) {
@@ -320,7 +427,7 @@ export default function Scanner() {
     };
 
     setBackgroundJobId(jobId);
-  await persistBackgroundJobState(jobId, uploadType, isRetry);
+    await persistBackgroundJobState(jobId, uploadType, isRetry);
     setIsUploading(false);
     setShowBehindScenesModal(true);
     setProcessingSubtitle('Extraction is running in the background...');
@@ -346,12 +453,23 @@ export default function Scanner() {
     }
 
     if (result.status === 'failed') {
-      throw new Error(result.message || 'Extraction failed. Please try again.');
+      await clearPersistedBackgroundJobState();
+      showExtractionFailure({
+        message: result.message,
+        retryable: result.retryable,
+        failureCategory: result.failure_category,
+      });
+      return;
     }
 
     setShowBehindScenesModal(true);
     setProcessingSubtitle('Still processing in background. We will keep checking status.');
-  }, [handleExtractionSuccess, persistBackgroundJobState]);
+  }, [
+    clearPersistedBackgroundJobState,
+    handleExtractionSuccess,
+    persistBackgroundJobState,
+    showExtractionFailure,
+  ]);
 
   const recoverFromRecentJobs = useCallback(async (
     uploadType: 'student' | 'faculty',
@@ -435,9 +553,11 @@ export default function Scanner() {
         if (jobStatus.status === 'failed') {
           await clearPersistedBackgroundJobState();
           setBackgroundJobId('');
-          setShowBehindScenesModal(false);
-          setUploadError(jobStatus.message || 'Extraction failed. Please try again.');
-          setReportModal(true);
+          showExtractionFailure({
+            message: jobStatus.message,
+            retryable: jobStatus.retryable,
+            failureCategory: jobStatus.failure_category,
+          });
           return;
         }
       } catch (error) {
@@ -461,6 +581,7 @@ export default function Scanner() {
     handleExtractionSuccess,
     loadPersistedBackgroundJobState,
     resumePollingForJob,
+    showExtractionFailure,
   ]);
 
   useEffect(() => {
@@ -519,7 +640,10 @@ export default function Scanner() {
   const dismissErrorModal = () => {
     setReportModal(false);
     setUploadError('');
+    setUploadErrorTitle('Upload Failed');
+    setUploadFailureCategory('unknown');
     setIncidentDetails('');
+    setFailureRetryable(true);
   };
 
   const checkRateLimit = async (): Promise<boolean> => {
@@ -551,8 +675,7 @@ export default function Scanner() {
         await uploadFile(file, selectedRole);
       }
     } catch {
-      setUploadError('Failed to pick document. Please try again.');
-      setReportModal(true);
+      showExtractionFailure({ message: 'Failed to pick document. Please try again.', retryable: true });
     }
   };
 
@@ -618,6 +741,9 @@ export default function Scanner() {
     options?: { isRetry?: boolean }
   ) => {
     const isRetry = options?.isRetry === true;
+    setFailureRetryable(true);
+    setUploadErrorTitle('Upload Failed');
+    setUploadFailureCategory('unknown');
     setIsUploading(true);
     setProcessingSubtitle('Uploading document...');
     try {
@@ -646,16 +772,19 @@ export default function Scanner() {
         }
       }
 
-      const errorMessage =
-        error.response?.data?.error ||
-        error.response?.data?.message ||
-        (isRecoverableUploadError(error)
-          ? 'Upload request timed out on the network. Extraction may still be running in the background. Please wait for notification or retry shortly.'
-          : error.message) ||
-        'Failed to upload file. Please try again.';
-      setUploadError(errorMessage);
-      setIsUploading(false);
-      setReportModal(true);
+      const responsePayload = error?.response?.data || {};
+      showExtractionFailure({
+        message:
+          responsePayload.error ||
+          responsePayload.message ||
+          (isRecoverableUploadError(error)
+            ? 'Upload request timed out on the network. Extraction may still be running in the background. Please wait for notification or retry shortly.'
+            : error.message) ||
+          'Failed to upload file. Please try again.',
+        retryable: responsePayload.retryable,
+        failureCategory: responsePayload.failure_category || responsePayload.category,
+        code: responsePayload.code,
+      });
     }
   };
 
@@ -670,6 +799,9 @@ export default function Scanner() {
     }
 
     setReportModal(false);
+    setFailureRetryable(true);
+    setUploadErrorTitle('Upload Failed');
+    setUploadFailureCategory('unknown');
     setUploadError('');
     await uploadFile(selectedFile, selectedRole, { isRetry: true });
   };
@@ -752,11 +884,15 @@ export default function Scanner() {
     setUploadedCourses([]);
     setUploadedSemester('');
     setUploadedSchoolYear('');
+    setUploadErrorTitle('Upload Failed');
+    setUploadFailureCategory('unknown');
+    setFailureRetryable(true);
     setShowBehindScenesModal(false);
     setBackgroundJobId('');
   };
 
-  const canRetryExtraction = Boolean(selectedFile && selectedRole);
+  const canRetryExtraction = Boolean(selectedFile && selectedRole && failureRetryable);
+  const isOwnershipMismatchFailure = uploadFailureCategory === 'ownership_mismatch';
 
   const LeftPointingArrow = ({ size = 24, color = '#ffffff' }) => (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
@@ -975,7 +1111,9 @@ export default function Scanner() {
               disabled={isUploading || !canRetryExtraction}
               style={{ opacity: !canRetryExtraction || isUploading ? 0.5 : 1 }}
             >
-              <Text className="text-center font-semibold text-gray-700">Retry Extraction</Text>
+              <Text className="text-center font-semibold text-gray-700">
+                {failureRetryable ? 'Retry Extraction' : 'Retry Not Available'}
+              </Text>
             </TouchableOpacity>
 
             <TextInput
@@ -1056,14 +1194,14 @@ export default function Scanner() {
 
           {/* Error Banner */}
           {uploadError ? (
-            <View className="bg-red-50 px-5 pt-5 pb-4 border-b border-red-100">
+            <View className={`${isOwnershipMismatchFailure ? 'bg-amber-50 border-amber-100' : 'bg-red-50 border-red-100'} px-5 pt-5 pb-4 border-b`}>
               <View className="flex-row items-start">
-                <View className="bg-red-100 p-2 rounded-full mr-3 mt-0.5">
-                  <AlertTriangle size={20} color="#DC2626" />
+                <View className={`${isOwnershipMismatchFailure ? 'bg-amber-100' : 'bg-red-100'} p-2 rounded-full mr-3 mt-0.5`}>
+                  <AlertTriangle size={20} color={isOwnershipMismatchFailure ? '#B45309' : '#DC2626'} />
                 </View>
                 <View className="flex-1">
-                  <Text className="text-base font-bold text-red-700 mb-1">Upload Failed</Text>
-                  <Text className="text-sm text-red-600 leading-5">{uploadError}</Text>
+                  <Text className={`text-base font-bold mb-1 ${isOwnershipMismatchFailure ? 'text-amber-700' : 'text-red-700'}`}>{uploadErrorTitle}</Text>
+                  <Text className={`text-sm leading-5 ${isOwnershipMismatchFailure ? 'text-amber-700' : 'text-red-600'}`}>{uploadError}</Text>
                 </View>
               </View>
             </View>
@@ -1072,7 +1210,11 @@ export default function Scanner() {
           {/* Report Form */}
           <View className="p-5">
             <Text className="text-lg font-bold text-gray-800 mb-1">Report a Problem</Text>
-            <Text className="text-xs text-gray-400 mb-3">Optionally describe what happened so we can investigate.</Text>
+            <Text className="text-xs text-gray-400 mb-3">
+              {isOwnershipMismatchFailure
+                ? 'Retry is disabled for this file. Upload your own COR, or describe what happened for support review.'
+                : 'Optionally describe what happened so we can investigate.'}
+            </Text>
 
             <TextInput
               className="bg-gray-50 p-4 rounded-xl text-gray-800 border border-gray-200 min-h-[100px]"
@@ -1102,7 +1244,9 @@ export default function Scanner() {
                 disabled={isUploading || !canRetryExtraction}
                 style={{ opacity: !canRetryExtraction || isUploading ? 0.5 : 1 }}
               >
-                <Text className="text-center font-semibold text-gray-700">Retry Extraction</Text>
+                <Text className="text-center font-semibold text-gray-700">
+                  {failureRetryable ? 'Retry Extraction' : 'Retry Not Available'}
+                </Text>
               </TouchableOpacity>
             </View>
 

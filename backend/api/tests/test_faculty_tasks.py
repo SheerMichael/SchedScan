@@ -412,17 +412,26 @@ class AutoEnrollmentTests(TestCase):
     def test_auto_enrollment_creates_enrollment(self):
         from api.views.faculty_task_views import auto_enroll_on_schedule_create
 
-        # Faculty has a schedule with CS101
+        # Faculty has a schedule with CS101 at M 8:00-9:00.
         faculty_schedule = Schedule.objects.create(
             user=self.faculty, title='Faculty Schedule', upload_type='faculty'
         )
         Course.objects.create(
             user=self.faculty, schedule=faculty_schedule,
             subject_code='CS101', subject_name='Intro CS',
-            start_time='8:00AM', end_time='9:00AM', day='MWF'
+            start_time='8:00AM', end_time='9:00AM', day='M'
         )
 
-        # Student creates a schedule with the same subject code
+        # Student schedule matches subject + day + time.
+        student_schedule = Schedule.objects.create(
+            user=self.student, title='Student Schedule', upload_type='student'
+        )
+        Course.objects.create(
+            user=self.student, schedule=student_schedule,
+            subject_code='CS101', subject_name='Intro CS',
+            start_time='8:05AM', end_time='9:00AM', day='M'
+        )
+
         auto_enroll_on_schedule_create(self.student, ['CS101'])
 
         # Enrollment should be created
@@ -432,13 +441,69 @@ class AutoEnrollmentTests(TestCase):
         self.assertTrue(enrollment.exists())
         self.assertEqual(enrollment.first().enrollment_type, 'auto')
 
-    def test_auto_enrollment_no_match(self):
+    def test_auto_enrollment_requires_schedule_alignment(self):
         from api.views.faculty_task_views import auto_enroll_on_schedule_create
 
-        # No matching faculty schedule
-        auto_enroll_on_schedule_create(self.student, ['CS999'])
+        faculty_schedule = Schedule.objects.create(
+            user=self.faculty, title='Faculty Schedule', upload_type='faculty'
+        )
+        Course.objects.create(
+            user=self.faculty, schedule=faculty_schedule,
+            subject_code='CS101', subject_name='Intro CS',
+            start_time='8:00AM', end_time='9:00AM', day='M'
+        )
+
+        student_schedule = Schedule.objects.create(
+            user=self.student, title='Student Schedule', upload_type='student'
+        )
+        Course.objects.create(
+            user=self.student, schedule=student_schedule,
+            subject_code='CS101', subject_name='Intro CS',
+            start_time='10:00AM', end_time='11:00AM', day='M'
+        )
+
+        auto_enroll_on_schedule_create(self.student, ['CS101'])
 
         self.assertEqual(ClassEnrollment.objects.count(), 0)
+
+    def test_auto_enrollment_removes_stale_auto_links(self):
+        from api.views.faculty_task_views import auto_enroll_on_schedule_create
+
+        faculty_schedule = Schedule.objects.create(
+            user=self.faculty, title='Faculty Schedule', upload_type='faculty'
+        )
+        Course.objects.create(
+            user=self.faculty, schedule=faculty_schedule,
+            subject_code='CS101', subject_name='Intro CS',
+            start_time='8:00AM', end_time='9:00AM', day='M'
+        )
+
+        student_schedule = Schedule.objects.create(
+            user=self.student, title='Student Schedule', upload_type='student'
+        )
+        course = Course.objects.create(
+            user=self.student, schedule=student_schedule,
+            subject_code='CS101', subject_name='Intro CS',
+            start_time='8:00AM', end_time='9:00AM', day='M'
+        )
+
+        auto_enroll_on_schedule_create(self.student, ['CS101'])
+        enrollment = ClassEnrollment.objects.get(
+            student=self.student,
+            faculty=self.faculty,
+            subject_code='CS101',
+            status='active',
+        )
+
+        # Move the student class away from the faculty time slot.
+        course.start_time = '1:00PM'
+        course.end_time = '2:00PM'
+        course.save(update_fields=['start_time', 'end_time'])
+
+        auto_enroll_on_schedule_create(self.student, ['CS101'])
+
+        enrollment.refresh_from_db()
+        self.assertEqual(enrollment.status, 'removed')
 
 
 class UnenrollAndRemoveTests(TestCase):

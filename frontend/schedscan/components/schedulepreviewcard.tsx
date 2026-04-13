@@ -1,7 +1,8 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
-import { Download, Trash2, Users, GraduationCap, Merge } from 'lucide-react-native';
+import { Download, Trash2, Users, GraduationCap, Merge, Edit3 } from 'lucide-react-native';
 import { Course } from '../services/courseService';
+import { dayCodeToWeekdayNumbers } from '../utils/dayCode';
 
 interface SchedulePreviewCardProps {
   title: string;
@@ -12,6 +13,7 @@ interface SchedulePreviewCardProps {
   onApplyReminders: () => void;
   onDownload: () => void;
   onDelete?: () => void;
+  onAssignDay?: (course: Course, courseIndex: number) => void;
 }
 
 const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
@@ -23,6 +25,7 @@ const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
   onApplyReminders,
   onDownload,
   onDelete,
+  onAssignDay,
 }) => {
   // Get color based on upload type or course source type
   const getTypeColor = (type: string) => {
@@ -38,42 +41,22 @@ const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
   };
 
   // Create weekly grid structure
-  const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thurs', 'Fri', 'Sat'];
-  
-  // Map day codes to grid columns (handle various formats)
-  const dayCodeToIndex = (dayCode: string): number[] => {
-    if (!dayCode) return [];
-    
-    const code = dayCode.toUpperCase().trim();
-    
-    // Single day mappings
-    const dayMap: { [key: string]: number } = {
-      'SUN': 0, 'SUNDAY': 0, 'S': 0,
-      'MON': 1, 'MONDAY': 1, 'M': 1,
-      'TUE': 2, 'TUESDAY': 2, 'T': 2,
-      'WED': 3, 'WEDNESDAY': 3, 'W': 3,
-      'THU': 4, 'THURSDAY': 4, 'TH': 4, 'R': 4,
-      'FRI': 5, 'FRIDAY': 5, 'F': 5,
-      'SAT': 6, 'SATURDAY': 6,
-    };
-
-    // Multi-day patterns
-    if (code === 'MTH' || code === 'MWTH' || code === 'MTWHF') return [1, 2, 3, 4, 5];
-    if (code === 'MWF') return [1, 3, 5];
-    if (code === 'MW') return [1, 3];
-    if (code === 'TTH' || code === 'TR') return [2, 4];
-    if (code === 'MTWTHF' || code === 'MTWTF') return [1, 2, 3, 4, 5];
-    
-    return dayMap[code] !== undefined ? [dayMap[code]] : [];
-  };
+  const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
   // Group courses by day
   const getCoursesForDay = (dayIndex: number) => {
     return courses.filter(course => {
-      const courseDays = dayCodeToIndex(course.day);
+      const courseDays = dayCodeToWeekdayNumbers(course.day);
       return courseDays.includes(dayIndex);
     });
   };
+
+  const unscheduledCourseEntries = courses.reduce<{ course: Course; index: number }[]>((acc, course, index) => {
+    if (!course.day || course.day.trim() === '') {
+      acc.push({ course, index });
+    }
+    return acc;
+  }, []);
 
   // Create simple time-based rows (limit to 4 for preview)
   const getPreviewRows = () => {
@@ -243,19 +226,38 @@ const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
         )}
 
         {/* Unscheduled courses (no day assigned) */}
-        {courses.filter(c => !c.day || c.day.trim() === '').length > 0 && (
+        {unscheduledCourseEntries.length > 0 && (
           <View className="bg-amber-50 p-3 rounded-b-lg border-t border-amber-200">
-            <Text className="text-xs font-semibold text-amber-700 mb-1">📋 No day assigned:</Text>
-            {courses.filter(c => !c.day || c.day.trim() === '').map((course, idx) => (
-              <View key={idx} className="flex-row items-center justify-between py-1">
-                <Text className="text-xs font-medium text-amber-800">{course.subject_code}</Text>
-                <Text className="text-xs text-amber-600">
-                  {course.start_time} - {course.end_time}
-                </Text>
-                {course.location ? (
-                  <Text className="text-xs text-amber-500">{course.location}</Text>
-                ) : null}
-              </View>
+            <View className="flex-row items-center justify-between mb-2">
+              <Text className="text-xs font-semibold text-amber-800">No Day Assigned</Text>
+              {onAssignDay && (
+                <Text className="text-[10px] text-amber-600">Tap a course to assign</Text>
+              )}
+            </View>
+            {unscheduledCourseEntries.map(({ course, index: courseIndex }, idx) => (
+              <TouchableOpacity
+                key={`${course.subject_code}-${course.start_time}-${course.end_time}-${courseIndex}`}
+                onPress={() => onAssignDay?.(course, courseIndex)}
+                disabled={!onAssignDay}
+                activeOpacity={onAssignDay ? 0.6 : 1}
+                className={`flex-row items-center justify-between py-2 px-2 rounded-lg mb-1 ${
+                  onAssignDay ? 'bg-amber-100/70 active:bg-amber-200' : ''
+                }`}
+              >
+                <View className="flex-1">
+                  <Text className="text-xs font-semibold text-amber-800">{course.subject_code}</Text>
+                  <Text className="text-[10px] text-amber-600">
+                    {course.start_time} - {course.end_time}
+                    {course.location ? ` • ${course.location}` : ''}
+                  </Text>
+                </View>
+                {onAssignDay && (
+                  <View className="flex-row items-center bg-amber-500 px-2 py-1 rounded-full ml-2">
+                    <Edit3 size={10} color="#fff" />
+                    <Text className="text-[10px] font-semibold text-white ml-1">Assign</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
             ))}
           </View>
         )}
