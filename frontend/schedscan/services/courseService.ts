@@ -93,6 +93,12 @@ export interface RecentExtractionJob {
   retryable?: boolean;
 }
 
+export interface ClearRecentExtractionJobsResponse {
+  deleted_count: number;
+  remaining_processing?: number;
+  message?: string;
+}
+
 const isRecoverableUploadError = (error: any): boolean => {
   if (error?.response) {
     return false;
@@ -212,6 +218,30 @@ export const courseService = {
       timeout: 20000,
     });
     return Array.isArray(response.data?.jobs) ? response.data.jobs : [];
+  },
+
+  clearRecentExtractionJobs: async (
+    options?: { uploadType?: 'student' | 'faculty' }
+  ): Promise<ClearRecentExtractionJobsResponse> => {
+    const params = new URLSearchParams();
+    if (options?.uploadType) {
+      params.append('upload_type', options.uploadType);
+    }
+
+    const query = params.toString();
+    const endpoint = query
+      ? `/extraction-jobs/recent/?${query}`
+      : '/extraction-jobs/recent/';
+
+    const response = await api.delete(endpoint, {
+      timeout: 20000,
+    });
+
+    return {
+      deleted_count: Number(response.data?.deleted_count || 0),
+      remaining_processing: Number(response.data?.remaining_processing || 0),
+      message: String(response.data?.message || ''),
+    };
   },
 
   /**

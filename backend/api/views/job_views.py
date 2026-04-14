@@ -209,6 +209,14 @@ class ExtractionJobRecentView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @staticmethod
+    def _parse_upload_type(request):
+        upload_type = (request.query_params.get('upload_type') or '').strip().lower()
+        allowed_upload_types = {'student', 'faculty'}
+        if upload_type and upload_type not in allowed_upload_types:
+            return None
+        return upload_type
+
     def get(self, request):
         raw_limit = request.query_params.get('limit', '5')
         try:
@@ -217,15 +225,17 @@ class ExtractionJobRecentView(APIView):
             limit = 5
         limit = max(1, min(limit, 20))
 
-        upload_type = (request.query_params.get('upload_type') or '').strip().lower()
-        allowed_upload_types = {'student', 'faculty'}
-        if upload_type and upload_type not in allowed_upload_types:
+        upload_type = self._parse_upload_type(request)
+        if upload_type is None:
             return Response(
                 {"error": "Invalid upload_type. Expected 'student' or 'faculty'."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        qs = ExtractionJob.objects.filter(user=request.user)
+        qs = ExtractionJob.objects.filter(
+            user=request.user,
+            user_hidden_at__isnull=True,
+        )
         if upload_type:
             qs = qs.filter(upload_type=upload_type)
         jobs = qs.order_by('-created_at')[:limit]
@@ -274,6 +284,39 @@ class ExtractionJobRecentView(APIView):
             {
                 "count": len(serialized),
                 "jobs": serialized,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request):
+        """
+        DELETE /api/extraction-jobs/recent/?upload_type=student
+
+        Clears recent extraction history for the authenticated user.
+        Safety: only terminal jobs (done/failed) are hidden so active processing jobs remain trackable.
+        This preserves admin observability and analytics while honoring user-facing clear history.
+        """
+        upload_type = self._parse_upload_type(request)
+        if upload_type is None:
+            return Response(
+                {"error": "Invalid upload_type. Expected 'student' or 'faculty'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        qs = ExtractionJob.objects.filter(user=request.user)
+        if upload_type:
+            qs = qs.filter(upload_type=upload_type)
+
+        terminal_qs = qs.filter(status__in=['done', 'failed'], user_hidden_at__isnull=True)
+        remaining_processing = qs.exclude(status__in=['done', 'failed']).count()
+        hidden_count = terminal_qs.update(user_hidden_at=timezone.now())
+
+        return Response(
+            {
+                "deleted_count": hidden_count,
+                "hidden_count": hidden_count,
+                "remaining_processing": remaining_processing,
+                "message": "Recent extraction history cleared.",
             },
             status=status.HTTP_200_OK,
         )

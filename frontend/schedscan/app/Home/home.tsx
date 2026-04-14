@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, ScrollView, Image, ActivityIndicator } fr
 import Svg, { Path, Circle, G, Rect, Polygon } from "react-native-svg";
 import { router } from "expo-router";
 import { useAuth } from '../../context/AuthContext';
-import { Course, RecentExtractionJob, courseService } from '../../services/courseService';
+import { Course, courseService } from '../../services/courseService';
 import { SavedSchedule } from '../../services/scheduleStorageService';
 import { taskService } from '../../services/taskService';
 import { studentEnrollmentService } from '../../services/facultyTaskService';
@@ -138,8 +138,7 @@ export default function SchedScanApp() {
   const [taskCounts, setTaskCounts] = useState<Record<string, { total: number; incomplete: number }>>({});
   const [facultyTaskCounts, setFacultyTaskCounts] = useState<Record<string, { total: number; incomplete: number }>>({});
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
-  const [recentExtractionJobs, setRecentExtractionJobs] = useState<RecentExtractionJob[]>([]);
-  const [isLoadingRecentExtractionJobs, setIsLoadingRecentExtractionJobs] = useState(false);
+  const [failedExtractionCount, setFailedExtractionCount] = useState(0);
 
   // Modals
   const [showFacultyModeModal, setShowFacultyModeModal] = useState(false);
@@ -149,7 +148,7 @@ export default function SchedScanApp() {
     React.useCallback(() => {
       loadActiveSchedule();
       loadHolidays();
-      loadRecentExtractionJobs();
+      loadExtractionAlert();
       // Fetch unread notification count for badge
       getUnreadCount()
         .then(count => setUnreadNotifCount(count))
@@ -157,20 +156,19 @@ export default function SchedScanApp() {
     }, [user?.id]) // eslint-disable-line react-hooks/exhaustive-deps
   );
 
-  const loadRecentExtractionJobs = async () => {
+  const loadExtractionAlert = async () => {
     if (!user?.id) {
-      setRecentExtractionJobs([]);
+      setFailedExtractionCount(0);
       return;
     }
 
     try {
-      setIsLoadingRecentExtractionJobs(true);
-      const jobs = await courseService.getRecentExtractionJobs({ limit: 3 });
-      setRecentExtractionJobs(jobs);
+      const jobs = await courseService.getRecentExtractionJobs({ limit: 5 });
+      const failedJobs = jobs.filter((job) => job.status === 'failed').length;
+      setFailedExtractionCount(failedJobs);
     } catch (e) {
-      console.warn('Failed to load recent extraction jobs:', e);
-    } finally {
-      setIsLoadingRecentExtractionJobs(false);
+      console.warn('Failed to load extraction alert:', e);
+      setFailedExtractionCount(0);
     }
   };
 
@@ -731,6 +729,23 @@ export default function SchedScanApp() {
           </View>
         )}
 
+        {/* Failed extraction alert (details are handled in Scanner) */}
+        {failedExtractionCount > 0 && (
+          <TouchableOpacity
+            onPress={() => router.push('/Home/scanner')}
+            className="mx-4 mt-3 bg-red-50 border border-red-200 rounded-xl px-3 py-2 flex-row items-center justify-between"
+            activeOpacity={0.75}
+          >
+            <View className="flex-1 pr-2">
+              <Text className="text-xs font-bold text-red-700">Extraction needs attention</Text>
+              <Text className="text-[11px] text-red-600">
+                {failedExtractionCount} recent {failedExtractionCount === 1 ? 'job has' : 'jobs have'} failed. Manage in Scanner.
+              </Text>
+            </View>
+            <Text className="text-xs font-semibold text-red-700">Open Scanner</Text>
+          </TouchableOpacity>
+        )}
+
         {/*
         Filter Buttons
         <View className="flex-row justify-evenly mt-3 px-4">
@@ -759,79 +774,6 @@ export default function SchedScanApp() {
           </TouchableOpacity>
         </View>
         */}
-
-        {/* Join a Class Button (Students & Faculty) */}
-        {(user?.user_type === 'student' || user?.user_type === 'faculty') && (
-          <TouchableOpacity
-            onPress={() => setShowJoinClassModal(true)}
-            className="mx-4 mt-3 bg-orange-50 border border-orange-200 px-4 py-3 rounded-xl flex-row items-center justify-center"
-            activeOpacity={0.7}
-          >
-            <Text className="text-orange-600 font-semibold text-sm">Join a Class with Code</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* Recent Extraction Jobs */}
-        {(isLoadingRecentExtractionJobs || recentExtractionJobs.length > 0) && (
-          <View className="mx-4 mt-3 bg-white border border-gray-200 rounded-xl px-4 py-3">
-            <View className="flex-row items-center justify-between mb-2">
-              <Text className="text-sm font-bold text-gray-800">Recent Extraction Jobs</Text>
-              <TouchableOpacity onPress={() => router.push('/Home/scanner')}>
-                <Text className="text-xs font-semibold text-primary-700">Open Scanner</Text>
-              </TouchableOpacity>
-            </View>
-
-            {isLoadingRecentExtractionJobs ? (
-              <View className="py-2 flex-row items-center">
-                <ActivityIndicator size="small" color="#DC2626" />
-                <Text className="text-xs text-gray-500 ml-2">Loading recent jobs...</Text>
-              </View>
-            ) : recentExtractionJobs.map((job) => {
-              const statusStyle =
-                job.status === 'done'
-                  ? 'bg-emerald-100 text-emerald-700'
-                  : job.status === 'failed'
-                    ? 'bg-red-100 text-red-700'
-                    : 'bg-amber-100 text-amber-700';
-              const actionLabel =
-                job.status === 'done'
-                  ? 'View Schedules'
-                  : job.status === 'failed'
-                    ? 'Retry Upload'
-                    : 'View Status';
-
-              return (
-                <View key={job.job_id} className="border border-gray-100 rounded-lg p-3 mb-2 last:mb-0">
-                  <View className="flex-row items-center justify-between mb-1">
-                    <Text className="text-xs font-semibold text-gray-700 flex-1 mr-2" numberOfLines={1}>
-                      {job.file_name || job.job_id}
-                    </Text>
-                    <View className={`px-2 py-0.5 rounded-full ${statusStyle}`}>
-                      <Text className="text-[10px] font-bold uppercase">{job.status}</Text>
-                    </View>
-                  </View>
-
-                  <Text className="text-[11px] text-gray-500 mb-2" numberOfLines={2}>
-                    {job.message || 'Extraction job status available.'}
-                  </Text>
-
-                  <TouchableOpacity
-                    onPress={() => {
-                      if (job.status === 'done') {
-                        router.push('/Home/schedules');
-                      } else {
-                        router.push('/Home/scanner');
-                      }
-                    }}
-                    className="self-start px-3 py-1.5 bg-gray-100 rounded-full"
-                  >
-                    <Text className="text-[10px] font-semibold text-gray-700">{actionLabel}</Text>
-                  </TouchableOpacity>
-                </View>
-              );
-            })}
-          </View>
-        )}
 
         {/* Semester Label */}
         {activeSchedule?.semester ? (
@@ -916,7 +858,7 @@ export default function SchedScanApp() {
         </View>
 
         {/* Daily Schedule */}
-        <View className="px-4 mt-4 mb-20">
+        <View className="px-4 mt-4 mb-4">
           <Text className="text-lg font-bold mb-2">Today&apos;s Schedule</Text>
 
           {isLoadingCourses ? (
@@ -1057,6 +999,17 @@ export default function SchedScanApp() {
             </>
           )}
         </View>
+
+        {/* Join a Class Button (Students & Faculty) */}
+        {(user?.user_type === 'student' || user?.user_type === 'faculty') && (
+          <TouchableOpacity
+            onPress={() => setShowJoinClassModal(true)}
+            className="mx-4 mt-1 mb-24 bg-orange-50 border border-orange-200 px-4 py-3 rounded-xl flex-row items-center justify-center"
+            activeOpacity={0.7}
+          >
+            <Text className="text-orange-600 font-semibold text-sm">Join a Class with Code</Text>
+          </TouchableOpacity>
+        )}
 
       </ScrollView>
 

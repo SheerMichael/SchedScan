@@ -1711,6 +1711,16 @@ class ExtractionJob(models.Model):
         ),
     )
 
+    user_hidden_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text=(
+            "Timestamp when this job was hidden from the end-user recent history. "
+            "Admin endpoints still retain visibility for operations and analytics."
+        ),
+    )
+
     # ── Timestamps ────────────────────────────────────────────────────
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -1724,6 +1734,7 @@ class ExtractionJob(models.Model):
             models.Index(fields=['user', 'status'], name='api_extjob_user_status_idx'),
             models.Index(fields=['status', '-created_at'], name='api_extjob_status_created_idx'),
             models.Index(fields=['-created_at'], name='api_extjob_created_idx'),
+            models.Index(fields=['user', 'user_hidden_at'], name='api_extjob_user_hidden_idx'),
         ]
 
     def __str__(self):

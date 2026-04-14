@@ -1,6 +1,6 @@
-import { View, Text, TouchableOpacity, Image, Alert, ActivityIndicator, Modal, TextInput } from "react-native";
+import { View, Text, TouchableOpacity, Image, Alert, ActivityIndicator, Modal, TextInput, ScrollView } from "react-native";
 import { useRouter } from "expo-router";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Svg, { Path } from 'react-native-svg';
 import { Images, Files, GraduationCap, Briefcase, ArrowRight, AlertTriangle } from "lucide-react-native";
@@ -59,6 +59,8 @@ type ExtractionFailureDescriptor = {
   category: ExtractionFailureCategory;
 };
 
+type RecentJobsFilter = 'all' | 'failed' | 'processing' | 'done';
+
 const BACKGROUND_EXTRACTION_JOB_KEY = '@schedscan/background-extraction-job';
 
 const normalizeFailureCategory = (value: unknown): ExtractionFailureCategory => {
@@ -94,6 +96,12 @@ export default function Scanner() {
   const [processingSubtitle, setProcessingSubtitle] = useState('Extracting course data...');
   const [showBehindScenesModal, setShowBehindScenesModal] = useState(false);
   const [backgroundJobId, setBackgroundJobId] = useState('');
+  const [showRecentJobsModal, setShowRecentJobsModal] = useState(false);
+  const [recentExtractionJobs, setRecentExtractionJobs] = useState<RecentExtractionJob[]>([]);
+  const [isLoadingRecentExtractionJobs, setIsLoadingRecentExtractionJobs] = useState(false);
+  const [isClearingRecentJobs, setIsClearingRecentJobs] = useState(false);
+  const [isClearRecentJobsSupported, setIsClearRecentJobsSupported] = useState(true);
+  const [recentJobsFilter, setRecentJobsFilter] = useState<RecentJobsFilter>('all');
   const activePollRef = useRef<ActivePollState | null>(null);
   const backgroundJobUploadTypeRef = useRef<'student' | 'faculty' | null>(null);
   const backgroundJobIsRetryRef = useRef(false);
@@ -508,6 +516,119 @@ export default function Scanner() {
 
     return false;
   }, [handleExtractionSuccess, resumePollingForJob, user?.id]);
+
+  const loadRecentExtractionJobs = useCallback(async () => {
+    if (!user?.id) {
+      setRecentExtractionJobs([]);
+      return;
+    }
+
+    try {
+      setIsLoadingRecentExtractionJobs(true);
+      const jobs = await courseService.getRecentExtractionJobs({ limit: 12 });
+      setRecentExtractionJobs(jobs);
+    } catch (error) {
+      console.error('Failed to load recent extraction jobs in scanner:', error);
+      setRecentExtractionJobs([]);
+    } finally {
+      setIsLoadingRecentExtractionJobs(false);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    loadRecentExtractionJobs().catch((error) => {
+      console.error('Failed to load recent extraction jobs on scanner open:', error);
+    });
+  }, [loadRecentExtractionJobs]);
+
+  useEffect(() => {
+    if (showRecentJobsModal) {
+      setRecentJobsFilter('all');
+      loadRecentExtractionJobs().catch((error) => {
+        console.error('Failed to refresh scanner extraction history modal:', error);
+      });
+    }
+  }, [showRecentJobsModal, loadRecentExtractionJobs]);
+
+  const filteredRecentExtractionJobs = useMemo(() => {
+    if (recentJobsFilter === 'all') {
+      return recentExtractionJobs;
+    }
+    return recentExtractionJobs.filter((job) => job.status === recentJobsFilter);
+  }, [recentExtractionJobs, recentJobsFilter]);
+
+  const recentJobsCounts = useMemo(() => {
+    return {
+      all: recentExtractionJobs.length,
+      failed: recentExtractionJobs.filter((job) => job.status === 'failed').length,
+      processing: recentExtractionJobs.filter((job) => job.status === 'processing').length,
+      done: recentExtractionJobs.filter((job) => job.status === 'done').length,
+    };
+  }, [recentExtractionJobs]);
+
+  const clearableRecentJobsCount = useMemo(() => {
+    return recentExtractionJobs.filter((job) => job.status === 'done' || job.status === 'failed').length;
+  }, [recentExtractionJobs]);
+
+  const renderJobStatusStyle = useCallback((status: string) => {
+    if (status === 'done') return 'bg-emerald-100 text-emerald-700';
+    if (status === 'failed') return 'bg-red-100 text-red-700';
+    return 'bg-amber-100 text-amber-700';
+  }, []);
+
+  const handleClearRecentExtractions = useCallback(() => {
+    if (clearableRecentJobsCount === 0) {
+      Alert.alert('Nothing to clear', 'Only completed and failed jobs can be cleared right now.');
+      return;
+    }
+
+    Alert.alert(
+      'Clear recent extractions?',
+      `This will remove ${clearableRecentJobsCount} completed/failed ${clearableRecentJobsCount === 1 ? 'job' : 'jobs'} from your extraction history.`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: () => {
+            setIsClearingRecentJobs(true);
+            courseService.clearRecentExtractionJobs()
+              .then(async (result) => {
+                await loadRecentExtractionJobs();
+
+                const keptProcessing = result.remaining_processing || 0;
+                if (keptProcessing > 0) {
+                  Alert.alert(
+                    'History cleared',
+                    `Cleared ${result.deleted_count} jobs. ${keptProcessing} active ${keptProcessing === 1 ? 'job is' : 'jobs are'} still processing and kept visible.`
+                  );
+                } else {
+                  Alert.alert('History cleared', `Cleared ${result.deleted_count} recent jobs.`);
+                }
+              })
+              .catch((error) => {
+                console.error('Failed to clear recent extraction jobs:', error);
+                if (error?.response?.status === 405) {
+                  setIsClearRecentJobsSupported(false);
+                  Alert.alert(
+                    'Clear not available yet',
+                    'Your current backend does not support clearing extraction history yet. Please update or redeploy backend, then try again.'
+                  );
+                } else {
+                  Alert.alert('Clear failed', 'Unable to clear recent extraction history right now.');
+                }
+              })
+              .finally(() => {
+                setIsClearingRecentJobs(false);
+              });
+          },
+        },
+      ]
+    );
+  }, [clearableRecentJobsCount, loadRecentExtractionJobs]);
 
   useEffect(() => {
     if (hydratedBackgroundJobRef.current) {
@@ -962,7 +1083,7 @@ export default function Scanner() {
 
         {!selectedRole ? (
           /* --- NEW ROLE SELECTION SCREEN --- */
-          <View className="flex-1 justify-center pb-20">
+          <ScrollView className="flex-1" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingTop: 32, paddingBottom: 80 }}>
             <Text className="text-white text-3xl font-bold mb-2">Welcome,</Text>
             <Text className="text-white/80 text-lg mb-8">Who is this schedule for?</Text>
 
@@ -999,7 +1120,62 @@ export default function Scanner() {
                 <ArrowRight size={20} color="#9CA3AF" />
               </TouchableOpacity>
             </View>
-          </View>
+
+            {/* Immediate recent extractions access */}
+            <View className="mt-6 bg-white/90 rounded-2xl p-4 border border-white/60">
+              <View className="flex-row items-center justify-between mb-2">
+                <Text className="text-sm font-bold text-gray-900">Recent Extractions</Text>
+                <TouchableOpacity onPress={() => setShowRecentJobsModal(true)}>
+                  <Text className="text-xs font-semibold text-[#7C2D12]">View all</Text>
+                </TouchableOpacity>
+              </View>
+
+              {isLoadingRecentExtractionJobs ? (
+                <View className="py-3 flex-row items-center">
+                  <ActivityIndicator size="small" color="#B88080" />
+                  <Text className="text-xs text-gray-500 ml-2">Loading extraction history...</Text>
+                </View>
+              ) : recentExtractionJobs.length === 0 ? (
+                <Text className="text-xs text-gray-500 py-2">No recent extraction jobs yet.</Text>
+              ) : (
+                <>
+                  {recentExtractionJobs.slice(0, 3).map((job) => (
+                    <View key={job.job_id} className="border border-gray-100 rounded-lg p-2 mb-2 last:mb-0 bg-white">
+                      <View className="flex-row items-center justify-between">
+                        <Text className="text-[11px] font-semibold text-gray-700 flex-1 mr-2" numberOfLines={1}>
+                          {job.file_name || job.job_id}
+                        </Text>
+                        <View className={`px-2 py-0.5 rounded-full ${renderJobStatusStyle(job.status)}`}>
+                          <Text className="text-[10px] font-bold uppercase">{job.status}</Text>
+                        </View>
+                      </View>
+                    </View>
+                  ))}
+
+                  <View className="flex-row mt-3">
+                    <TouchableOpacity
+                      onPress={() => setShowRecentJobsModal(true)}
+                      className="flex-1 mr-2 py-2 rounded-lg bg-gray-100"
+                      activeOpacity={0.8}
+                    >
+                      <Text className="text-xs text-center font-semibold text-gray-700">Manage</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={handleClearRecentExtractions}
+                      disabled={!isClearRecentJobsSupported || isClearingRecentJobs || clearableRecentJobsCount === 0}
+                      className="flex-1 py-2 rounded-lg bg-red-50 border border-red-100"
+                      style={{ opacity: !isClearRecentJobsSupported || isClearingRecentJobs || clearableRecentJobsCount === 0 ? 0.5 : 1 }}
+                      activeOpacity={0.8}
+                    >
+                      <Text className="text-xs text-center font-semibold text-red-700">
+                        {isClearingRecentJobs ? 'Clearing...' : 'Clear'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+            </View>
+          </ScrollView>
 
         ) : (
           /* --- SCANNER VIEW (Active once role is selected) --- */
@@ -1058,6 +1234,17 @@ export default function Scanner() {
             <View className="mt-6 bg-black/20 px-4 py-1 rounded-full">
               <Text className="text-white text-xs font-medium uppercase tracking-widest">{selectedRole} Mode</Text>
             </View>
+
+            {/* Extraction history entrypoint lives in Scanner */}
+            <TouchableOpacity
+              onPress={() => setShowRecentJobsModal(true)}
+              className="mt-3 bg-white/90 px-4 py-2 rounded-full"
+              activeOpacity={0.85}
+            >
+              <Text className="text-xs font-semibold text-[#5C2E2E]">
+                Recent Extraction Jobs {recentJobsCounts.failed > 0 ? `(${recentJobsCounts.failed} failed)` : ''}
+              </Text>
+            </TouchableOpacity>
 
           </View>
         )}
@@ -1214,6 +1401,171 @@ export default function Scanner() {
                 <Text className="text-center text-gray-400">Discard</Text>
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Scanner extraction history modal */}
+      <Modal
+        visible={showRecentJobsModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowRecentJobsModal(false)}
+      >
+        <View className="flex-1 bg-black/60 justify-center items-center px-5">
+          <View className="bg-white rounded-2xl w-full max-h-[80%] p-5">
+            <View className="flex-row items-center justify-between mb-2">
+              <Text className="text-lg font-bold text-gray-900">Recent Extraction Jobs</Text>
+              <View className="flex-row items-center">
+                <TouchableOpacity
+                  onPress={handleClearRecentExtractions}
+                  disabled={!isClearRecentJobsSupported || isClearingRecentJobs || clearableRecentJobsCount === 0}
+                  className="mr-3"
+                >
+                  <Text className="text-sm font-semibold text-red-600" style={{ opacity: !isClearRecentJobsSupported || isClearingRecentJobs || clearableRecentJobsCount === 0 ? 0.45 : 1 }}>
+                    {isClearingRecentJobs ? 'Clearing...' : 'Clear'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setShowRecentJobsModal(false)}>
+                  <Text className="text-sm font-semibold text-gray-500">Close</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <Text className="text-xs text-gray-500 mb-1">
+              {isClearRecentJobsSupported
+                ? 'Clear removes completed and failed jobs. Active processing jobs remain visible.'
+                : 'Clear is unavailable on your current backend version.'}
+            </Text>
+
+            <Text className="text-xs text-gray-500 mb-2">
+              {recentJobsCounts.failed > 0
+                ? `${recentJobsCounts.failed} failed ${recentJobsCounts.failed === 1 ? 'job' : 'jobs'} need attention.`
+                : 'No failed jobs right now.'}
+            </Text>
+
+            <View className="h-px bg-gray-100 mb-3" />
+
+            <Text className="text-xs text-gray-500 mb-3">
+              {selectedRole ? `${selectedRole.toUpperCase()} uploads` : 'Upload history'}
+            </Text>
+
+            <TouchableOpacity
+              onPress={() => {
+                loadRecentExtractionJobs().catch((error) => {
+                  console.error('Manual scanner extraction history refresh failed:', error);
+                });
+              }}
+              className="self-start mb-3 px-3 py-1.5 bg-gray-100 rounded-full"
+              activeOpacity={0.75}
+            >
+              <Text className="text-xs font-semibold text-gray-700">Refresh</Text>
+            </TouchableOpacity>
+
+            <View className="flex-row flex-wrap mb-3">
+              {([
+                { key: 'all', label: 'All' },
+                { key: 'failed', label: 'Failed' },
+                { key: 'processing', label: 'Processing' },
+                { key: 'done', label: 'Done' },
+              ] as { key: RecentJobsFilter; label: string }[]).map((option) => {
+                const isActive = recentJobsFilter === option.key;
+                const count = recentJobsCounts[option.key];
+                return (
+                  <TouchableOpacity
+                    key={option.key}
+                    onPress={() => setRecentJobsFilter(option.key)}
+                    className={`mr-2 mb-2 px-3 py-1.5 rounded-full border ${
+                      isActive
+                        ? 'bg-[#B88080] border-[#B88080]'
+                        : 'bg-white border-gray-200'
+                    }`}
+                    activeOpacity={0.75}
+                  >
+                    <Text
+                      className={`text-xs font-semibold ${
+                        isActive ? 'text-white' : 'text-gray-700'
+                      }`}
+                    >
+                      {option.label} ({count})
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {isLoadingRecentExtractionJobs ? (
+              <View className="py-6 flex-row items-center justify-center">
+                <ActivityIndicator size="small" color="#B88080" />
+                <Text className="text-sm text-gray-500 ml-2">Loading extraction history...</Text>
+              </View>
+            ) : filteredRecentExtractionJobs.length === 0 ? (
+              <View className="py-6">
+                <Text className="text-sm text-gray-500 text-center">
+                  {recentJobsFilter === 'all'
+                    ? 'No recent extraction jobs yet.'
+                    : `No ${recentJobsFilter} jobs in recent history.`}
+                </Text>
+              </View>
+            ) : (
+              <ScrollView showsVerticalScrollIndicator={false}>
+                {filteredRecentExtractionJobs.map((job) => {
+                  const statusStyle = renderJobStatusStyle(job.status);
+
+                  const actionLabel =
+                    job.status === 'done'
+                      ? 'View Schedules'
+                      : job.status === 'processing'
+                        ? 'Track Status'
+                        : 'Try New Upload';
+
+                  return (
+                    <View key={job.job_id} className="border border-gray-100 rounded-xl p-3 mb-2">
+                      <View className="flex-row items-center justify-between mb-1">
+                        <Text className="text-xs font-semibold text-gray-700 flex-1 mr-2" numberOfLines={1}>
+                          {job.file_name || job.job_id}
+                        </Text>
+                        <View className={`px-2 py-0.5 rounded-full ${statusStyle}`}>
+                          <Text className="text-[10px] font-bold uppercase">{job.status}</Text>
+                        </View>
+                      </View>
+
+                      <Text className="text-[11px] text-gray-500 mb-2" numberOfLines={2}>
+                        {job.message || 'Extraction status available.'}
+                      </Text>
+
+                      <TouchableOpacity
+                        onPress={() => {
+                          if (job.status === 'done') {
+                            setShowRecentJobsModal(false);
+                            router.push('/Home/schedules');
+                            return;
+                          }
+
+                          if (job.status === 'processing' && job.job_id) {
+                            const uploadTypeForJob =
+                              job.upload_type === 'faculty' || job.upload_type === 'student'
+                                ? job.upload_type
+                                : (selectedRole || 'student');
+                            setShowRecentJobsModal(false);
+                            setProcessingSubtitle('Reconnecting to extraction job...');
+                            resumePollingForJob(job.job_id, uploadTypeForJob, false).catch((error) => {
+                              console.error('Failed to reconnect extraction polling:', error);
+                            });
+                            return;
+                          }
+
+                          setShowRecentJobsModal(false);
+                        }}
+                        className="self-start px-3 py-1.5 bg-gray-100 rounded-full"
+                      >
+                        <Text className="text-[10px] font-semibold text-gray-700">{actionLabel}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            )}
           </View>
         </View>
       </Modal>

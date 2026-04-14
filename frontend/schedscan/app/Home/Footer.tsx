@@ -1,6 +1,9 @@
+import { useCallback, useEffect, useState } from "react";
 import { View, Text, TouchableOpacity } from "react-native";
 import { router, usePathname } from "expo-router";
-import Svg, { Path, Circle, Rect, G } from 'react-native-svg';
+import Svg, { Path, Circle } from 'react-native-svg';
+import { useAuth } from '../../context/AuthContext';
+import { courseService } from '../../services/courseService';
 
       const Home = ({ size = 24, color = '#4D4D4D' }) => (
         <Svg width={size} height={size} viewBox="0 0 24 24" fill="#FFFFFF" stroke={color} strokeWidth="2">
@@ -36,7 +39,31 @@ import Svg, { Path, Circle, Rect, G } from 'react-native-svg';
     
 export default function Footer() {
   const pathname = usePathname();
+  const { user } = useAuth();
+  const [failedExtractionCount, setFailedExtractionCount] = useState(0);
   const isActive = (path: string) => pathname === path;
+
+  const loadFailedExtractionCount = useCallback(async () => {
+    if (!user?.id) {
+      setFailedExtractionCount(0);
+      return;
+    }
+
+    try {
+      const jobs = await courseService.getRecentExtractionJobs({ limit: 10 });
+      const failedJobs = jobs.filter((job) => job.status === 'failed').length;
+      setFailedExtractionCount(failedJobs);
+    } catch (error) {
+      console.warn('Failed to load footer extraction badge count:', error);
+      setFailedExtractionCount(0);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    loadFailedExtractionCount().catch(() => {
+      setFailedExtractionCount(0);
+    });
+  }, [pathname, loadFailedExtractionCount]);
 
   return (
 <View className="w-full h-16 bg-white border-t-2 border-gray-200 justify-evenly items-center flex-row">
@@ -61,9 +88,16 @@ export default function Footer() {
         </Text>
     </TouchableOpacity>
 
-    <TouchableOpacity className="w-20 h-20 rounded-full flex-col border border-gray-500 bg-white -mt-8 justify-center items-center"
+    <TouchableOpacity className="w-20 h-20 rounded-full flex-col border border-gray-500 bg-white -mt-8 justify-center items-center relative"
     onPress={() => router.push({ pathname: "/Home/scanner" })}>
         <Scan size={40}/>
+        {failedExtractionCount > 0 && (
+          <View className="absolute -top-1 -right-1 min-w-[20px] h-[20px] px-1 rounded-full bg-red-600 border-2 border-white items-center justify-center shadow-sm">
+            <Text className="text-[10px] font-bold text-white">
+              {failedExtractionCount > 9 ? '9+' : failedExtractionCount}
+            </Text>
+          </View>
+        )}
     </TouchableOpacity>
 
     <TouchableOpacity

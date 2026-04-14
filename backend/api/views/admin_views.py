@@ -1448,6 +1448,7 @@ class AdminExtractionJobListView(APIView):
                 'failure_category': job.failure_category,
                 'llm_failure_reason': job.llm_failure_reason,
                 'error_message': job.error_message,
+                'user_hidden_at': job.user_hidden_at,
                 'total_courses': len(job.courses or []),
                 'created_at': job.created_at,
                 'updated_at': job.updated_at,
