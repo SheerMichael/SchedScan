@@ -5,10 +5,17 @@ import { offlineService } from './offlineService';
 /**
  * Interface for Task data
  */
+export type TaskUrgency = 'low' | 'medium' | 'high' | 'critical';
+
 export interface Task {
   id: number;
   subject_code: string;
   text: string;
+  urgency?: TaskUrgency;
+  due_date?: string | null;
+  effective_urgency?: TaskUrgency;
+  is_overdue?: boolean;
+  minutes_until_due?: number | null;
   is_completed: boolean;
   created_at: string;
   updated_at: string;
@@ -20,6 +27,8 @@ export interface Task {
 export interface CreateTaskData {
   subject_code: string;
   text: string;
+  urgency?: TaskUrgency;
+  due_date?: string | null;
 }
 
 /**
@@ -27,7 +36,23 @@ export interface CreateTaskData {
  */
 export interface UpdateTaskData {
   text?: string;
+  urgency?: TaskUrgency;
+  due_date?: string | null;
   is_completed?: boolean;
+}
+
+interface UrgentPopupResponse {
+  show_popup: boolean;
+  task: Task | null;
+  reason?: string;
+  cooldown_minutes?: number;
+}
+
+export interface UrgentTaskAnalytics {
+  days: number;
+  since: string;
+  total_events: number;
+  counters: Record<string, number>;
 }
 
 // Local storage key prefix for tasks cache
@@ -97,6 +122,11 @@ export const taskService = {
         id: Date.now(), // Temporary ID
         subject_code: data.subject_code,
         text: data.text,
+        urgency: data.urgency || 'medium',
+        due_date: data.due_date || null,
+        effective_urgency: data.urgency || 'medium',
+        is_overdue: false,
+        minutes_until_due: null,
         is_completed: false,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -143,7 +173,20 @@ export const taskService = {
         cachedTasks[taskIndex] = optimisticTask;
         await AsyncStorage.setItem(getCacheKey(subjectCode), JSON.stringify(cachedTasks));
       } else {
-        optimisticTask = { id: taskId, subject_code: subjectCode, text: '', is_completed: false, created_at: '', updated_at: new Date().toISOString(), ...data };
+        optimisticTask = {
+          id: taskId,
+          subject_code: subjectCode,
+          text: '',
+          urgency: 'medium',
+          due_date: null,
+          effective_urgency: 'medium',
+          is_overdue: false,
+          minutes_until_due: null,
+          is_completed: false,
+          created_at: '',
+          updated_at: new Date().toISOString(),
+          ...data,
+        };
       }
 
       // Queue for sync when back online
@@ -304,5 +347,73 @@ export const taskService = {
 
       return counts;
     }
+  },
+
+  /**
+   * Retrieve the highest-urgency task candidate for invasive popup.
+   */
+  getUrgentPopupTask: async (): Promise<Task | null> => {
+    try {
+      const response = await api.get('/tasks/urgent-popup/', {
+        params: {
+          local_hour: new Date().getHours(),
+        },
+      });
+      const payload: UrgentPopupResponse = response.data;
+      if (!payload.show_popup || !payload.task) {
+        return null;
+      }
+      return payload.task;
+    } catch (error: any) {
+      console.error('Error fetching urgent popup task:', error.message);
+      return null;
+    }
+  },
+
+  /**
+   * Snooze urgent popup prompts for a task.
+   */
+  snoozeUrgentTask: async (taskId: number, minutes: number = 10): Promise<void> => {
+    await api.post(`/tasks/${taskId}/urgent-action/`, {
+      action: 'snooze',
+      minutes,
+    });
+  },
+
+  /**
+   * Acknowledge an urgent popup without snoozing.
+   */
+  acknowledgeUrgentTask: async (taskId: number): Promise<void> => {
+    await api.post(`/tasks/${taskId}/urgent-action/`, {
+      action: 'acknowledge',
+    });
+  },
+
+  /**
+   * Track that user opened task from popup and apply popup cooldown.
+   */
+  openUrgentTask: async (taskId: number): Promise<void> => {
+    await api.post(`/tasks/${taskId}/urgent-action/`, {
+      action: 'open',
+    });
+  },
+
+  /**
+   * Mark task completed directly from urgent popup flow.
+   */
+  completeUrgentTask: async (taskId: number): Promise<void> => {
+    await api.post(`/tasks/${taskId}/urgent-action/`, {
+      action: 'complete',
+    });
+  },
+
+  /**
+   * Fetch counters for urgent popup interaction analytics.
+   */
+  getUrgentTaskAnalytics: async (days: number = 7): Promise<UrgentTaskAnalytics> => {
+    const response = await api.get('/tasks/urgent-analytics/', {
+      params: { days },
+    });
+    return response.data;
   },
 };

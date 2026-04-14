@@ -26,6 +26,11 @@ export interface User {
   student_number: string | null;
   profile_picture: string | null;
   class_reminder_minutes_before?: 5 | 10 | 15;
+  urgent_popup_enabled?: boolean;
+  urgent_popup_quiet_hours_enabled?: boolean;
+  urgent_popup_quiet_hours_start?: number;
+  urgent_popup_quiet_hours_end?: number;
+  urgent_popup_default_snooze_minutes?: 5 | 10 | 15 | 30 | 60;
   created_at: string;
 }
 

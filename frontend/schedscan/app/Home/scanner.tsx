@@ -38,6 +38,7 @@ type PersistedBackgroundJobState = {
 type ExtractionFailureCategory =
   | 'ownership_mismatch'
   | 'metadata_mismatch'
+  | 'missing_day'
   | 'timeout'
   | 'low_confidence'
   | 'parse_error'
@@ -67,6 +68,7 @@ const normalizeFailureCategory = (value: unknown): ExtractionFailureCategory => 
   const normalized = String(value || '').toLowerCase();
   if (normalized === 'ownership_mismatch') return 'ownership_mismatch';
   if (normalized === 'metadata_mismatch') return 'metadata_mismatch';
+  if (normalized === 'missing_day') return 'missing_day';
   if (normalized === 'timeout') return 'timeout';
   if (normalized === 'low_confidence') return 'low_confidence';
   if (normalized === 'parse_error') return 'parse_error';
@@ -226,6 +228,8 @@ export default function Scanner() {
       title = 'COR Ownership Check Failed';
     } else if (category === 'metadata_mismatch') {
       title = code === 'STUDENT_NUMBER_MISSING' ? 'Student Number Not Detected' : 'COR Verification Failed';
+    } else if (category === 'missing_day') {
+      title = 'No Days Detected';
     }
 
     let message = rawMessage;
@@ -234,6 +238,8 @@ export default function Scanner() {
         message = 'The student number in the document did not match your registered number. Please upload your own COR.';
       } else if (category === 'metadata_mismatch') {
         message = 'We could not verify the student number from your COR. Please upload a clearer document.';
+      } else if (category === 'missing_day') {
+        message = 'No class days were detected from the uploaded timetable. Please upload a clearer image where day columns are visible.';
       } else {
         message = 'Extraction failed. Please try again.';
       }

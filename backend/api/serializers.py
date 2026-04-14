@@ -19,6 +19,11 @@ class UserSerializer(serializers.ModelSerializer):
         required=False,
         help_text="Minutes before class to send reminder"
     )
+    urgent_popup_default_snooze_minutes = serializers.ChoiceField(
+        choices=[5, 10, 15, 30, 60],
+        required=False,
+        help_text="Default snooze duration (in minutes) for urgent task popups"
+    )
 
     class Meta:
         model = User
@@ -32,9 +37,24 @@ class UserSerializer(serializers.ModelSerializer):
             'student_number',
             'profile_picture',
             'class_reminder_minutes_before',
+            'urgent_popup_enabled',
+            'urgent_popup_quiet_hours_enabled',
+            'urgent_popup_quiet_hours_start',
+            'urgent_popup_quiet_hours_end',
+            'urgent_popup_default_snooze_minutes',
             'created_at',
         ]
         read_only_fields = ['id', 'created_at', 'email', 'user_type', 'student_number']
+
+    def validate_urgent_popup_quiet_hours_start(self, value):
+        if value < 0 or value > 23:
+            raise serializers.ValidationError('Quiet hour start must be between 0 and 23.')
+        return value
+
+    def validate_urgent_popup_quiet_hours_end(self, value):
+        if value < 0 or value > 23:
+            raise serializers.ValidationError('Quiet hour end must be between 0 and 23.')
+        return value
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -438,17 +458,37 @@ class TaskSerializer(serializers.ModelSerializer):
     Serializer for Task model - used for managing tasks per subject code.
     Tasks are shared across schedules for the same subject code.
     """
+    effective_urgency = serializers.SerializerMethodField()
+    is_overdue = serializers.SerializerMethodField()
+    minutes_until_due = serializers.SerializerMethodField()
+
     class Meta:
         model = Task
         fields = [
             'id',
             'subject_code',
             'text',
+            'urgency',
+            'due_date',
+            'effective_urgency',
+            'is_overdue',
+            'minutes_until_due',
             'is_completed',
             'created_at',
             'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_effective_urgency(self, obj):
+        return obj.get_effective_urgency()
+
+    def get_is_overdue(self, obj):
+        from django.utils import timezone
+
+        return bool(obj.due_date and obj.due_date <= timezone.now() and not obj.is_completed)
+
+    def get_minutes_until_due(self, obj):
+        return obj.minutes_until_due()
 
     def create(self, validated_data):
         """
@@ -711,10 +751,26 @@ class FacultyTaskSerializer(serializers.ModelSerializer):
     """
     # Write-only: accept files from the request
     file = serializers.FileField(required=False, allow_null=True, write_only=True)
+    effective_urgency = serializers.SerializerMethodField(read_only=True)
+    is_overdue = serializers.SerializerMethodField(read_only=True)
+    minutes_until_due = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = FacultyTask
-        fields = ['id', 'subject_code', 'text', 'due_date', 'file', 'file_name', 'created_at', 'updated_at']
+        fields = [
+            'id',
+            'subject_code',
+            'text',
+            'urgency',
+            'due_date',
+            'effective_urgency',
+            'is_overdue',
+            'minutes_until_due',
+            'file',
+            'file_name',
+            'created_at',
+            'updated_at',
+        ]
         read_only_fields = ['id', 'file_name', 'created_at', 'updated_at']
 
     def create(self, validated_data):
@@ -722,6 +778,17 @@ class FacultyTaskSerializer(serializers.ModelSerializer):
         # Remove the single 'file' from validated_data — files are handled in the view
         validated_data.pop('file', None)
         return FacultyTask.objects.create(faculty=faculty, **validated_data)
+
+    def get_effective_urgency(self, obj):
+        return obj.get_effective_urgency()
+
+    def get_is_overdue(self, obj):
+        from django.utils import timezone
+
+        return bool(obj.due_date and obj.due_date <= timezone.now())
+
+    def get_minutes_until_due(self, obj):
+        return obj.minutes_until_due()
 
 
 class FacultyTaskWithStatsSerializer(serializers.ModelSerializer):
@@ -734,11 +801,15 @@ class FacultyTaskWithStatsSerializer(serializers.ModelSerializer):
     total_enrolled = serializers.SerializerMethodField()
     has_file = serializers.SerializerMethodField()
     files = serializers.SerializerMethodField()
+    effective_urgency = serializers.SerializerMethodField()
+    is_overdue = serializers.SerializerMethodField()
+    minutes_until_due = serializers.SerializerMethodField()
 
     class Meta:
         model = FacultyTask
         fields = [
-            'id', 'subject_code', 'text', 'due_date',
+            'id', 'subject_code', 'text', 'urgency', 'due_date',
+            'effective_urgency', 'is_overdue', 'minutes_until_due',
             'completed_count', 'total_enrolled',
             'file_name', 'has_file', 'files',
             'created_at', 'updated_at'
@@ -784,6 +855,17 @@ class FacultyTaskWithStatsSerializer(serializers.ModelSerializer):
             ).count()
         return cache[cache_key]
 
+    def get_effective_urgency(self, obj):
+        return obj.get_effective_urgency()
+
+    def get_is_overdue(self, obj):
+        from django.utils import timezone
+
+        return bool(obj.due_date and obj.due_date <= timezone.now())
+
+    def get_minutes_until_due(self, obj):
+        return obj.minutes_until_due()
+
 
 class FacultyTaskStudentSerializer(serializers.ModelSerializer):
     """
@@ -796,11 +878,15 @@ class FacultyTaskStudentSerializer(serializers.ModelSerializer):
     faculty_name = serializers.SerializerMethodField()
     has_file = serializers.SerializerMethodField()
     files = serializers.SerializerMethodField()
+    effective_urgency = serializers.SerializerMethodField()
+    is_overdue = serializers.SerializerMethodField()
+    minutes_until_due = serializers.SerializerMethodField()
 
     class Meta:
         model = FacultyTask
         fields = [
-            'id', 'subject_code', 'text', 'due_date',
+            'id', 'subject_code', 'text', 'urgency', 'due_date',
+            'effective_urgency', 'is_overdue', 'minutes_until_due',
             'is_completed', 'completed_at', 'faculty_name',
             'file_name', 'has_file', 'files',
             'created_at', 'updated_at'
@@ -838,6 +924,17 @@ class FacultyTaskStudentSerializer(serializers.ModelSerializer):
 
     def get_faculty_name(self, obj):
         return obj.faculty.get_full_name()
+
+    def get_effective_urgency(self, obj):
+        return obj.get_effective_urgency()
+
+    def get_is_overdue(self, obj):
+        from django.utils import timezone
+
+        return bool(obj.due_date and obj.due_date <= timezone.now())
+
+    def get_minutes_until_due(self, obj):
+        return obj.minutes_until_due()
 
 
 class NotificationSerializer(serializers.ModelSerializer):

@@ -66,7 +66,9 @@ export default function RootLayout() {
           const failureCategory = String(response.data?.failure_category || '').toLowerCase();
           const alertTitle = failureCategory === 'ownership_mismatch'
             ? 'COR Ownership Check Failed'
-            : 'Extraction Failed';
+            : failureCategory === 'missing_day'
+              ? 'No Days Detected'
+              : 'Extraction Failed';
           const failureMessage =
             response.data?.message ||
             "We couldn't read your schedule. Please try re-uploading.";

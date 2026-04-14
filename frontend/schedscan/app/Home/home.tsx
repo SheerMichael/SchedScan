@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Image, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Image, ActivityIndicator, Modal } from 'react-native';
 import Svg, { Path, Circle, G, Rect, Polygon } from "react-native-svg";
 import { router } from "expo-router";
 import { useAuth } from '../../context/AuthContext';
 import { Course, courseService } from '../../services/courseService';
 import { SavedSchedule } from '../../services/scheduleStorageService';
-import { taskService } from '../../services/taskService';
+import { taskService, Task } from '../../services/taskService';
 import { studentEnrollmentService } from '../../services/facultyTaskService';
 import { useFocusEffect } from '@react-navigation/native';
 import FacultyModeModal from '../../components/FacultyModeModal';
@@ -139,6 +139,27 @@ export default function SchedScanApp() {
   const [facultyTaskCounts, setFacultyTaskCounts] = useState<Record<string, { total: number; incomplete: number }>>({});
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
   const [failedExtractionCount, setFailedExtractionCount] = useState(0);
+  const [urgentTask, setUrgentTask] = useState<Task | null>(null);
+  const [showUrgentTaskModal, setShowUrgentTaskModal] = useState(false);
+  const [isUrgentActionLoading, setIsUrgentActionLoading] = useState(false);
+
+  const isWithinQuietHours = (): boolean => {
+    if (!user?.urgent_popup_quiet_hours_enabled) {
+      return false;
+    }
+
+    const nowHour = new Date().getHours();
+    const start = user?.urgent_popup_quiet_hours_start ?? 22;
+    const end = user?.urgent_popup_quiet_hours_end ?? 7;
+
+    if (start === end) {
+      return true;
+    }
+    if (start < end) {
+      return nowHour >= start && nowHour < end;
+    }
+    return nowHour >= start || nowHour < end;
+  };
 
   // Modals
   const [showFacultyModeModal, setShowFacultyModeModal] = useState(false);
@@ -149,12 +170,113 @@ export default function SchedScanApp() {
       loadActiveSchedule();
       loadHolidays();
       loadExtractionAlert();
+      loadUrgentPopupCandidate();
       // Fetch unread notification count for badge
       getUnreadCount()
         .then(count => setUnreadNotifCount(count))
         .catch(() => { });
     }, [user?.id]) // eslint-disable-line react-hooks/exhaustive-deps
   );
+
+  const loadUrgentPopupCandidate = async () => {
+    if (!user?.id || user.user_type === 'parent') {
+      setUrgentTask(null);
+      setShowUrgentTaskModal(false);
+      return;
+    }
+
+    if (user.urgent_popup_enabled === false || isWithinQuietHours()) {
+      setUrgentTask(null);
+      setShowUrgentTaskModal(false);
+      return;
+    }
+
+    try {
+      const task = await taskService.getUrgentPopupTask();
+      if (task) {
+        setUrgentTask(task);
+        setShowUrgentTaskModal(true);
+      }
+    } catch (error) {
+      console.warn('Failed to load urgent popup candidate:', error);
+    }
+  };
+
+  const closeUrgentModal = () => {
+    setShowUrgentTaskModal(false);
+    setUrgentTask(null);
+  };
+
+  const handleUrgentSnooze = async () => {
+    if (!urgentTask) return;
+    setIsUrgentActionLoading(true);
+    try {
+      const snoozeMinutes = user?.urgent_popup_default_snooze_minutes ?? 10;
+      await taskService.snoozeUrgentTask(urgentTask.id, snoozeMinutes);
+      closeUrgentModal();
+    } catch (error) {
+      console.warn('Failed to snooze urgent task:', error);
+    } finally {
+      setIsUrgentActionLoading(false);
+    }
+  };
+
+  const handleUrgentDismiss = async () => {
+    if (!urgentTask) return;
+    setIsUrgentActionLoading(true);
+    try {
+      await taskService.acknowledgeUrgentTask(urgentTask.id);
+      closeUrgentModal();
+    } catch (error) {
+      console.warn('Failed to acknowledge urgent task:', error);
+    } finally {
+      setIsUrgentActionLoading(false);
+    }
+  };
+
+  const handleUrgentMarkDone = async () => {
+    if (!urgentTask) return;
+    setIsUrgentActionLoading(true);
+    try {
+      await taskService.completeUrgentTask(urgentTask.id);
+      closeUrgentModal();
+      await loadActiveSchedule();
+    } catch (error) {
+      console.warn('Failed to mark urgent task as done:', error);
+    } finally {
+      setIsUrgentActionLoading(false);
+    }
+  };
+
+  const handleUrgentOpenTask = async () => {
+    if (!urgentTask) return;
+    setIsUrgentActionLoading(true);
+    try {
+      await taskService.openUrgentTask(urgentTask.id);
+    } catch {
+      // Non-blocking: still open the task details screen.
+    } finally {
+      setIsUrgentActionLoading(false);
+      setShowUrgentTaskModal(false);
+    }
+
+    const matchingCourse = courses.find((course) => course.subject_code === urgentTask.subject_code);
+    router.push({
+      pathname: '/Home/Subject/subjectdetails',
+      params: {
+        title: urgentTask.subject_code,
+        subjectName: matchingCourse?.subject_name || '',
+        time: matchingCourse ? `${matchingCourse.start_time} - ${matchingCourse.end_time}` : 'N/A',
+        startTime: matchingCourse?.start_time || '',
+        endTime: matchingCourse?.end_time || '',
+        location: matchingCourse?.location || '',
+        day: matchingCourse?.day || '',
+        priorityLevel: 'Class',
+        sourceType: matchingCourse?.source_type || activeSchedule?.uploadType || '',
+      },
+    });
+    setUrgentTask(null);
+  };
 
   const loadExtractionAlert = async () => {
     if (!user?.id) {
@@ -1035,6 +1157,65 @@ export default function SchedScanApp() {
           loadActiveSchedule();
         }}
       />
+
+      <Modal
+        visible={showUrgentTaskModal && !!urgentTask}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {}}
+      >
+        <View className="flex-1 bg-black/60 justify-center px-6">
+          <View className="bg-white rounded-2xl p-5 border-2 border-red-500">
+            <Text className="text-red-600 font-black text-lg mb-1">URGENT TASK</Text>
+            <Text className="text-black text-base font-semibold mb-1">{urgentTask?.subject_code}</Text>
+            <Text className="text-gray-800 mb-2">{urgentTask?.text}</Text>
+            <View className="flex-row items-center mb-4">
+              <View className="bg-red-100 px-2 py-1 rounded-full">
+                <Text className="text-red-700 text-xs font-bold uppercase">{urgentTask?.effective_urgency || urgentTask?.urgency}</Text>
+              </View>
+              {urgentTask?.is_overdue && (
+                <Text className="text-red-600 text-xs font-semibold ml-2">Overdue</Text>
+              )}
+            </View>
+            {urgentTask?.due_date && (
+              <Text className="text-gray-600 text-xs mb-4">Due {new Date(urgentTask.due_date).toLocaleString()}</Text>
+            )}
+
+            <TouchableOpacity
+              onPress={handleUrgentOpenTask}
+              disabled={isUrgentActionLoading}
+              className={`py-3 rounded-xl items-center mb-2 ${isUrgentActionLoading ? 'bg-gray-400' : 'bg-red-600'}`}
+            >
+              <Text className="text-white font-bold">Open Task</Text>
+            </TouchableOpacity>
+
+            <View className="flex-row">
+              <TouchableOpacity
+                onPress={handleUrgentMarkDone}
+                disabled={isUrgentActionLoading}
+                className={`flex-1 py-2 rounded-lg items-center mr-2 ${isUrgentActionLoading ? 'bg-gray-300' : 'bg-green-600'}`}
+              >
+                <Text className="text-white font-semibold text-sm">Mark Done</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleUrgentSnooze}
+                disabled={isUrgentActionLoading}
+                className={`flex-1 py-2 rounded-lg items-center ml-2 ${isUrgentActionLoading ? 'bg-gray-300' : 'bg-amber-500'}`}
+              >
+                <Text className="text-white font-semibold text-sm">Snooze {user?.urgent_popup_default_snooze_minutes ?? 10}m</Text>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              onPress={handleUrgentDismiss}
+              disabled={isUrgentActionLoading}
+              className="py-2 rounded-lg items-center mt-3"
+            >
+              <Text className="text-gray-500 text-sm">Dismiss</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
     </>
   );

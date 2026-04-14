@@ -17,8 +17,15 @@ const UserProfile = () => {
     const [modalParentalCode, setModalParentalCode] = useState(false);
     const { user, logout, refreshUser, getActiveSchedule } = useAuth();
     const [modalReminderLeadTime, setModalReminderLeadTime] = useState(false);
+    const [modalUrgentPopupSettings, setModalUrgentPopupSettings] = useState(false);
     const [selectedReminderLeadTime, setSelectedReminderLeadTime] = useState<5 | 10 | 15>(15);
     const [isSavingReminderLeadTime, setIsSavingReminderLeadTime] = useState(false);
+    const [urgentPopupEnabled, setUrgentPopupEnabled] = useState(true);
+    const [urgentQuietEnabled, setUrgentQuietEnabled] = useState(false);
+    const [urgentQuietStart, setUrgentQuietStart] = useState(22);
+    const [urgentQuietEnd, setUrgentQuietEnd] = useState(7);
+    const [urgentDefaultSnooze, setUrgentDefaultSnooze] = useState<5 | 10 | 15 | 30 | 60>(10);
+    const [isSavingUrgentSettings, setIsSavingUrgentSettings] = useState(false);
 
     // MOCK PARENTAL CODE
     const parentalCode = "XYZ-123-ABC";
@@ -37,6 +44,25 @@ const UserProfile = () => {
             setSelectedReminderLeadTime(15);
         }
     }, [user?.class_reminder_minutes_before]);
+
+    useEffect(() => {
+        setUrgentPopupEnabled(user?.urgent_popup_enabled !== false);
+        setUrgentQuietEnabled(user?.urgent_popup_quiet_hours_enabled === true);
+        setUrgentQuietStart(typeof user?.urgent_popup_quiet_hours_start === 'number' ? user.urgent_popup_quiet_hours_start : 22);
+        setUrgentQuietEnd(typeof user?.urgent_popup_quiet_hours_end === 'number' ? user.urgent_popup_quiet_hours_end : 7);
+        const snooze = user?.urgent_popup_default_snooze_minutes;
+        if (snooze === 5 || snooze === 10 || snooze === 15 || snooze === 30 || snooze === 60) {
+            setUrgentDefaultSnooze(snooze);
+        } else {
+            setUrgentDefaultSnooze(10);
+        }
+    }, [
+        user?.urgent_popup_enabled,
+        user?.urgent_popup_quiet_hours_enabled,
+        user?.urgent_popup_quiet_hours_start,
+        user?.urgent_popup_quiet_hours_end,
+        user?.urgent_popup_default_snooze_minutes,
+    ]);
 
     const LeftPointingArrow = ({ size = 24, color = '#ffffff' }) => (
         <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
@@ -166,6 +192,37 @@ const UserProfile = () => {
         }
     };
 
+    const hourLabel = (hour: number) => {
+        const normalized = ((hour % 24) + 24) % 24;
+        if (normalized === 0) return '12 AM';
+        if (normalized < 12) return `${normalized} AM`;
+        if (normalized === 12) return '12 PM';
+        return `${normalized - 12} PM`;
+    };
+
+    const saveUrgentPopupSettings = async () => {
+        try {
+            setIsSavingUrgentSettings(true);
+
+            await api.patch('/auth/user/', {
+                urgent_popup_enabled: urgentPopupEnabled,
+                urgent_popup_quiet_hours_enabled: urgentQuietEnabled,
+                urgent_popup_quiet_hours_start: urgentQuietStart,
+                urgent_popup_quiet_hours_end: urgentQuietEnd,
+                urgent_popup_default_snooze_minutes: urgentDefaultSnooze,
+            });
+
+            setModalUrgentPopupSettings(false);
+            await refreshUser();
+            Alert.alert('Urgent Alert Settings Updated', 'Your urgent task popup preferences were saved.');
+        } catch (error) {
+            console.error('Failed to save urgent popup settings:', error);
+            Alert.alert('Update failed', 'Could not save urgent popup settings. Please try again.');
+        } finally {
+            setIsSavingUrgentSettings(false);
+        }
+    };
+
     return (
         <>
             <ScrollView>
@@ -245,6 +302,16 @@ const UserProfile = () => {
                                     <Text className="text-base">Class Reminder Timing</Text>
                                 </View>
                                 <Text className="text-sm text-gray-500">{selectedReminderLeadTime} mins before</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                className="p-4 border-b border-gray-500/50 flex-row items-center justify-between"
+                                onPress={() => setModalUrgentPopupSettings(true)}
+                            >
+                                <View className="flex-row items-center gap-2">
+                                    <BellRing />
+                                    <Text className="text-base">Urgent Task Alerts</Text>
+                                </View>
+                                <Text className="text-sm text-gray-500">{urgentPopupEnabled ? 'On' : 'Off'}</Text>
                             </TouchableOpacity>
                             {/* <TouchableOpacity className="p-4 border-b border-gray-500/50 flex-row items-center gap-2" onPress={is_premiumuser}>
                                 <CalendarDays />
@@ -466,6 +533,129 @@ const UserProfile = () => {
                                         <ActivityIndicator color="#CB2222" />
                                     </View>
                                 )}
+                            </View>
+                        </View>
+                    </Modal>
+
+                    <Modal
+                        animationType="fade"
+                        transparent={true}
+                        visible={modalUrgentPopupSettings}
+                        onRequestClose={() => setModalUrgentPopupSettings(false)}>
+                        <View className="flex-1 bg-black/50 justify-center items-center">
+                            <View className="bg-white rounded-xl p-6 w-4/5 max-w-sm shadow-lg">
+                                <View className="mb-4 flex-row justify-between items-center">
+                                    <Text className="text-lg font-semibold text-gray-900">Urgent Task Alerts</Text>
+                                    <TouchableOpacity onPress={() => setModalUrgentPopupSettings(false)} disabled={isSavingUrgentSettings}>
+                                        <X size={24} color="black" strokeWidth={2} />
+                                    </TouchableOpacity>
+                                </View>
+
+                                <View className="mb-4">
+                                    <Text className="text-sm text-gray-600 mb-2">Invasive popup alerts</Text>
+                                    <View className="flex-row">
+                                        {[true, false].map((value) => (
+                                            <TouchableOpacity
+                                                key={String(value)}
+                                                onPress={() => setUrgentPopupEnabled(value)}
+                                                disabled={isSavingUrgentSettings}
+                                                className={`mr-2 px-3 py-2 rounded-lg border ${urgentPopupEnabled === value ? 'bg-black border-black' : 'bg-white border-gray-300'}`}
+                                            >
+                                                <Text className={`${urgentPopupEnabled === value ? 'text-white' : 'text-gray-700'} font-semibold text-sm`}>
+                                                    {value ? 'Enabled' : 'Disabled'}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        ))}
+                                    </View>
+                                </View>
+
+                                <View className="mb-4">
+                                    <Text className="text-sm text-gray-600 mb-2">Quiet hours</Text>
+                                    <View className="flex-row mb-2">
+                                        {[true, false].map((value) => (
+                                            <TouchableOpacity
+                                                key={`quiet-${String(value)}`}
+                                                onPress={() => setUrgentQuietEnabled(value)}
+                                                disabled={isSavingUrgentSettings}
+                                                className={`mr-2 px-3 py-2 rounded-lg border ${urgentQuietEnabled === value ? 'bg-black border-black' : 'bg-white border-gray-300'}`}
+                                            >
+                                                <Text className={`${urgentQuietEnabled === value ? 'text-white' : 'text-gray-700'} font-semibold text-sm`}>
+                                                    {value ? 'On' : 'Off'}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        ))}
+                                    </View>
+
+                                    {urgentQuietEnabled && (
+                                        <>
+                                            <Text className="text-xs text-gray-500 mb-1">Start hour</Text>
+                                            <View className="flex-row flex-wrap mb-2">
+                                                {[20, 21, 22, 23, 0].map((hour) => (
+                                                    <TouchableOpacity
+                                                        key={`start-${hour}`}
+                                                        onPress={() => setUrgentQuietStart(hour)}
+                                                        disabled={isSavingUrgentSettings}
+                                                        className={`mr-2 mb-2 px-2 py-1.5 rounded-md border ${urgentQuietStart === hour ? 'bg-gray-900 border-gray-900' : 'bg-white border-gray-300'}`}
+                                                    >
+                                                        <Text className={`${urgentQuietStart === hour ? 'text-white' : 'text-gray-700'} text-xs font-semibold`}>
+                                                            {hourLabel(hour)}
+                                                        </Text>
+                                                    </TouchableOpacity>
+                                                ))}
+                                            </View>
+
+                                            <Text className="text-xs text-gray-500 mb-1">End hour</Text>
+                                            <View className="flex-row flex-wrap">
+                                                {[5, 6, 7, 8, 9].map((hour) => (
+                                                    <TouchableOpacity
+                                                        key={`end-${hour}`}
+                                                        onPress={() => setUrgentQuietEnd(hour)}
+                                                        disabled={isSavingUrgentSettings}
+                                                        className={`mr-2 mb-2 px-2 py-1.5 rounded-md border ${urgentQuietEnd === hour ? 'bg-gray-900 border-gray-900' : 'bg-white border-gray-300'}`}
+                                                    >
+                                                        <Text className={`${urgentQuietEnd === hour ? 'text-white' : 'text-gray-700'} text-xs font-semibold`}>
+                                                            {hourLabel(hour)}
+                                                        </Text>
+                                                    </TouchableOpacity>
+                                                ))}
+                                            </View>
+                                        </>
+                                    )}
+                                </View>
+
+                                <View className="mb-4">
+                                    <Text className="text-sm text-gray-600 mb-2">Default snooze</Text>
+                                    <View className="flex-row flex-wrap">
+                                        {[5, 10, 15, 30, 60].map((minutes) => {
+                                            const option = minutes as 5 | 10 | 15 | 30 | 60;
+                                            const selected = urgentDefaultSnooze === option;
+                                            return (
+                                                <TouchableOpacity
+                                                    key={`snooze-${minutes}`}
+                                                    onPress={() => setUrgentDefaultSnooze(option)}
+                                                    disabled={isSavingUrgentSettings}
+                                                    className={`mr-2 mb-2 px-3 py-2 rounded-lg border ${selected ? 'bg-black border-black' : 'bg-white border-gray-300'}`}
+                                                >
+                                                    <Text className={`${selected ? 'text-white' : 'text-gray-700'} text-sm font-semibold`}>
+                                                        {minutes}m
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            );
+                                        })}
+                                    </View>
+                                </View>
+
+                                <TouchableOpacity
+                                    onPress={saveUrgentPopupSettings}
+                                    disabled={isSavingUrgentSettings}
+                                    className={`py-3 rounded-lg items-center ${isSavingUrgentSettings ? 'bg-gray-300' : 'bg-primary-500'}`}
+                                >
+                                    {isSavingUrgentSettings ? (
+                                        <ActivityIndicator color="#fff" size="small" />
+                                    ) : (
+                                        <Text className="text-white font-semibold text-base">Save Settings</Text>
+                                    )}
+                                </TouchableOpacity>
                             </View>
                         </View>
                     </Modal>

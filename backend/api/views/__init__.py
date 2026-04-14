@@ -46,6 +46,9 @@ from .task_views import (
     TaskListCreateView,
     TaskDetailView,
     TaskCountsView,
+    TaskUrgentPopupView,
+    TaskUrgentActionView,
+    TaskUrgencyAnalyticsView,
 )
 
 # Account management views

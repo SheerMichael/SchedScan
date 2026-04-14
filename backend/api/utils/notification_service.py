@@ -358,6 +358,7 @@ def notify_students_of_faculty_task(
     task_text: str,
     task_id: int,
     due_date: Optional[str] = None,
+    urgency: str = 'medium',
 ) -> Dict[str, Any]:
     """
     Send push notifications + create DB records for all students who have the
@@ -427,7 +428,14 @@ def notify_students_of_faculty_task(
         logger.info(f"No students found with {subject_code} in active schedule or enrollments")
         return stats
 
-    title = f"New Task: {subject_code}"
+    urgency_upper = (urgency or 'medium').lower()
+    if urgency_upper == 'critical':
+        title = f"URGENT Task: {subject_code}"
+    elif urgency_upper == 'high':
+        title = f"High Priority Task: {subject_code}"
+    else:
+        title = f"New Task: {subject_code}"
+
     body = task_text[:200]  # Truncate long task text
     if due_date:
         body += f"\nDue: {due_date}"
@@ -436,6 +444,7 @@ def notify_students_of_faculty_task(
         "type": "faculty_task",
         "task_id": task_id,
         "subject_code": subject_code,
+        "urgency": urgency_upper,
         "faculty_name": faculty_user.get_full_name() or faculty_user.email,
     }
 

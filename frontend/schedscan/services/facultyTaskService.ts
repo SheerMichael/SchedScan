@@ -1,5 +1,7 @@
 import api from './api';
 
+export type TaskUrgency = 'low' | 'medium' | 'high' | 'critical';
+
 // ============================================
 // Interfaces
 // ============================================
@@ -15,7 +17,11 @@ export interface FacultyTask {
     id: number;
     subject_code: string;
     text: string;
+    urgency: TaskUrgency;
     due_date: string | null;
+    effective_urgency?: TaskUrgency;
+    is_overdue?: boolean;
+    minutes_until_due?: number | null;
     file_name: string;
     has_file: boolean;
     files: FacultyTaskFileInfo[];
@@ -168,6 +174,7 @@ export const facultyTaskService = {
     createFacultyTask: async (data: {
         subject_code: string;
         text: string;
+        urgency?: TaskUrgency;
         due_date?: string | null;
         files?: { uri: string; name: string; type: string }[];
         /** @deprecated use files[] instead */
@@ -176,6 +183,7 @@ export const facultyTaskService = {
         const formData = new FormData();
         formData.append('subject_code', data.subject_code);
         formData.append('text', data.text);
+        formData.append('urgency', data.urgency || 'medium');
         if (data.due_date) {
             formData.append('due_date', data.due_date);
         }
@@ -193,7 +201,7 @@ export const facultyTaskService = {
     /** Update a faculty task */
     updateFacultyTask: async (
         taskId: number,
-        data: { text?: string; due_date?: string | null }
+        data: { text?: string; urgency?: TaskUrgency; due_date?: string | null }
     ): Promise<FacultyTaskWithStats> => {
         const response = await api.patch(`/faculty/tasks/${taskId}/`, data);
         return response.data;

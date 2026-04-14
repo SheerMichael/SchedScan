@@ -28,6 +28,49 @@ from ..models import ExtractionJob
 logger = logging.getLogger(__name__)
 
 
+_FAILURE_MESSAGES = {
+    'timeout': (
+        "The vision model timed out while reading your document. "
+        "Please retry in a moment."
+    ),
+    'low_confidence': (
+        "The document quality was too low to extract your schedule reliably. "
+        "Please re-upload a clearer document."
+    ),
+    'parse_error': (
+        "We couldn't parse the extracted schedule structure. "
+        "Please re-upload a clearer document."
+    ),
+    'missing_day': (
+        "No class days were detected in the extracted schedule. "
+        "Please upload a clearer timetable where day columns are visible."
+    ),
+    'metadata_mismatch': (
+        "The student number in the document did not match your registered number. "
+        "Please upload your own COR."
+    ),
+    'ownership_mismatch': (
+        "The student number in the document did not match your registered number. "
+        "Please upload your own COR."
+    ),
+    'no_text': (
+        "No schedule text could be found in the document. "
+        "Please ensure the schedule is clearly visible."
+    ),
+    'system_error': (
+        "A system error occurred while processing your document. "
+        "Please try again in a moment."
+    ),
+}
+
+
+def _user_failure_message(failure_category: str) -> str:
+    return _FAILURE_MESSAGES.get(
+        failure_category,
+        "Extraction failed. Please try re-uploading your document.",
+    )
+
+
 def _mark_stale_job_failed(job) -> bool:
     """
     Mark long-running pending/processing jobs as failed.
@@ -139,41 +182,8 @@ class ExtractionJobStatusView(APIView):
             )
 
         if job_status == 'failed':
-            failure_messages = {
-                'timeout': (
-                    "The vision model timed out while reading your document. "
-                    "Please retry in a moment."
-                ),
-                'low_confidence': (
-                    "The document quality was too low to extract your schedule reliably. "
-                    "Please re-upload a clearer document."
-                ),
-                'parse_error': (
-                    "We couldn't parse the extracted schedule structure. "
-                    "Please re-upload a clearer document."
-                ),
-                'metadata_mismatch': (
-                    "The student number in the document did not match your registered number. "
-                    "Please upload your own COR."
-                ),
-                'ownership_mismatch': (
-                    "The student number in the document did not match your registered number. "
-                    "Please upload your own COR."
-                ),
-                'no_text': (
-                    "No schedule text could be found in the document. "
-                    "Please ensure the schedule is clearly visible."
-                ),
-                'system_error': (
-                    "A system error occurred while processing your document. "
-                    "Please try again in a moment."
-                ),
-            }
             failure_category = job.failure_category or 'system_error'
-            user_message = failure_messages.get(
-                failure_category,
-                "Extraction failed. Please try re-uploading your document.",
-            )
+            user_message = _user_failure_message(failure_category)
             return Response(
                 {
                     "job_id": str(job.job_id),
@@ -267,7 +277,7 @@ class ExtractionJobRecentView(APIView):
             elif job.status == 'failed':
                 entry.update(
                     {
-                        "message": "Extraction failed. Please try re-uploading your document.",
+                        "message": _user_failure_message(job.failure_category or 'system_error'),
                         "retryable": (job.failure_category or '') not in {'metadata_mismatch', 'ownership_mismatch'},
                     }
                 )

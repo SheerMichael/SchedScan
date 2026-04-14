@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
-import { Download, Trash2, Users, GraduationCap, Merge, Edit3 } from 'lucide-react-native';
+import { Download, Trash2, Users, GraduationCap, Merge } from 'lucide-react-native';
 import { Course } from '../services/courseService';
 import { dayCodeToWeekdayNumbers } from '../utils/dayCode';
 
@@ -13,7 +13,6 @@ interface SchedulePreviewCardProps {
   onApplyReminders: () => void;
   onDownload: () => void;
   onDelete?: () => void;
-  onAssignDay?: (course: Course, courseIndex: number) => void;
 }
 
 const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
@@ -25,7 +24,6 @@ const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
   onApplyReminders,
   onDownload,
   onDelete,
-  onAssignDay,
 }) => {
   // Get color based on upload type or course source type
   const getTypeColor = (type: string) => {
@@ -51,12 +49,12 @@ const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
     });
   };
 
-  const unscheduledCourseEntries = courses.reduce<{ course: Course; index: number }[]>((acc, course, index) => {
+  const unscheduledCourses = courses.filter((course) => {
     if (!course.day || course.day.trim() === '') {
-      acc.push({ course, index });
+      return true;
     }
-    return acc;
-  }, []);
+    return false;
+  });
 
   // Create simple time-based rows (limit to 4 for preview)
   const getPreviewRows = () => {
@@ -226,23 +224,15 @@ const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
         )}
 
         {/* Unscheduled courses (no day assigned) */}
-        {unscheduledCourseEntries.length > 0 && (
+        {unscheduledCourses.length > 0 && (
           <View className="bg-amber-50 p-3 rounded-b-lg border-t border-amber-200">
             <View className="flex-row items-center justify-between mb-2">
               <Text className="text-xs font-semibold text-amber-800">No Day Assigned</Text>
-              {onAssignDay && (
-                <Text className="text-[10px] text-amber-600">Tap a course to assign</Text>
-              )}
             </View>
-            {unscheduledCourseEntries.map(({ course, index: courseIndex }, idx) => (
-              <TouchableOpacity
-                key={`${course.subject_code}-${course.start_time}-${course.end_time}-${courseIndex}`}
-                onPress={() => onAssignDay?.(course, courseIndex)}
-                disabled={!onAssignDay}
-                activeOpacity={onAssignDay ? 0.6 : 1}
-                className={`flex-row items-center justify-between py-2 px-2 rounded-lg mb-1 ${
-                  onAssignDay ? 'bg-amber-100/70 active:bg-amber-200' : ''
-                }`}
+            {unscheduledCourses.map((course, idx) => (
+              <View
+                key={`${course.subject_code}-${course.start_time}-${course.end_time}-${idx}`}
+                className="flex-row items-center justify-between py-2 px-2 rounded-lg mb-1"
               >
                 <View className="flex-1">
                   <Text className="text-xs font-semibold text-amber-800">{course.subject_code}</Text>
@@ -251,13 +241,7 @@ const SchedulePreviewCard: React.FC<SchedulePreviewCardProps> = ({
                     {course.location ? ` • ${course.location}` : ''}
                   </Text>
                 </View>
-                {onAssignDay && (
-                  <View className="flex-row items-center bg-amber-500 px-2 py-1 rounded-full ml-2">
-                    <Edit3 size={10} color="#fff" />
-                    <Text className="text-[10px] font-semibold text-white ml-1">Assign</Text>
-                  </View>
-                )}
-              </TouchableOpacity>
+              </View>
             ))}
           </View>
         )}

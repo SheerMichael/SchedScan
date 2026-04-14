@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 import Svg, { Path } from 'react-native-svg';
 import { useLocalSearchParams, router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
-import { taskService, Task } from "../../../services/taskService";
+import { taskService, Task, TaskUrgency } from "../../../services/taskService";
 import { useAuth } from "../../../context/AuthContext";
 import {
   facultyTaskService,
@@ -60,6 +60,7 @@ export default function SubjectDetails() {
   // ============================================
   const [tasks, setTasks] = useState<Task[]>([]);
   const [newTaskText, setNewTaskText] = useState<string>("");
+  const [newTaskUrgency, setNewTaskUrgency] = useState<TaskUrgency>('medium');
   const [isLoading, setIsLoading] = useState(true);
   const [isAddingTask, setIsAddingTask] = useState(false);
 
@@ -70,6 +71,7 @@ export default function SubjectDetails() {
   const [studentFacultyTasks, setStudentFacultyTasks] = useState<StudentFacultyTask[]>([]);
   const [isFacultyLoading, setIsFacultyLoading] = useState(false);
   const [newFacultyTaskText, setNewFacultyTaskText] = useState<string>("");
+  const [newFacultyTaskUrgency, setNewFacultyTaskUrgency] = useState<TaskUrgency>('medium');
   const [isAddingFacultyTask, setIsAddingFacultyTask] = useState(false);
 
   // ============================================
@@ -179,9 +181,11 @@ export default function SubjectDetails() {
       const newTask = await taskService.createTask({
         subject_code: subjectCode,
         text: newTaskText.trim(),
+        urgency: newTaskUrgency,
       });
       setTasks(prev => [newTask, ...prev]);
       setNewTaskText("");
+      setNewTaskUrgency('medium');
     } catch (error) {
       console.error('Error adding task:', error);
       Alert.alert('Error', 'Failed to add task. Please try again.');
@@ -224,9 +228,11 @@ export default function SubjectDetails() {
       const newTask = await facultyTaskService.createFacultyTask({
         subject_code: subjectCode,
         text: newFacultyTaskText.trim(),
+        urgency: newFacultyTaskUrgency,
       });
       setFacultyTasks(prev => [newTask, ...prev]);
       setNewFacultyTaskText("");
+      setNewFacultyTaskUrgency('medium');
     } catch (error) {
       console.error('Error adding faculty task:', error);
       Alert.alert('Error', 'Failed to add task. Please try again.');
@@ -369,6 +375,24 @@ export default function SubjectDetails() {
     </Svg>
   );
 
+  const urgencyBadgeStyles: Record<TaskUrgency, { bg: string; text: string }> = {
+    low: { bg: 'bg-gray-100', text: 'text-gray-700' },
+    medium: { bg: 'bg-blue-100', text: 'text-blue-700' },
+    high: { bg: 'bg-amber-100', text: 'text-amber-700' },
+    critical: { bg: 'bg-red-100', text: 'text-red-700' },
+  };
+
+  const urgencyChoices: TaskUrgency[] = ['low', 'medium', 'high', 'critical'];
+
+  const facultyUrgencyStyles: Record<TaskUrgency, { bg: string; text: string }> = {
+    low: { bg: 'bg-gray-100', text: 'text-gray-700' },
+    medium: { bg: 'bg-blue-100', text: 'text-blue-700' },
+    high: { bg: 'bg-amber-100', text: 'text-amber-700' },
+    critical: { bg: 'bg-red-100', text: 'text-red-700' },
+  };
+
+  const facultyUrgencyChoices: TaskUrgency[] = ['low', 'medium', 'high', 'critical'];
+
   // ============================================
   // Render
   // ============================================
@@ -489,6 +513,16 @@ export default function SubjectDetails() {
                 >
                   <View className="flex-row items-center justify-between">
                     <View className="flex-1 mr-3">
+                      <View className="flex-row items-center mb-1">
+                        <View className={`px-2 py-0.5 rounded-full ${facultyUrgencyStyles[(task.effective_urgency || task.urgency || 'medium') as TaskUrgency].bg}`}>
+                          <Text className={`text-[10px] font-semibold uppercase ${facultyUrgencyStyles[(task.effective_urgency || task.urgency || 'medium') as TaskUrgency].text}`}>
+                            {task.effective_urgency || task.urgency || 'medium'}
+                          </Text>
+                        </View>
+                        {task.is_overdue && (
+                          <Text className="text-[10px] font-semibold text-red-600 ml-2">Overdue</Text>
+                        )}
+                      </View>
                       <Text className="font-semibold text-black">{task.text}</Text>
                       {task.due_date && (
                         <Text className="text-gray-400 text-xs mt-1">
@@ -518,6 +552,19 @@ export default function SubjectDetails() {
             {/* Add Faculty Task */}
             <View className="mt-4 mb-4">
               <Text className="font-bold text-lg mb-2">{addTaskLabel}</Text>
+              <View className="flex-row mb-2 flex-wrap">
+                {facultyUrgencyChoices.map((urgency) => (
+                  <TouchableOpacity
+                    key={`faculty-${urgency}`}
+                    onPress={() => setNewFacultyTaskUrgency(urgency)}
+                    className={`mr-2 mb-2 px-3 py-1.5 rounded-full border ${newFacultyTaskUrgency === urgency ? 'border-black bg-black' : 'border-gray-300 bg-white'}`}
+                  >
+                    <Text className={`text-xs font-semibold uppercase ${newFacultyTaskUrgency === urgency ? 'text-white' : 'text-gray-700'}`}>
+                      {urgency}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
               <View className="bg-white p-3 rounded-xl shadow flex-row items-center">
                 <TextInput
                   value={newFacultyTaskText}
@@ -576,6 +623,16 @@ export default function SubjectDetails() {
                       color="#f97316"
                     />
                     <View className="flex-1 ml-3">
+                      <View className="flex-row items-center mb-1">
+                        <View className={`px-2 py-0.5 rounded-full ${facultyUrgencyStyles[(task.effective_urgency || task.urgency || 'medium') as TaskUrgency].bg}`}>
+                          <Text className={`text-[10px] font-semibold uppercase ${facultyUrgencyStyles[(task.effective_urgency || task.urgency || 'medium') as TaskUrgency].text}`}>
+                            {task.effective_urgency || task.urgency || 'medium'}
+                          </Text>
+                        </View>
+                        {task.is_overdue && (
+                          <Text className="text-[10px] font-semibold text-red-600 ml-2">Overdue</Text>
+                        )}
+                      </View>
                       <Text
                         className={`font-semibold ${task.is_completed ? 'text-gray-400 line-through' : 'text-black'
                           }`}
@@ -728,12 +785,29 @@ export default function SubjectDetails() {
                     onValueChange={() => handleToggleComplete(task)}
                     color="#DC2626"
                   />
-                  <Text
-                    className={`flex-1 font-semibold ml-3 ${task.is_completed ? 'text-gray-400 line-through' : 'text-black'
-                      }`}
-                  >
-                    {task.text}
-                  </Text>
+                  <View className="flex-1 ml-3">
+                    <View className="flex-row items-center mb-1">
+                      <View className={`px-2 py-0.5 rounded-full ${urgencyBadgeStyles[(task.effective_urgency || task.urgency || 'medium') as TaskUrgency].bg}`}>
+                        <Text className={`text-[10px] font-semibold uppercase ${urgencyBadgeStyles[(task.effective_urgency || task.urgency || 'medium') as TaskUrgency].text}`}>
+                          {task.effective_urgency || task.urgency || 'medium'}
+                        </Text>
+                      </View>
+                      {task.is_overdue && (
+                        <Text className="text-[10px] font-semibold text-red-600 ml-2">Overdue</Text>
+                      )}
+                    </View>
+                    <Text
+                      className={`font-semibold ${task.is_completed ? 'text-gray-400 line-through' : 'text-black'
+                        }`}
+                    >
+                      {task.text}
+                    </Text>
+                    {task.due_date && (
+                      <Text className="text-xs text-gray-500 mt-0.5">
+                        Due {new Date(task.due_date).toLocaleString()}
+                      </Text>
+                    )}
+                  </View>
                   <TouchableOpacity
                     onPress={() => handleDeleteTask(task)}
                     className="p-2"
@@ -747,6 +821,19 @@ export default function SubjectDetails() {
             {/* Add New Personal Task */}
             <View className="mt-6 mb-8">
               <Text className="font-bold text-lg mb-2">Add New Task</Text>
+              <View className="flex-row mb-2 flex-wrap">
+                {urgencyChoices.map((urgency) => (
+                  <TouchableOpacity
+                    key={urgency}
+                    onPress={() => setNewTaskUrgency(urgency)}
+                    className={`mr-2 mb-2 px-3 py-1.5 rounded-full border ${newTaskUrgency === urgency ? 'border-black bg-black' : 'border-gray-300 bg-white'}`}
+                  >
+                    <Text className={`text-xs font-semibold uppercase ${newTaskUrgency === urgency ? 'text-white' : 'text-gray-700'}`}>
+                      {urgency}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
               <View className="bg-white p-3 rounded-xl shadow flex-row items-center">
                 <TextInput
                   value={newTaskText}

@@ -616,6 +616,7 @@ class FacultyTaskListCreateView(APIView):
                     task_text=task.text,
                     task_id=task.pk,
                     due_date=due_str,
+                    urgency=task.urgency,
                 )
             except Exception as e:
                 # Don't fail the task creation if notification fails

@@ -1045,6 +1045,68 @@ class AsyncExtractionJobTestCase(TestCase):
         self.assertEqual(job.extraction_method, 'ocr')
         mock_notify.assert_called_once_with(job, success=False)
 
+    @patch('api.utils.extraction_manager._send_extraction_job_notification')
+    @patch('api.utils.extraction_manager._write_extraction_log_for_job')
+    @patch('api.utils.extraction_manager.ExtractionManager')
+    def test_run_extraction_job_fails_when_all_courses_missing_days(self, mock_manager_class, mock_log, mock_notify):
+        """Accepted extraction results with no detected days should be rejected."""
+        import tempfile
+        from api.models import ExtractionJob, Schedule
+        from api.utils.extraction_manager import run_extraction_job
+
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as f:
+            f.write(b'fake pdf')
+            temp_path = f.name
+
+        job = ExtractionJob.objects.create(
+            user=self.user,
+            upload_type='student',
+            file_name='nodays.pdf',
+            status='pending',
+            _temp_file_path=temp_path,
+        )
+
+        mock_manager = Mock()
+        mock_manager.extract_schedule.return_value = {
+            'courses': [
+                {
+                    'subject_code': 'BSCS101',
+                    'subject_name': 'Programming',
+                    'start_time': '08:00AM',
+                    'end_time': '10:00AM',
+                    'day': '',
+                    'location': 'LR1',
+                },
+                {
+                    'subject_code': 'BSCS102',
+                    'subject_name': 'Data Structures',
+                    'start_time': '10:00AM',
+                    'end_time': '12:00PM',
+                    'day': '   ',
+                    'location': 'LR2',
+                },
+            ],
+            'extraction_method': 'llm_vision_parse',
+            'confidence': 0.92,
+            'processing_time': 0.4,
+            'attempts': ['llm_vision_parse'],
+            'student_number': '2022-09999',
+            'failure_category': 'none',
+            'validator_errors': [],
+            'score_breakdown': {},
+            'accepted': True,
+        }
+        mock_manager_class.return_value = mock_manager
+
+        run_extraction_job(job.job_id)
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, 'failed')
+        self.assertEqual(job.failure_category, 'missing_day')
+        self.assertIn('missing day values', job.error_message.lower())
+        self.assertEqual(Schedule.objects.filter(user=self.user, upload_type='student').count(), 0)
+        mock_notify.assert_called_once_with(job, success=False)
+
     # ------------------------------------------------------------------
     # Polling endpoint: status shapes
     # ------------------------------------------------------------------
@@ -1134,6 +1196,24 @@ class AsyncExtractionJobTestCase(TestCase):
         self.assertEqual(response.data.get('failure_category'), 'ownership_mismatch')
         self.assertFalse(response.data.get('retryable', True))
         self.assertIn('did not match your registered number', response.data.get('message', ''))
+
+    def test_poll_failed_missing_day_returns_specific_message(self):
+        from api.models import ExtractionJob
+
+        job = ExtractionJob.objects.create(
+            user=self.user,
+            upload_type='student',
+            file_name='test.pdf',
+            status='failed',
+            failure_category='missing_day',
+        )
+
+        response = self.client.get(f'/api/extraction-jobs/{job.job_id}/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['status'], 'failed')
+        self.assertEqual(response.data.get('failure_category'), 'missing_day')
+        self.assertTrue(response.data.get('retryable', False))
+        self.assertIn('No class days were detected', response.data.get('message', ''))
 
     def test_poll_another_users_job_returns_403(self):
         job = self._make_job(user=self.other_user)
@@ -1356,7 +1436,7 @@ class AsyncExtractionJobTestCase(TestCase):
                     'subject_name': '',
                     'start_time': '07:00AM',
                     'end_time': '09:00AM',
-                    'day': '',
+                    'day': 'M',
                     'location': 'LR1',
                 }
             ],

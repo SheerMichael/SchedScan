@@ -48,6 +48,9 @@ urlpatterns = [
     # Task endpoints
     path('tasks/', views.TaskListCreateView.as_view(), name='task_list_create'),
     path('tasks/counts/', views.TaskCountsView.as_view(), name='task_counts'),  # Batch counts endpoint
+    path('tasks/urgent-popup/', views.TaskUrgentPopupView.as_view(), name='task_urgent_popup'),
+    path('tasks/<int:pk>/urgent-action/', views.TaskUrgentActionView.as_view(), name='task_urgent_action'),
+    path('tasks/urgent-analytics/', views.TaskUrgencyAnalyticsView.as_view(), name='task_urgency_analytics'),
     path('tasks/<int:pk>/', views.TaskDetailView.as_view(), name='task_detail'),
     
     # Push notification endpoints

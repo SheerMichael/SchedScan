@@ -332,6 +332,11 @@ STRIPE_CURRENCY = 'php'
 # Keep server-side class reminders disabled unless explicitly enabled.
 ENABLE_SERVER_CLASS_REMINDERS = os.getenv('ENABLE_SERVER_CLASS_REMINDERS', 'False') == 'True'
 
+# Invasive urgent task popup tuning
+TASK_URGENT_POPUP_COOLDOWN_MINUTES = int(
+    os.getenv('TASK_URGENT_POPUP_COOLDOWN_MINUTES', '30')
+)
+
 # Extraction pipeline flags (Phase 1)
 EXTRACTION_V2_ENABLED = os.getenv('EXTRACTION_V2_ENABLED', 'True') == 'True'
 EXTRACTION_LLM_NORMALIZATION_ENABLED = os.getenv('EXTRACTION_LLM_NORMALIZATION_ENABLED', 'False') == 'True'

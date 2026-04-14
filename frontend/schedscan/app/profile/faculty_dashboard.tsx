@@ -35,6 +35,7 @@ import {
   ClassCode,
   TaskStats,
   ClassEnrollment,
+  TaskUrgency,
 } from "../../services/facultyTaskService";
 import { useFileDownload } from "../../hooks/useFileDownload";
 
@@ -92,6 +93,7 @@ export default function FacultyDashboard() {
   const [facultyTasks, setFacultyTasks] = useState<FacultyTaskWithStats[]>([]);
   const [isTasksLoading, setIsTasksLoading] = useState(false);
   const [newTaskText, setNewTaskText] = useState("");
+  const [newTaskUrgency, setNewTaskUrgency] = useState<TaskUrgency>('medium');
   const [isAddingTask, setIsAddingTask] = useState(false);
 
   // Enrolled students for selected subject
@@ -304,10 +306,12 @@ export default function FacultyDashboard() {
       const newTask = await facultyTaskService.createFacultyTask({
         subject_code: selectedSubject.subject_code,
         text: newTaskText.trim(),
+        urgency: newTaskUrgency,
         files: selectedFiles.length > 0 ? selectedFiles : undefined,
       });
       setFacultyTasks((prev) => [newTask, ...prev]);
       setNewTaskText("");
+      setNewTaskUrgency('medium');
       setSelectedFiles([]);
     } catch {
       Alert.alert("Error", "Failed to add task.");
@@ -435,6 +439,15 @@ export default function FacultyDashboard() {
       <Path d="M19 12H6M12 5l-7 7 7 7" />
     </Svg>
   );
+
+  const urgencyBadgeStyles: Record<TaskUrgency, { bg: string; text: string }> = {
+    low: { bg: 'bg-gray-100', text: 'text-gray-700' },
+    medium: { bg: 'bg-blue-100', text: 'text-blue-700' },
+    high: { bg: 'bg-amber-100', text: 'text-amber-700' },
+    critical: { bg: 'bg-red-100', text: 'text-red-700' },
+  };
+
+  const urgencyChoices: TaskUrgency[] = ['low', 'medium', 'high', 'critical'];
 
   // ============================================
   // RENDER — Subject List (top-level)
@@ -706,6 +719,16 @@ export default function FacultyDashboard() {
                   >
                     <View className="flex-row items-start justify-between">
                       <View className="flex-1 mr-3">
+                        <View className="flex-row items-center mb-1">
+                          <View className={`px-2 py-0.5 rounded-full ${urgencyBadgeStyles[(task.effective_urgency || task.urgency || 'medium') as TaskUrgency].bg}`}>
+                            <Text className={`text-[10px] font-semibold uppercase ${urgencyBadgeStyles[(task.effective_urgency || task.urgency || 'medium') as TaskUrgency].text}`}>
+                              {task.effective_urgency || task.urgency || 'medium'}
+                            </Text>
+                          </View>
+                          {task.is_overdue && (
+                            <Text className="text-[10px] font-semibold text-red-600 ml-2">Overdue</Text>
+                          )}
+                        </View>
                         <Text className="font-semibold text-black">
                           {task.text}
                         </Text>
@@ -764,6 +787,19 @@ export default function FacultyDashboard() {
               {/* Add task input */}
               <View className="mt-4 mb-6">
                 <Text className="font-bold text-base mb-2">Add Class Task</Text>
+                <View className="flex-row flex-wrap mb-2">
+                  {urgencyChoices.map((urgency) => (
+                    <TouchableOpacity
+                      key={`dash-urgency-${urgency}`}
+                      onPress={() => setNewTaskUrgency(urgency)}
+                      className={`mr-2 mb-2 px-3 py-1.5 rounded-full border ${newTaskUrgency === urgency ? 'border-black bg-black' : 'border-gray-300 bg-white'}`}
+                    >
+                      <Text className={`text-xs font-semibold uppercase ${newTaskUrgency === urgency ? 'text-white' : 'text-gray-700'}`}>
+                        {urgency}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
                 <View className="bg-white p-3 rounded-xl border border-gray-200">
                   <View className="flex-row items-center">
                     <TextInput

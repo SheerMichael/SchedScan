@@ -54,6 +54,13 @@ class User(AbstractUser):
         (10, '10 minutes'),
         (15, '15 minutes'),
     ]
+    URGENT_POPUP_SNOOZE_MINUTES_CHOICES = [
+        (5, '5 minutes'),
+        (10, '10 minutes'),
+        (15, '15 minutes'),
+        (30, '30 minutes'),
+        (60, '60 minutes'),
+    ]
     
     username = None  # Remove username field
     email = models.EmailField(unique=True, max_length=255)
@@ -88,6 +95,27 @@ class User(AbstractUser):
         choices=CLASS_REMINDER_MINUTES_CHOICES,
         default=15,
         help_text="Preferred reminder lead time before class starts"
+    )
+    urgent_popup_enabled = models.BooleanField(
+        default=True,
+        help_text="Whether invasive urgent task popups are enabled"
+    )
+    urgent_popup_quiet_hours_enabled = models.BooleanField(
+        default=False,
+        help_text="Whether urgent popups should be suppressed during quiet hours"
+    )
+    urgent_popup_quiet_hours_start = models.PositiveSmallIntegerField(
+        default=22,
+        help_text="Quiet hours start (0-23, local device hour)"
+    )
+    urgent_popup_quiet_hours_end = models.PositiveSmallIntegerField(
+        default=7,
+        help_text="Quiet hours end (0-23, local device hour)"
+    )
+    urgent_popup_default_snooze_minutes = models.PositiveSmallIntegerField(
+        choices=URGENT_POPUP_SNOOZE_MINUTES_CHOICES,
+        default=10,
+        help_text="Default snooze duration for urgent task popups"
     )
     is_verified = models.BooleanField(
         default=False,
@@ -124,6 +152,25 @@ class User(AbstractUser):
         Return the short name for the user.
         """
         return self.first_name
+
+    def is_in_quiet_hours(self, local_hour):
+        """
+        Return whether a local hour value (0-23) falls in quiet hours.
+        """
+        if not self.urgent_popup_quiet_hours_enabled:
+            return False
+
+        if local_hour is None:
+            return False
+
+        start = int(self.urgent_popup_quiet_hours_start)
+        end = int(self.urgent_popup_quiet_hours_end)
+
+        if start == end:
+            return True
+        if start < end:
+            return start <= local_hour < end
+        return local_hour >= start or local_hour < end
 
 
 class Schedule(models.Model):
@@ -292,6 +339,18 @@ class Task(models.Model):
         related_name='tasks',
         help_text="The user who owns this task"
     )
+    URGENCY_CHOICES = [
+        ('low', 'Low'),
+        ('medium', 'Medium'),
+        ('high', 'High'),
+        ('critical', 'Critical'),
+    ]
+    URGENCY_RANK = {
+        'low': 1,
+        'medium': 2,
+        'high': 3,
+        'critical': 4,
+    }
     subject_code = models.CharField(
         max_length=50,
         help_text="Subject code this task is associated with"
@@ -300,9 +359,30 @@ class Task(models.Model):
         max_length=500,
         help_text="Task description/content"
     )
+    urgency = models.CharField(
+        max_length=10,
+        choices=URGENCY_CHOICES,
+        default='medium',
+        help_text="User-selected urgency level"
+    )
+    due_date = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Optional due date used to escalate urgency as deadline approaches"
+    )
     is_completed = models.BooleanField(
         default=False,
         help_text="Whether this task has been completed"
+    )
+    last_urgent_popup_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Last time an invasive urgent popup was shown for this task"
+    )
+    urgent_snoozed_until = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Suppress urgent popup for this task until this time"
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -313,11 +393,103 @@ class Task(models.Model):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['user', 'subject_code']),
+            models.Index(fields=['user', 'is_completed', 'urgency']),
+            models.Index(fields=['user', 'is_completed', 'due_date']),
         ]
 
     def __str__(self):
         status = "✓" if self.is_completed else "○"
         return f"[{status}] {self.subject_code}: {self.text[:50]}"
+
+    def get_effective_urgency(self, now=None):
+        """
+        Return urgency after deadline-based escalation.
+
+        Rules:
+        - Overdue or due within 60 minutes => critical
+        - Due within 24 hours => at least high
+        - Otherwise use user-selected urgency
+        """
+        from django.utils import timezone
+
+        if now is None:
+            now = timezone.now()
+
+        effective_rank = self.URGENCY_RANK.get(self.urgency, 2)
+
+        if self.due_date:
+            delta_minutes = (self.due_date - now).total_seconds() / 60
+            if delta_minutes <= 60:
+                effective_rank = max(effective_rank, self.URGENCY_RANK['critical'])
+            elif delta_minutes <= 24 * 60:
+                effective_rank = max(effective_rank, self.URGENCY_RANK['high'])
+
+        for label, rank in self.URGENCY_RANK.items():
+            if rank == effective_rank:
+                return label
+        return 'medium'
+
+    def minutes_until_due(self, now=None):
+        """Return signed minutes until due date, or None when no due date exists."""
+        from django.utils import timezone
+
+        if self.due_date is None:
+            return None
+        if now is None:
+            now = timezone.now()
+        return int((self.due_date - now).total_seconds() // 60)
+
+
+class TaskUrgencyEvent(models.Model):
+    """
+    Tracks user interactions with invasive urgent-task popup flow.
+    """
+
+    EVENT_TYPE_CHOICES = [
+        ('popup_shown', 'Popup Shown'),
+        ('snoozed', 'Snoozed'),
+        ('acknowledged', 'Acknowledged'),
+        ('opened', 'Opened'),
+        ('completed_from_popup', 'Completed From Popup'),
+    ]
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='task_urgency_events',
+        help_text='User who triggered this urgency event'
+    )
+    task = models.ForeignKey(
+        Task,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='urgency_events',
+        help_text='Related personal task (if still present)'
+    )
+    event_type = models.CharField(
+        max_length=30,
+        choices=EVENT_TYPE_CHOICES,
+        help_text='Urgency popup lifecycle event type'
+    )
+    metadata = models.JSONField(
+        null=True,
+        blank=True,
+        help_text='Additional event metadata (reason, due delta, etc.)'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Task Urgency Event'
+        verbose_name_plural = 'Task Urgency Events'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'event_type', '-created_at']),
+            models.Index(fields=['task', 'event_type']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} - {self.event_type}"
 
 
 class ParentChildLink(models.Model):
@@ -767,6 +939,19 @@ class FacultyTask(models.Model):
     Legacy single-file fields (file, file_name) are kept for backward compatibility
     but new uploads should use FacultyTaskFile.
     """
+    URGENCY_CHOICES = [
+        ('low', 'Low'),
+        ('medium', 'Medium'),
+        ('high', 'High'),
+        ('critical', 'Critical'),
+    ]
+    URGENCY_RANK = {
+        'low': 1,
+        'medium': 2,
+        'high': 3,
+        'critical': 4,
+    }
+
     faculty = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
@@ -780,6 +965,12 @@ class FacultyTask(models.Model):
     text = models.CharField(
         max_length=500,
         help_text="Task description/content"
+    )
+    urgency = models.CharField(
+        max_length=10,
+        choices=URGENCY_CHOICES,
+        default='medium',
+        help_text='Faculty-set urgency for this class task'
     )
     due_date = models.DateTimeField(
         null=True,
@@ -808,10 +999,41 @@ class FacultyTask(models.Model):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['faculty', 'subject_code']),
+            models.Index(fields=['faculty', 'subject_code', 'urgency']),
         ]
 
     def __str__(self):
         return f"[Faculty] {self.subject_code}: {self.text[:50]}"
+
+    def get_effective_urgency(self, now=None):
+        """Return urgency after due-date-based escalation rules."""
+        from django.utils import timezone
+
+        if now is None:
+            now = timezone.now()
+
+        effective_rank = self.URGENCY_RANK.get(self.urgency, 2)
+        if self.due_date:
+            delta_minutes = (self.due_date - now).total_seconds() / 60
+            if delta_minutes <= 60:
+                effective_rank = max(effective_rank, self.URGENCY_RANK['critical'])
+            elif delta_minutes <= 24 * 60:
+                effective_rank = max(effective_rank, self.URGENCY_RANK['high'])
+
+        for label, rank in self.URGENCY_RANK.items():
+            if rank == effective_rank:
+                return label
+        return 'medium'
+
+    def minutes_until_due(self, now=None):
+        """Return signed minutes until due date, or None when due date is missing."""
+        from django.utils import timezone
+
+        if self.due_date is None:
+            return None
+        if now is None:
+            now = timezone.now()
+        return int((self.due_date - now).total_seconds() // 60)
 
 
 class FacultyTaskFile(models.Model):
@@ -1263,6 +1485,7 @@ class ExtractionLog(models.Model):
         ('no_text', 'No Text'),
         ('parse_error', 'Parse Error'),
         ('low_confidence', 'Low Confidence'),
+        ('missing_day', 'Missing Day'),
         ('metadata_mismatch', 'Metadata Mismatch'),
         ('system_error', 'System Error'),
     ]
@@ -1598,6 +1821,7 @@ class ExtractionJob(models.Model):
         ('low_confidence',     'Low Confidence'),
         ('parse_error',        'Parse Error'),
         ('no_text',            'No Text Extracted'),
+        ('missing_day',        'Missing Day'),
         ('metadata_mismatch',  'Metadata Mismatch'),
         ('system_error',       'System Error'),
         ('none',               'None'),
