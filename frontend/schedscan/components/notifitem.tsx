@@ -9,16 +9,43 @@ import Animated, {
 
 type Props = {
   title: string;
-  time: string;
+  category: string;
   message: string;
   date: string;
+  isRead: boolean;
+  notificationType: 'class_reminder' | 'faculty_task' | 'general';
   onDelete: () => void;
 };
 
-export default function NotificationItem({ title, time, message, date, onDelete }: Props) {
+const EMOJI_REGEX = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu;
+
+const cleanText = (value: string): string => value.replace(EMOJI_REGEX, '').replace(/\s{2,}/g, ' ').trim();
+
+const getAccentColor = (notificationType: Props['notificationType']): string => {
+  if (notificationType === 'class_reminder') return '#2563EB';
+  if (notificationType === 'faculty_task') return '#EA580C';
+  return '#475569';
+};
+
+const getTypeInitials = (notificationType: Props['notificationType']): string => {
+  if (notificationType === 'class_reminder') return 'CR';
+  if (notificationType === 'faculty_task') return 'FT';
+  return 'NT';
+};
+
+export default function NotificationItem({
+  title,
+  category,
+  message,
+  date,
+  isRead,
+  notificationType,
+  onDelete,
+}: Props) {
   const translateX = useSharedValue(0);
   const opacity = useSharedValue(1);
-  const height = useSharedValue(112); // Approximate height of the notification
+  const height = useSharedValue(136);
+  const accentColor = getAccentColor(notificationType);
 
   const panGesture = Gesture.Pan()
     .onUpdate((event) => {
@@ -52,27 +79,56 @@ export default function NotificationItem({ title, time, message, date, onDelete 
   }));
 
   return (
-    <Animated.View style={animatedStyle}>
-      <View className="relative overflow-hidden">
+    <Animated.View style={[animatedStyle, { marginBottom: 12 }]}> 
+      <View className="relative overflow-hidden rounded-2xl">
         {/* Delete button that appears behind */}
         <Animated.View 
           style={deleteButtonStyle}
-          className="absolute right-0 top-4 bottom-0 w-20 bg-red-500 justify-center items-center rounded-r-lg"
+          className="absolute right-0 top-0 bottom-0 w-24 bg-red-500 justify-center items-center rounded-r-2xl"
         >
           <Text className="text-white font-bold">Delete</Text>
         </Animated.View>
 
         {/* Main notification content */}
         <GestureDetector gesture={panGesture}>
-          <Animated.View className="bg-white">
-            <View className="flex-row justify-start items-start pt-4">
-              <View className="bg-primary-500 w-2 h-28 rounded-full" />
+          <Animated.View
+            className="rounded-2xl border"
+            style={{
+              borderColor: '#E5E7EB',
+              borderLeftWidth: 4,
+              borderLeftColor: accentColor,
+              backgroundColor: isRead ? '#FFFFFF' : '#FFF7ED',
+            }}
+          >
+            <View className="flex-row items-start p-4">
+              <View
+                className="h-10 w-10 items-center justify-center rounded-full"
+                style={{ backgroundColor: `${accentColor}22` }}
+              >
+                <Text className="text-xs font-bold" style={{ color: accentColor }}>{getTypeInitials(notificationType)}</Text>
+              </View>
 
-              <View className="flex-col justify-start items-start pl-6">
-                <Text className="font-bold text-xl pb-2">{title}</Text>
-                <Text>{time}</Text>
-                <Text>{message}</Text>
-                <Text className="text-gray-500 pt-2">{date}</Text>
+              <View className="ml-3 flex-1">
+                <View className="flex-row items-start justify-between">
+                  <Text className="mr-2 flex-1 text-lg font-bold text-slate-900" numberOfLines={1}>
+                    {cleanText(title)}
+                  </Text>
+                  <Text className="text-xs text-slate-500">{date}</Text>
+                </View>
+
+                <Text className="mt-0.5 text-xs font-semibold uppercase tracking-wide" style={{ color: accentColor }}>
+                  {category}
+                </Text>
+
+                <Text className="mt-2 text-base leading-5 text-slate-700" numberOfLines={2}>
+                  {cleanText(message)}
+                </Text>
+
+                {!isRead && (
+                  <View className="mt-3 self-start rounded-full bg-orange-100 px-2.5 py-1">
+                    <Text className="text-xs font-semibold text-orange-700">Unread</Text>
+                  </View>
+                )}
               </View>
             </View>
           </Animated.View>

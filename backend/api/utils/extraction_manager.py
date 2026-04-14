@@ -42,6 +42,14 @@ except ImportError as e:
 logger = logging.getLogger(__name__)
 
 
+def _all_courses_missing_days(courses_data: List[Dict]) -> bool:
+    """Return True when every extracted course has an empty day field."""
+    if not courses_data:
+        return False
+
+    return all(not str(course.get('day') or '').strip() for course in courses_data)
+
+
 def _normalize_student_number(value: str) -> str:
     text = str(value or '').strip()
     if not text:
@@ -735,6 +743,46 @@ def run_extraction_job(job_id) -> None:
         courses_data = result.get('courses', [])
         accepted = result.get('accepted', False)
 
+        if accepted and courses_data and _all_courses_missing_days(courses_data):
+            raw_method = result.get('extraction_method', 'none')
+            if (
+                'llm_vision_parse' in result.get('attempts', [])
+                or raw_method == 'llm_vision_parse'
+                or 'llm_full_parse' in result.get('attempts', [])
+                or raw_method == 'llm_full_parse'
+                or 'llm_normalize' in result.get('attempts', [])
+            ):
+                failed_job_method = 'llm'
+            elif raw_method and raw_method != 'none':
+                failed_job_method = raw_method
+            elif result.get('attempts'):
+                failed_job_method = result['attempts'][-1]
+            else:
+                failed_job_method = 'none'
+
+            result['failure_category'] = 'missing_day'
+            job.status = 'failed'
+            job.extraction_method = failed_job_method
+            job.failure_category = 'missing_day'
+            job.confidence = result.get('confidence')
+            job.error_message = (
+                'Extraction rejected: all extracted courses are missing day values. '
+                'Re-upload a clearer timetable with visible day columns.'
+            )
+            job.llm_failure_reason = str(result.get('llm_failure_reason') or '')[:40]
+            job._temp_file_path = ''
+            job.save()
+
+            logger.warning(
+                "run_extraction_job: job %s -> failed (missing_day, courses=%d)",
+                job_id,
+                len(courses_data),
+            )
+
+            _write_extraction_log_for_job(job, result, success=False)
+            _send_extraction_job_notification(job, success=False)
+            return
+
         if accepted and courses_data:
             # ── Fix 6: Student number ownership re-check (async path) ────────
             # The sync ownership check happened before job creation. Re-verify
@@ -1008,11 +1056,11 @@ def _send_extraction_job_notification(job, *, success: bool) -> None:
 
     try:
         if success:
-            title = "Schedule Ready ✅"
+            title = "Schedule Ready"
             body = "Your schedule has been extracted and saved!"
             notif_type = 'general'
         else:
-            title = "Extraction Failed ⚠️"
+            title = "Extraction Failed"
             body = "We couldn't read your schedule — please try re-uploading."
             notif_type = 'general'
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, RefreshControl } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { router } from "expo-router";
@@ -8,12 +8,21 @@ import { usePushNotification } from "../../usePushNotification";
 import { useFocusEffect } from '@react-navigation/native';
 import notificationService, { NotificationItem as NotifType } from '../../services/notificationService';
 
+type FilterMode = 'all' | 'unread';
+
+const getCategoryLabel = (notificationType: NotifType['notification_type']): string => {
+    if (notificationType === 'class_reminder') return 'Class Reminder';
+    if (notificationType === 'faculty_task') return 'Faculty Task';
+    return 'Notification';
+};
+
 const NotificationScreen = () => {
     const [notifications, setNotifications] = useState<(NotifType & { isDismissed?: boolean })[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [unreadCount, setUnreadCount] = useState(0);
     const [isClearingAll, setIsClearingAll] = useState(false);
+    const [activeFilter, setActiveFilter] = useState<FilterMode>('all');
 
     const { notification } = usePushNotification();
 
@@ -88,7 +97,8 @@ const NotificationScreen = () => {
     };
 
     const handleClearAll = async () => {
-        if (isClearingAll || notifications.length === 0) return;
+        const hasUnread = notifications.some(item => !item.isDismissed && !item.is_read);
+        if (isClearingAll || !hasUnread) return;
 
         const previousNotifications = notifications;
         const previousUnreadCount = unreadCount;
@@ -115,34 +125,58 @@ const NotificationScreen = () => {
         fetchNotifications(false);
     };
 
-    // Filter out dismissed notifications for display
-    const visibleNotifications = notifications.filter(n => !n.isDismissed);
+    const visibleNotifications = useMemo(() => {
+        return notifications.filter(item => {
+            if (item.isDismissed) return false;
+            if (activeFilter === 'unread') return !item.is_read;
+            return true;
+        });
+    }, [notifications, activeFilter]);
+
+    const hasUnread = notifications.some(item => !item.isDismissed && !item.is_read);
 
     return (
-        <GestureHandlerRootView style={{ flex: 1 }}>
-            <View className="w-full h-14 bg-white border-b-2 border-gray-200 justify-between items-center flex-row">
-                <View className='pl-8 flex-row justify-center items-center'>
-                    <TouchableOpacity onPress={() => router.push('/Home/home')}>
+        <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
+            <View className="w-full bg-white border-b border-slate-200 px-5 pb-3 pt-2">
+                <View className="flex-row items-center justify-between">
+                    <TouchableOpacity onPress={() => router.back()} className="h-10 w-10 items-center justify-center rounded-full bg-slate-100">
                         <LeftPointingArrow size={30} color="#000000" />
+                    </TouchableOpacity>
+
+                    <View className='flex-row items-center'>
+                        <Text className='text-2xl font-bold text-slate-900'>Notifications</Text>
+                    </View>
+
+                    <TouchableOpacity
+                        className={`rounded-full px-4 py-2 ${isClearingAll || !hasUnread ? 'bg-orange-200' : 'bg-orange-600'}`}
+                        onPress={handleClearAll}
+                        disabled={isClearingAll || !hasUnread}
+                    >
+                        <Text className="font-semibold text-white">{isClearingAll ? 'Clearing...' : 'Read all'}</Text>
                     </TouchableOpacity>
                 </View>
 
-                <View className='flex-row justify-center items-center'>
-                    <Text className='font-bold text-2xl'>Notifications</Text>
+                <View className="mt-3 flex-row items-center">
+                    <Text className="text-sm text-slate-600">Inbox</Text>
                     {unreadCount > 0 && (
-                        <View className="ml-2 bg-red-500 rounded-full w-6 h-6 items-center justify-center">
+                        <View className="ml-2 h-6 min-w-6 rounded-full bg-red-500 px-2 items-center justify-center">
                             <Text className="text-white text-xs font-bold">{unreadCount > 99 ? '99+' : unreadCount}</Text>
                         </View>
                     )}
                 </View>
 
-                <View className="pr-4 flex items-center justify-center">
+                <View className="mt-3 flex-row rounded-full bg-slate-100 p-1">
                     <TouchableOpacity 
-                        className={`p-2 pr-4 pl-4 rounded-full ${isClearingAll || visibleNotifications.length === 0 ? 'bg-orange-300' : 'bg-orange-600'}`}
-                        onPress={handleClearAll}
-                        disabled={isClearingAll || visibleNotifications.length === 0}
+                        className={`flex-1 rounded-full py-2 ${activeFilter === 'all' ? 'bg-white' : ''}`}
+                        onPress={() => setActiveFilter('all')}
                     >
-                        <Text className="text-white">{isClearingAll ? 'Clearing...' : 'Clear'}</Text>
+                        <Text className={`text-center font-semibold ${activeFilter === 'all' ? 'text-slate-900' : 'text-slate-600'}`}>All</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        className={`flex-1 rounded-full py-2 ${activeFilter === 'unread' ? 'bg-white' : ''}`}
+                        onPress={() => setActiveFilter('unread')}
+                    >
+                        <Text className={`text-center font-semibold ${activeFilter === 'unread' ? 'text-slate-900' : 'text-slate-600'}`}>Unread</Text>
                     </TouchableOpacity>
                 </View>
             </View>
@@ -154,7 +188,7 @@ const NotificationScreen = () => {
                 </View>
             ) : visibleNotifications.length > 0 ? (
                 <ScrollView 
-                    className="flex-1 px-6"
+                    className="flex-1 px-4 pt-3"
                     refreshControl={
                         <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} colors={['#DC2626']} />
                     }
@@ -163,17 +197,24 @@ const NotificationScreen = () => {
                         <NotificationItem
                             key={item.id}
                             title={item.title}
-                            time={item.notification_type === 'class_reminder' ? 'Class Reminder' : item.notification_type === 'faculty_task' ? 'Faculty Task' : 'Notification'}
+                            category={getCategoryLabel(item.notification_type)}
                             message={item.message}
                             date={item.time_ago}
+                            isRead={item.is_read}
+                            notificationType={item.notification_type}
                             onDelete={() => handleDismissNotification(item.id)}
                         />
                     ))}
+                    <View className="h-6" />
                 </ScrollView>
             ) : 
                 <View className='flex-1 justify-center items-center'>
-                    <Text>No notifications!</Text>
-                    <Text>You&apos;re all caught up</Text>
+                    <Text className="text-lg font-semibold text-slate-900">
+                        {activeFilter === 'unread' ? 'No unread notifications' : 'No notifications yet'}
+                    </Text>
+                    <Text className="mt-1 text-slate-500">
+                        {activeFilter === 'unread' ? 'Everything is up to date.' : 'You are all caught up.'}
+                    </Text>
                 </View>
             }
         </GestureHandlerRootView>
