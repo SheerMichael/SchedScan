@@ -8,6 +8,7 @@ import logging
 import uuid
 from datetime import timedelta, date, datetime, time
 
+from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.db.models import Avg, Count, Sum, Q
 from django.db.models.functions import TruncDate
@@ -62,6 +63,17 @@ def _write_audit(admin, action, target_type="", target_id=None, detail="", ip=No
         )
     except Exception:
         logger.exception("Failed to write audit log")
+
+
+def _normalize_provider_name(raw_provider: str) -> str:
+    provider = str(raw_provider or '').strip().lower()
+    return provider or 'unknown'
+
+
+def _provider_sort_key(provider_name: str):
+    preferred = {'gemini': 0, 'groq': 1, 'ollama': 2, 'unknown': 99}
+    normalized = _normalize_provider_name(provider_name)
+    return (preferred.get(normalized, 50), normalized)
 
 
 # ---------------------------------------------------------------------------
@@ -1050,7 +1062,15 @@ class AdminExtractionAnalyticsView(APIView):
         "avg_processing_time": float,
         "method_breakdown": { "pdf_text": int, "ocr": int, "ocr_fallback": int, ... },
         "upload_type_breakdown": { "student": int, "faculty": int },
-        "llm_failure_breakdown": { "timeout": int, "invalid_json": int, ... }
+        "failure_category_breakdown": { "timeout": int, "parse_error": int, ... },
+        "llm_failure_breakdown": { "timeout": int, "invalid_json": int, ... },
+        "llm_provider_breakdown": { "gemini": int, "groq": int, ... },
+        "llm_model_breakdown": { "gemini-2.5-flash-lite": int, ... },
+        "provider_latency_summary": {
+            "gemini": { "samples": int, "avg_seconds": float, "p50_seconds": float, "p95_seconds": float, "p99_seconds": float },
+            ...
+        },
+        "runtime_profile": { ... }
     }
     """
 
@@ -1080,12 +1100,7 @@ class AdminExtractionAnalyticsView(APIView):
         }
         timeout_type_breakdown = {}
 
-        for score_breakdown in score_breakdowns:
-            if not isinstance(score_breakdown, dict):
-                continue
-            llm_timing = score_breakdown.get('llm_timing')
-            if not isinstance(llm_timing, dict):
-                continue
+        for llm_timing in self._iter_llm_timing_entries(score_breakdowns):
 
             timeout_type = str(llm_timing.get('timeout_type') or '').strip().lower()
             if timeout_type:
@@ -1135,6 +1150,67 @@ class AdminExtractionAnalyticsView(APIView):
             'preprocess_seconds': summarize(timing_samples['preprocess_seconds']),
             'attempt_count': summarize(timing_samples['attempt_count']),
         }
+
+    @staticmethod
+    def _iter_llm_timing_entries(score_breakdowns):
+        for score_breakdown in score_breakdowns:
+            if not isinstance(score_breakdown, dict):
+                continue
+            llm_timing = score_breakdown.get('llm_timing')
+            if isinstance(llm_timing, dict):
+                yield llm_timing
+
+    @staticmethod
+    def _build_llm_provider_breakdowns(score_breakdowns):
+        provider_breakdown = {}
+        model_breakdown = {}
+
+        for llm_timing in AdminExtractionAnalyticsView._iter_llm_timing_entries(score_breakdowns):
+            provider = _normalize_provider_name(llm_timing.get('provider'))
+            provider_breakdown[provider] = provider_breakdown.get(provider, 0) + 1
+
+            model = str(llm_timing.get('model') or '').strip()
+            if model:
+                model_breakdown[model] = model_breakdown.get(model, 0) + 1
+
+        provider_breakdown = {
+            key: provider_breakdown[key]
+            for key in sorted(provider_breakdown.keys(), key=_provider_sort_key)
+        }
+        model_breakdown = {
+            key: model_breakdown[key]
+            for key in sorted(model_breakdown.keys())
+        }
+
+        return provider_breakdown, model_breakdown
+
+    def _build_provider_latency_summary(self, score_breakdowns):
+        timings_by_provider = {}
+
+        for llm_timing in self._iter_llm_timing_entries(score_breakdowns):
+            provider = _normalize_provider_name(llm_timing.get('provider'))
+            raw_total_seconds = llm_timing.get('total_seconds')
+            try:
+                total_seconds = float(raw_total_seconds)
+            except (TypeError, ValueError):
+                continue
+            if total_seconds < 0:
+                continue
+
+            timings_by_provider.setdefault(provider, []).append(total_seconds)
+
+        summary = {}
+        for provider in sorted(timings_by_provider.keys(), key=_provider_sort_key):
+            provider_timings = sorted(timings_by_provider[provider])
+            summary[provider] = {
+                'samples': len(provider_timings),
+                'avg_seconds': round(sum(provider_timings) / len(provider_timings), 3),
+                'p50_seconds': round(self._percentile(provider_timings, 0.50), 3),
+                'p95_seconds': round(self._percentile(provider_timings, 0.95), 3),
+                'p99_seconds': round(self._percentile(provider_timings, 0.99), 3),
+            }
+
+        return summary
 
     def get(self, request):
         try:
@@ -1186,9 +1262,36 @@ class AdminExtractionAnalyticsView(APIView):
             r["llm_failure_reason"]: r["n"] for r in failure_reason_raw
         }
 
-        llm_timing_summary = self._build_llm_timing_summary(
-            qs.values_list('score_breakdown', flat=True)
+        failure_category_raw = (
+            qs.filter(success=False)
+            .exclude(failure_category='')
+            .values('failure_category')
+            .annotate(n=Count('id'))
+            .order_by('-n')
         )
+        failure_category_breakdown = {
+            r['failure_category']: r['n'] for r in failure_category_raw
+        }
+
+        score_breakdowns = list(qs.values_list('score_breakdown', flat=True))
+
+        llm_timing_summary = self._build_llm_timing_summary(
+            score_breakdowns
+        )
+        llm_provider_breakdown, llm_model_breakdown = self._build_llm_provider_breakdowns(
+            score_breakdowns
+        )
+        provider_latency_summary = self._build_provider_latency_summary(score_breakdowns)
+
+        runtime_profile = {
+            'configured_provider_mode': str(getattr(settings, 'EXTRACTION_LLM_PROVIDER', 'ollama')).strip().lower(),
+            'vision_only_mode': bool(getattr(settings, 'EXTRACTION_VISION_ONLY_MODE', False)),
+            'direct_file_parse_enabled': bool(getattr(settings, 'EXTRACTION_LLM_DIRECT_FILE_PARSE_ENABLED', False)),
+            'direct_file_fallback_on_reject': bool(getattr(settings, 'EXTRACTION_LLM_DIRECT_FILE_FALLBACK_ON_REJECT', True)),
+            'cloud_timeout_seconds': int(getattr(settings, 'EXTRACTION_CLOUD_TIMEOUT_SECONDS', 30)),
+            'async_max_running_threads': int(getattr(settings, 'EXTRACTION_ASYNC_MAX_RUNNING_THREADS', 1)),
+            'async_max_inflight_global': int(getattr(settings, 'EXTRACTION_ASYNC_MAX_INFLIGHT_GLOBAL', 2)),
+        }
 
         return Response({
             "period_days": days,
@@ -1200,8 +1303,13 @@ class AdminExtractionAnalyticsView(APIView):
             "avg_processing_time": round(agg["avg_time"] or 0.0, 3),
             "method_breakdown": method_breakdown,
             "upload_type_breakdown": type_breakdown,
+            "failure_category_breakdown": failure_category_breakdown,
             "llm_failure_breakdown": llm_failure_breakdown,
+            "llm_provider_breakdown": llm_provider_breakdown,
+            "llm_model_breakdown": llm_model_breakdown,
+            "provider_latency_summary": provider_latency_summary,
             "llm_timing_summary": llm_timing_summary,
+            "runtime_profile": runtime_profile,
         })
 
 
@@ -1219,6 +1327,11 @@ class AdminExtractionChartView(APIView):
         "days": 7,
         "data": [
             { "date": "2026-03-07", "label": "Sat", "success": 5, "failure": 1 },
+            ...
+        ],
+        "provider_keys": ["gemini", "groq"],
+        "provider_data": [
+            { "date": "2026-03-07", "label": "Sat", "gemini": 4, "groq": 1, "total_provider_samples": 5 },
             ...
         ]
     }
@@ -1252,6 +1365,35 @@ class AdminExtractionChartView(APIView):
         failure_map = {str(r["day"]): r["failure_count"] for r in by_day}
 
         chart_data = []
+        provider_counts_by_day = {}
+        provider_keys = set()
+
+        rows = (
+            ExtractionLog.objects
+            .filter(created_at__gte=start_dt, created_at__lt=end_dt)
+            .values('created_at', 'score_breakdown')
+        )
+
+        for row in rows:
+            created_at = row.get('created_at')
+            score_breakdown = row.get('score_breakdown')
+            if not created_at or not isinstance(score_breakdown, dict):
+                continue
+
+            llm_timing = score_breakdown.get('llm_timing')
+            if not isinstance(llm_timing, dict):
+                continue
+
+            provider = _normalize_provider_name(llm_timing.get('provider'))
+            local_day = timezone.localtime(created_at, timezone=tz).date()
+            day_key = str(local_day)
+
+            day_counts = provider_counts_by_day.setdefault(day_key, {})
+            day_counts[provider] = day_counts.get(provider, 0) + 1
+            provider_keys.add(provider)
+
+        sorted_provider_keys = sorted(provider_keys, key=_provider_sort_key)
+
         for i in range(days):
             d = start + timedelta(days=i)
             d_str = str(d)
@@ -1262,7 +1404,31 @@ class AdminExtractionChartView(APIView):
                 "failure": failure_map.get(d_str, 0),
             })
 
-        return Response({"days": days, "data": chart_data})
+        provider_chart_data = []
+        for i in range(days):
+            d = start + timedelta(days=i)
+            d_str = str(d)
+            day_counts = provider_counts_by_day.get(d_str, {})
+
+            row = {
+                'date': d_str,
+                'label': d.strftime('%a'),
+            }
+
+            total_provider_samples = 0
+            for provider in sorted_provider_keys:
+                count = int(day_counts.get(provider, 0))
+                row[provider] = count
+                total_provider_samples += count
+            row['total_provider_samples'] = total_provider_samples
+            provider_chart_data.append(row)
+
+        return Response({
+            "days": days,
+            "data": chart_data,
+            "provider_keys": sorted_provider_keys,
+            "provider_data": provider_chart_data,
+        })
 
 
 class AdminFailedExtractionListView(APIView):
@@ -1342,7 +1508,7 @@ class AdminExtractionJobListView(APIView):
         - search     : job_id, file_name, or user email contains
         - status     : pending | processing | done | failed
         - upload_type: student | faculty
-        - llm_failure_reason: timeout | invalid_json | schema_reject | empty_courses
+        - llm_failure_reason: timeout | invalid_json | schema_reject | empty_courses | rate_limited
         - user_id    : integer user id
         - date_from  : ISO date (YYYY-MM-DD), inclusive
         - date_to    : ISO date (YYYY-MM-DD), inclusive
@@ -1354,7 +1520,7 @@ class AdminExtractionJobListView(APIView):
 
     _allowed_statuses = {'pending', 'processing', 'done', 'failed'}
     _allowed_upload_types = {'student', 'faculty'}
-    _allowed_llm_failure_reasons = {'timeout', 'invalid_json', 'schema_reject', 'empty_courses'}
+    _allowed_llm_failure_reasons = {'timeout', 'invalid_json', 'schema_reject', 'empty_courses', 'rate_limited', 'metadata_missing'}
 
     def get(self, request):
         qs = ExtractionJob.objects.select_related('user').order_by('-created_at')

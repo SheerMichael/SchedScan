@@ -475,6 +475,65 @@ class AdminExtractionAnalyticsViewTestCase(AdminEndpointMixin, TestCase):
         self.assertGreaterEqual(timing["request_seconds"].get("p95", 0.0), 2.0)
         self.assertGreaterEqual(timing["attempt_count"].get("avg", 0.0), 1.0)
 
+    def test_provider_latency_summary_groups_by_provider(self):
+        ExtractionLog.objects.create(
+            file_name="provider_gemini_1.pdf",
+            file_type="pdf",
+            upload_type="student",
+            extraction_method="llm_vision_parse",
+            confidence=0.9,
+            courses_extracted=5,
+            success=True,
+            score_breakdown={
+                "llm_timing": {
+                    "provider": "gemini",
+                    "total_seconds": 1.0,
+                }
+            },
+        )
+        ExtractionLog.objects.create(
+            file_name="provider_gemini_2.pdf",
+            file_type="pdf",
+            upload_type="student",
+            extraction_method="llm_vision_parse",
+            confidence=0.9,
+            courses_extracted=5,
+            success=True,
+            score_breakdown={
+                "llm_timing": {
+                    "provider": "gemini",
+                    "total_seconds": 3.0,
+                }
+            },
+        )
+        ExtractionLog.objects.create(
+            file_name="provider_unknown.pdf",
+            file_type="pdf",
+            upload_type="student",
+            extraction_method="llm_vision_parse",
+            confidence=0.9,
+            courses_extracted=5,
+            success=True,
+            score_breakdown={
+                "llm_timing": {
+                    "total_seconds": 2.0,
+                }
+            },
+        )
+
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.get("/api/admin/extraction/analytics/")
+        self.assertEqual(resp.status_code, 200)
+        summary = resp.data.get("provider_latency_summary", {})
+
+        self.assertIn("gemini", summary)
+        self.assertEqual(summary["gemini"]["samples"], 2)
+        self.assertAlmostEqual(summary["gemini"]["p50_seconds"], 2.0, places=2)
+        self.assertGreater(summary["gemini"]["p95_seconds"], 2.5)
+
+        self.assertIn("unknown", summary)
+        self.assertEqual(summary["unknown"]["samples"], 1)
+
 
 class AdminExtractionChartViewTestCase(AdminEndpointMixin, TestCase):
     """Test GET /api/admin/extraction/analytics/chart/"""
@@ -548,6 +607,67 @@ class AdminExtractionChartViewTestCase(AdminEndpointMixin, TestCase):
 
         self.assertEqual(chart_success, analytics.data["successful"])
         self.assertEqual(chart_failure, analytics.data["failed"])
+
+    def test_chart_includes_daily_provider_distribution(self):
+        self.client.force_authenticate(user=self.admin)
+
+        now = timezone.now()
+        day_a = now - timedelta(days=2)
+        day_b = now - timedelta(days=1)
+
+        gemini_log = ExtractionLog.objects.create(
+            file_name="provider_gemini_chart.pdf",
+            file_type="pdf",
+            upload_type="student",
+            extraction_method="llm_vision_parse",
+            confidence=0.8,
+            courses_extracted=3,
+            success=True,
+            score_breakdown={"llm_timing": {"provider": "gemini", "total_seconds": 1.1}},
+        )
+        groq_log = ExtractionLog.objects.create(
+            file_name="provider_groq_chart.pdf",
+            file_type="pdf",
+            upload_type="student",
+            extraction_method="llm_vision_parse",
+            confidence=0.8,
+            courses_extracted=3,
+            success=True,
+            score_breakdown={"llm_timing": {"provider": "groq", "total_seconds": 1.2}},
+        )
+        unknown_log = ExtractionLog.objects.create(
+            file_name="provider_unknown_chart.pdf",
+            file_type="pdf",
+            upload_type="student",
+            extraction_method="llm_vision_parse",
+            confidence=0.8,
+            courses_extracted=3,
+            success=True,
+            score_breakdown={"llm_timing": {"total_seconds": 1.3}},
+        )
+
+        ExtractionLog.objects.filter(pk=gemini_log.pk).update(created_at=day_a)
+        ExtractionLog.objects.filter(pk=groq_log.pk).update(created_at=day_b)
+        ExtractionLog.objects.filter(pk=unknown_log.pk).update(created_at=day_b)
+
+        resp = self.client.get("/api/admin/extraction/analytics/chart/?days=7")
+        self.assertEqual(resp.status_code, 200)
+
+        provider_keys = resp.data.get("provider_keys", [])
+        provider_data = resp.data.get("provider_data", [])
+
+        self.assertIn("gemini", provider_keys)
+        self.assertIn("groq", provider_keys)
+        self.assertIn("unknown", provider_keys)
+        self.assertEqual(len(provider_data), 7)
+
+        provider_row_map = {row["date"]: row for row in provider_data}
+        day_a_key = str(day_a.date())
+        day_b_key = str(day_b.date())
+
+        self.assertEqual(provider_row_map[day_a_key].get("gemini", 0), 1)
+        self.assertEqual(provider_row_map[day_b_key].get("groq", 0), 1)
+        self.assertEqual(provider_row_map[day_b_key].get("unknown", 0), 1)
 
 
 class AdminExtractionJobListViewTestCase(AdminEndpointMixin, TestCase):

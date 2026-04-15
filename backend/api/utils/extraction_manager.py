@@ -224,6 +224,9 @@ class ExtractionManager:
                 'request_seconds': float(v_telemetry.get('llm_request_seconds') or 0.0),
                 'total_seconds': float(v_telemetry.get('llm_total_seconds') or 0.0),
                 'attempt_count': len(v_telemetry.get('llm_attempt_metrics') or []),
+                'provider': str(v_telemetry.get('llm_provider') or '').strip().lower(),
+                'model': str(v_telemetry.get('llm_model') or '').strip(),
+                'stage': str(v_telemetry.get('stage') or '').strip(),
             }
 
             if v_telemetry.get('llm_parse_success') and v_courses:

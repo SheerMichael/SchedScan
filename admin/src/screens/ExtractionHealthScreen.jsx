@@ -1,8 +1,8 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import {
   AlertCircle, Loader2, Search, Clock, ChevronLeft, ChevronRight,
-  ArrowDown, ArrowUp, CheckCircle2, XCircle, FileText, Eye, X,
-  MessageSquare, Wrench, RefreshCw,
+  CheckCircle2, XCircle, Eye, X,
+  MessageSquare, RefreshCw,
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import StatCard from '../components/graphs/StatCard';
@@ -37,6 +37,24 @@ const TAB_LABELS = {
   failed: 'Failed Extractions',
   incidents: 'Incident Reports',
 };
+
+const PROVIDER_COLORS = {
+  gemini: '#16a34a',
+  groq: '#2563eb',
+  ollama: '#7c3aed',
+  unknown: '#64748b',
+};
+const FALLBACK_PROVIDER_COLORS = ['#0f766e', '#b45309', '#475569', '#be123c', '#1d4ed8'];
+
+function formatProviderLabel(provider) {
+  const key = String(provider || '').trim().toLowerCase();
+  if (!key) return 'Unknown';
+  if (key === 'gemini') return 'Gemini';
+  if (key === 'groq') return 'Groq';
+  if (key === 'ollama') return 'Ollama';
+  if (key === 'unknown') return 'Unknown';
+  return key.toUpperCase();
+}
 
 // --------------------------------------------------------------------------
 // Main Screen
@@ -94,10 +112,10 @@ function Header() {
     <header className="bg-white border-b border-slate-200 px-4 py-7">
       <div className="max-w-350 mx-auto">
         <h1 className="text-4xl font-black text-slate-800 tracking-tight">
-          OCR Health <span className="text-primary-800">&amp; Reports</span>
+          Extraction Health <span className="text-primary-800">&amp; Reports</span>
         </h1>
         <p className="text-sm text-slate-400 mt-1 font-semibold tracking-tight">
-          Extraction pipeline monitoring &amp; incident management
+          Cloud vision telemetry, extraction reliability, and incident management
         </p>
       </div>
     </header>
@@ -110,11 +128,28 @@ function Header() {
 function AnalyticsTab({ refreshKey }) {
   const [stats, setStats] = useState(null);
   const [chartData, setChartData] = useState([]);
+  const [providerChartData, setProviderChartData] = useState([]);
+  const [providerKeys, setProviderKeys] = useState([]);
   const [days, setDays] = useState(30);
   const [chartDays, setChartDays] = useState(7);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const requestVersionRef = useRef(0);
+
+  const providerLatencyEntries = useMemo(() => {
+    const summary = stats?.provider_latency_summary || {};
+    return Object.entries(summary)
+      .map(([provider, metrics]) => ({
+        provider,
+        samples: Number(metrics?.samples || 0),
+        avgSeconds: Number(metrics?.avg_seconds || 0),
+        p50Seconds: Number(metrics?.p50_seconds || 0),
+        p95Seconds: Number(metrics?.p95_seconds || 0),
+        p99Seconds: Number(metrics?.p99_seconds || 0),
+      }))
+      .filter((item) => item.samples > 0)
+      .sort((a, b) => b.samples - a.samples);
+  }, [stats?.provider_latency_summary]);
 
   useEffect(() => {
     const requestVersion = requestVersionRef.current + 1;
@@ -137,6 +172,16 @@ function AnalyticsTab({ refreshKey }) {
             Success: d.success,
             Failure: d.failure,
           }))
+        );
+
+        const incomingProviderKeys = Array.isArray(chartRes.data.provider_keys)
+          ? chartRes.data.provider_keys
+          : [];
+        setProviderKeys(incomingProviderKeys);
+        setProviderChartData(
+          Array.isArray(chartRes.data.provider_data)
+            ? chartRes.data.provider_data
+            : []
         );
       })
       .catch((err) => {
@@ -187,27 +232,58 @@ function AnalyticsTab({ refreshKey }) {
         <StatCard title="Avg Processing" value={loading ? '…' : fmtTime(stats?.avg_processing_time)} />
       </div>
 
+      {stats?.runtime_profile && (
+        <RuntimeProfileCard profile={stats.runtime_profile} />
+      )}
+
       {/* Method breakdown */}
       {stats && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-10">
           <BreakdownCard title="By Method" data={stats.method_breakdown} labels={{
-            pdf_text: 'PDF Text', ocr: 'OCR (Direct)', ocr_fallback: 'OCR (Fallback)',
-            pdf_text_only: 'PDF Only (No OCR)', none: 'Failed',
+            llm_vision_parse: 'LLM Vision Parse',
+            llm_vision_metadata_gate: 'LLM Metadata Gate',
+            llm_full_parse: 'LLM Full Parse',
+            regex_fallback: 'Regex Fallback',
+            pdf_text: 'PDF Text',
+            ocr: 'OCR (Direct)',
+            ocr_fallback: 'OCR (Fallback)',
+            pdf_text_only: 'PDF Only (No OCR)',
+            none: 'Failed Before Parse',
           }} />
           <BreakdownCard title="By Upload Type" data={stats.upload_type_breakdown} labels={{
             student: 'Student', faculty: 'Faculty',
+          }} />
+          <BreakdownCard title="LLM Provider Mix" data={stats.llm_provider_breakdown || {}} labels={{
+            gemini: 'Gemini',
+            groq: 'Groq',
+            ollama: 'Ollama',
+          }} />
+          <BreakdownCard title="Failure Categories" data={stats.failure_category_breakdown || {}} labels={{
+            timeout: 'Timeout',
+            parse_error: 'Parse Error',
+            low_confidence: 'Low Confidence',
+            metadata_mismatch: 'Metadata Mismatch',
+            ownership_mismatch: 'Ownership Mismatch',
+            no_text: 'No Text',
+            system_error: 'System Error',
           }} />
           <BreakdownCard title="LLM Failure Reasons" data={stats.llm_failure_breakdown || {}} labels={{
             timeout: 'Timeout',
             invalid_json: 'Invalid JSON',
             schema_reject: 'Schema Reject',
             empty_courses: 'Empty Courses',
+            rate_limited: 'Rate Limited',
+            metadata_missing: 'Metadata Missing',
           }} />
         </div>
       )}
 
       {stats && (
         <LlmTimingSummaryCard summary={stats.llm_timing_summary || null} />
+      )}
+
+      {providerLatencyEntries.length > 0 && (
+        <ProviderLatencyCards entries={providerLatencyEntries} />
       )}
 
       {/* Chart */}
@@ -242,32 +318,155 @@ function AnalyticsTab({ refreshKey }) {
           </BarChart>
         </ResponsiveContainer>
       </div>
+
+      {/* Provider distribution chart */}
+      <div className="mt-8 bg-white border-2 border-slate-200 p-6 shadow-[4px_4px_0px_0px_rgba(15,23,42,0.08)]">
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest">Daily Provider Distribution</h3>
+          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+            {providerKeys.length} provider{providerKeys.length === 1 ? '' : 's'}
+          </span>
+        </div>
+
+        {providerKeys.length === 0 || providerChartData.length === 0 ? (
+          <p className="text-xs font-semibold text-slate-400">No provider telemetry available for this period.</p>
+        ) : (
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={providerChartData} barGap={2}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              <XAxis dataKey="label" tick={{ fontSize: 11, fontWeight: 700 }} />
+              <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+              <Tooltip
+                contentStyle={{ fontSize: 12, fontWeight: 600 }}
+                formatter={(value, key) => [value, formatProviderLabel(key)]}
+              />
+              <Legend
+                wrapperStyle={{ fontSize: 11, fontWeight: 700 }}
+                formatter={(value) => formatProviderLabel(value)}
+              />
+              {providerKeys.map((providerKey, index) => (
+                <Bar
+                  key={providerKey}
+                  dataKey={providerKey}
+                  stackId="provider"
+                  fill={PROVIDER_COLORS[providerKey] || FALLBACK_PROVIDER_COLORS[index % FALLBACK_PROVIDER_COLORS.length]}
+                  radius={index === providerKeys.length - 1 ? [2, 2, 0, 0] : [0, 0, 0, 0]}
+                />
+              ))}
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
     </>
+  );
+}
+
+function ProviderLatencyCards({ entries }) {
+  return (
+    <div className="mb-10">
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Provider Latency (Total Seconds)</h3>
+        <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">P50 / P95</span>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        {entries.map((entry) => (
+          <div key={entry.provider} className="border-2 border-slate-900 bg-white p-4 shadow-[4px_4px_0px_0px_rgba(15,23,42,0.08)]">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-xs font-black uppercase tracking-widest text-slate-900">{formatProviderLabel(entry.provider)}</p>
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{entry.samples} samples</span>
+            </div>
+
+            <div className="space-y-1 text-xs font-bold text-slate-700">
+              <div>P50: <span className="text-slate-900">{entry.p50Seconds.toFixed(3)}s</span></div>
+              <div>P95: <span className="text-slate-900">{entry.p95Seconds.toFixed(3)}s</span></div>
+              <div>Avg: <span className="text-slate-900">{entry.avgSeconds.toFixed(3)}s</span></div>
+              <div>P99: <span className="text-slate-900">{entry.p99Seconds.toFixed(3)}s</span></div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
 function BreakdownCard({ title, data, labels }) {
   const total = Object.values(data).reduce((a, b) => a + b, 0);
+  const entries = Object.entries(data || {});
+
   return (
     <div className="bg-white border-2 border-slate-200 p-6 shadow-[4px_4px_0px_0px_rgba(185,28,28,0.05)]">
       <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4">{title}</h3>
-      <div className="space-y-3">
-        {Object.entries(data).map(([key, count]) => {
-          const pctVal = total > 0 ? ((count / total) * 100).toFixed(1) : '0.0';
-          return (
-            <div key={key} className="flex items-center gap-3">
-              <span className="text-xs font-bold text-slate-700 w-32 truncate">{labels[key] || key}</span>
-              <div className="flex-1 bg-slate-100 h-5 rounded-sm overflow-hidden">
-                <div
-                  className="h-full bg-slate-800 transition-all"
-                  style={{ width: `${pctVal}%` }}
-                />
+      {entries.length === 0 ? (
+        <p className="text-xs font-semibold text-slate-400">No data for this period.</p>
+      ) : (
+        <div className="space-y-3">
+          {entries.map(([key, count]) => {
+            const pctVal = total > 0 ? ((count / total) * 100).toFixed(1) : '0.0';
+            return (
+              <div key={key} className="flex items-center gap-3">
+                <span className="text-xs font-bold text-slate-700 w-32 truncate">{labels[key] || key}</span>
+                <div className="flex-1 bg-slate-100 h-5 rounded-sm overflow-hidden">
+                  <div
+                    className="h-full bg-slate-800 transition-all"
+                    style={{ width: `${pctVal}%` }}
+                  />
+                </div>
+                <span className="text-[11px] font-black text-slate-600 w-16 text-right">{count} ({pctVal}%)</span>
               </div>
-              <span className="text-[11px] font-black text-slate-600 w-16 text-right">{count} ({pctVal}%)</span>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RuntimeProfileCard({ profile }) {
+  return (
+    <div className="mb-10 border-2 border-slate-900 bg-slate-50 p-6 shadow-[4px_4px_0px_0px_rgba(15,23,42,0.1)]">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Runtime Profile</h3>
+          <p className="mt-1 text-sm font-black uppercase tracking-wide text-slate-900">
+            Provider Mode: {profile.configured_provider_mode || 'unknown'}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <span className={`border-2 px-3 py-1 text-[10px] font-black uppercase tracking-widest ${
+            profile.vision_only_mode ? 'border-emerald-700 bg-emerald-600 text-white' : 'border-slate-300 bg-white text-slate-600'
+          }`}>
+            Vision Only: {profile.vision_only_mode ? 'On' : 'Off'}
+          </span>
+          <span className={`border-2 px-3 py-1 text-[10px] font-black uppercase tracking-widest ${
+            profile.direct_file_parse_enabled ? 'border-emerald-700 bg-emerald-600 text-white' : 'border-slate-300 bg-white text-slate-600'
+          }`}>
+            Direct Parse: {profile.direct_file_parse_enabled ? 'On' : 'Off'}
+          </span>
+          <span className={`border-2 px-3 py-1 text-[10px] font-black uppercase tracking-widest ${
+            profile.direct_file_fallback_on_reject ? 'border-amber-600 bg-amber-500 text-white' : 'border-slate-300 bg-white text-slate-600'
+          }`}>
+            Reject Fallback: {profile.direct_file_fallback_on_reject ? 'On' : 'Off'}
+          </span>
+        </div>
       </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <RuntimeProfileStat label="Cloud Timeout" value={`${profile.cloud_timeout_seconds ?? '—'}s`} />
+        <RuntimeProfileStat label="Worker Threads" value={String(profile.async_max_running_threads ?? '—')} />
+        <RuntimeProfileStat label="Global Inflight" value={String(profile.async_max_inflight_global ?? '—')} />
+        <RuntimeProfileStat label="Mode" value={(profile.configured_provider_mode || '—').toUpperCase()} />
+      </div>
+    </div>
+  );
+}
+
+function RuntimeProfileStat({ label, value }) {
+  return (
+    <div className="border border-slate-200 bg-white p-3">
+      <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">{label}</p>
+      <p className="mt-1 text-sm font-black text-slate-900">{value}</p>
     </div>
   );
 }
@@ -472,6 +671,7 @@ function ExtractionJobsTab({ refreshKey }) {
             { key: 'invalid_json', label: 'Invalid JSON' },
             { key: 'schema_reject', label: 'Schema Reject' },
             { key: 'empty_courses', label: 'Empty Courses' },
+            { key: 'rate_limited', label: 'Rate Limited' },
           ].map((reason) => (
             <button
               key={reason.key || 'all-llm-reasons'}
