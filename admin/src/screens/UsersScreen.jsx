@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { Search, Shield, ChevronLeft, ChevronRight, UserMinus, Power, Loader2, AlertCircle, CheckCircle2, XCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import DeactivateUserModal from '../components/modal/DeactivateUserModal';
@@ -264,6 +265,21 @@ export default function UsersScreen() {
       <Header />
 
       <div className="p-8 max-w-350 mx-auto">
+        <div className="mb-8 border-2 border-slate-900 bg-primary-50 p-4 shadow-[4px_4px_0px_0px_rgba(127,29,29,0.3)]">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-primary-700">Identity Control</p>
+              <p className="text-sm font-black uppercase tracking-wide text-slate-900">Need to confirm real faculty accounts?</p>
+            </div>
+            <Link
+              to="/faculty-verification"
+              className="inline-flex items-center justify-center border-2 border-primary-900 bg-primary-800 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white shadow-[3px_3px_0px_0px_rgba(127,29,29,1)] transition-all hover:translate-x-px hover:translate-y-px hover:shadow-none"
+            >
+              Open Faculty Verification
+            </Link>
+          </div>
+        </div>
+
         {/* Search + filter row */}
         <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6 mb-10">
           <div className="relative w-full md:w-112.5">
