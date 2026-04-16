@@ -46,7 +46,7 @@ export default function SubjectDetails() {
   const isClassItem = normalizedPriorityLevel !== 'holiday' && normalizedPriorityLevel !== 'event';
   const isNonClassItem = normalizedPriorityLevel === 'holiday' || normalizedPriorityLevel === 'event';
   const isFacultyCourse = isClassItem && normalizedSourceType === 'faculty';
-  const shouldUseFacultyTaskFlow = isFaculty && isClassItem;
+  const shouldUseFacultyTaskFlow = isFaculty && isFacultyCourse;
   const taskLabelSingular = isNonClassItem ? 'Task' : 'Class Task';
   const taskLabelPlural = isNonClassItem ? 'Tasks' : 'Class Tasks';
   const addTaskLabel = isNonClassItem ? 'Add Task' : 'Add Class Task';
@@ -56,7 +56,7 @@ export default function SubjectDetails() {
   const addTaskPlaceholder = isNonClassItem ? 'Enter task...' : 'Enter task for students...';
 
   // ============================================
-  // Personal Task State (Student only)
+  // Personal Task State
   // ============================================
   const [tasks, setTasks] = useState<Task[]>([]);
   const [newTaskText, setNewTaskText] = useState<string>("");
@@ -112,7 +112,7 @@ export default function SubjectDetails() {
 
     try {
       if (shouldUseFacultyTaskFlow) {
-        // Faculty: load their tasks + class code
+        // Faculty + faculty-sourced class: load class code and faculty tasks
         const [tasksData, codes] = await Promise.all([
           facultyTaskService.getFacultyTasks(subjectCode),
           facultyTaskService.getClassCodes(subjectCode),
@@ -136,7 +136,7 @@ export default function SubjectDetails() {
         );
         setIsEnrolled(enrolled);
       } else {
-        // Other user types (e.g., parent) — just load personal tasks
+        // Personal-task flow: faculty on student-sourced classes + other user types
         const personalTasks = await taskService.getTasks(subjectCode);
         setTasks(personalTasks);
       }
@@ -754,9 +754,9 @@ export default function SubjectDetails() {
         )}
 
         {/* ============================================ */}
-        {/* PERSONAL TASKS (Student & other user types)  */}
+        {/* PERSONAL TASKS (all users outside faculty-task flow) */}
         {/* ============================================ */}
-        {(!isFaculty || isNonClassItem) && (
+        {!shouldUseFacultyTaskFlow && (
           <>
             {/* Only show header for non-student (students already have it above) */}
             {!isStudent && (
