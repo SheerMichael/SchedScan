@@ -91,8 +91,78 @@ services:
     routes:
       - path: /
 
+workers:
+  - name: schedscan-celery-worker
+    source_dir: /
+    dockerfile_path: backend/Dockerfile
+    github:
+      repo: SheerMichael/SchedScan
+      branch: main
+      deploy_on_push: true
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    instance_count: 1
+    run_command: python -m celery -A core worker --loglevel=INFO --concurrency=2 --without-gossip --without-mingle
+    envs:
+      - key: DJANGO_SECRET_KEY
+        scope: RUN_AND_BUILD_TIME
+        type: SECRET
+      - key: DJANGO_DEBUG
+        value: "False"
+      - key: DJANGO_ALLOWED_HOSTS
+        scope: RUN_TIME
+        value: ${APP_DOMAIN}
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        value: ${db.DATABASE_URL}
+      - key: CELERY_BROKER_URL
+        scope: RUN_TIME
+        value: ${redis.DATABASE_URL}
+      - key: CELERY_RESULT_BACKEND
+        scope: RUN_TIME
+        value: ${redis.DATABASE_URL}
+      - key: ENABLE_SERVER_TASK_DUE_REMINDERS
+        value: "True"
+      - key: ENABLE_SERVER_CLASS_REMINDERS
+        value: "False"
+  - name: schedscan-celery-beat
+    source_dir: /
+    dockerfile_path: backend/Dockerfile
+    github:
+      repo: SheerMichael/SchedScan
+      branch: main
+      deploy_on_push: true
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    instance_count: 1
+    run_command: python -m celery -A core beat --loglevel=INFO
+    envs:
+      - key: DJANGO_SECRET_KEY
+        scope: RUN_AND_BUILD_TIME
+        type: SECRET
+      - key: DJANGO_DEBUG
+        value: "False"
+      - key: DJANGO_ALLOWED_HOSTS
+        scope: RUN_TIME
+        value: ${APP_DOMAIN}
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        value: ${db.DATABASE_URL}
+      - key: CELERY_BROKER_URL
+        scope: RUN_TIME
+        value: ${redis.DATABASE_URL}
+      - key: CELERY_RESULT_BACKEND
+        scope: RUN_TIME
+        value: ${redis.DATABASE_URL}
+      - key: ENABLE_SERVER_TASK_DUE_REMINDERS
+        value: "True"
+      - key: ENABLE_SERVER_CLASS_REMINDERS
+        value: "False"
+
 databases:
   - name: db
     engine: PG
     production: false
     cluster_name: schedscan-db
+  - name: redis
+    engine: REDIS
+    production: false
+    cluster_name: schedscan-redis

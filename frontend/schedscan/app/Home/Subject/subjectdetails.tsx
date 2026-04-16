@@ -20,6 +20,16 @@ import {
 } from "../../../services/remarkService";
 import JoinClassModal from "../../../components/JoinClassModal";
 import { useFileDownload } from "../../../hooks/useFileDownload";
+import {
+  formatDueDatePreview,
+  getDueDatePresets,
+  getSuggestedDueDateForUrgency,
+  getUrgencyHint,
+  parseCustomDueDateTime,
+  requiresDueDate,
+  toDueDateISOString,
+} from "../../../utils/taskDueDate";
+import type { DueDatePresetKey } from "../../../utils/taskDueDate";
 
 export default function SubjectDetails() {
   const { user, refreshUser } = useAuth();
@@ -61,6 +71,10 @@ export default function SubjectDetails() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [newTaskText, setNewTaskText] = useState<string>("");
   const [newTaskUrgency, setNewTaskUrgency] = useState<TaskUrgency>('medium');
+  const [newTaskDueDate, setNewTaskDueDate] = useState<string | null>(null);
+  const [newTaskDuePreset, setNewTaskDuePreset] = useState<DueDatePresetKey | null>(null);
+  const [newTaskCustomDate, setNewTaskCustomDate] = useState<string>('');
+  const [newTaskCustomTime, setNewTaskCustomTime] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
   const [isAddingTask, setIsAddingTask] = useState(false);
 
@@ -72,6 +86,10 @@ export default function SubjectDetails() {
   const [isFacultyLoading, setIsFacultyLoading] = useState(false);
   const [newFacultyTaskText, setNewFacultyTaskText] = useState<string>("");
   const [newFacultyTaskUrgency, setNewFacultyTaskUrgency] = useState<TaskUrgency>('medium');
+  const [newFacultyTaskDueDate, setNewFacultyTaskDueDate] = useState<string | null>(null);
+  const [newFacultyTaskDuePreset, setNewFacultyTaskDuePreset] = useState<DueDatePresetKey | null>(null);
+  const [newFacultyTaskCustomDate, setNewFacultyTaskCustomDate] = useState<string>('');
+  const [newFacultyTaskCustomTime, setNewFacultyTaskCustomTime] = useState<string>('');
   const [isAddingFacultyTask, setIsAddingFacultyTask] = useState(false);
 
   // ============================================
@@ -176,16 +194,30 @@ export default function SubjectDetails() {
 
   const handleAddTask = async () => {
     if (!newTaskText.trim() || !subjectCode) return;
+
+    if (requiresDueDate(newTaskUrgency) && !newTaskDueDate) {
+      Alert.alert(
+        'Due Date Required',
+        'High and critical tasks must include a due date.'
+      );
+      return;
+    }
+
     try {
       setIsAddingTask(true);
       const newTask = await taskService.createTask({
         subject_code: subjectCode,
         text: newTaskText.trim(),
         urgency: newTaskUrgency,
+        due_date: newTaskDueDate,
       });
       setTasks(prev => [newTask, ...prev]);
       setNewTaskText("");
       setNewTaskUrgency('medium');
+      setNewTaskDueDate(null);
+      setNewTaskDuePreset(null);
+      setNewTaskCustomDate('');
+      setNewTaskCustomTime('');
     } catch (error) {
       console.error('Error adding task:', error);
       Alert.alert('Error', 'Failed to add task. Please try again.');
@@ -223,16 +255,30 @@ export default function SubjectDetails() {
   // ============================================
   const handleAddFacultyTask = async () => {
     if (!newFacultyTaskText.trim() || !subjectCode) return;
+
+    if (requiresDueDate(newFacultyTaskUrgency) && !newFacultyTaskDueDate) {
+      Alert.alert(
+        'Due Date Required',
+        'High and critical class tasks must include a due date.'
+      );
+      return;
+    }
+
     try {
       setIsAddingFacultyTask(true);
       const newTask = await facultyTaskService.createFacultyTask({
         subject_code: subjectCode,
         text: newFacultyTaskText.trim(),
         urgency: newFacultyTaskUrgency,
+        due_date: newFacultyTaskDueDate,
       });
       setFacultyTasks(prev => [newTask, ...prev]);
       setNewFacultyTaskText("");
       setNewFacultyTaskUrgency('medium');
+      setNewFacultyTaskDueDate(null);
+      setNewFacultyTaskDuePreset(null);
+      setNewFacultyTaskCustomDate('');
+      setNewFacultyTaskCustomTime('');
     } catch (error) {
       console.error('Error adding faculty task:', error);
       Alert.alert('Error', 'Failed to add task. Please try again.');
@@ -392,6 +438,75 @@ export default function SubjectDetails() {
   };
 
   const facultyUrgencyChoices: TaskUrgency[] = ['low', 'medium', 'high', 'critical'];
+  const dueDatePresets = getDueDatePresets();
+
+  const applyTaskDuePreset = (preset: { key: DueDatePresetKey; date: Date }) => {
+    setNewTaskDueDate(toDueDateISOString(preset.date));
+    setNewTaskDuePreset(preset.key);
+  };
+
+  const clearTaskDueDate = () => {
+    setNewTaskDueDate(null);
+    setNewTaskDuePreset(null);
+    setNewTaskCustomDate('');
+    setNewTaskCustomTime('');
+  };
+
+  const applyFacultyDuePreset = (preset: { key: DueDatePresetKey; date: Date }) => {
+    setNewFacultyTaskDueDate(toDueDateISOString(preset.date));
+    setNewFacultyTaskDuePreset(preset.key);
+  };
+
+  const clearFacultyDueDate = () => {
+    setNewFacultyTaskDueDate(null);
+    setNewFacultyTaskDuePreset(null);
+    setNewFacultyTaskCustomDate('');
+    setNewFacultyTaskCustomTime('');
+  };
+
+  const handleTaskUrgencyChange = (urgency: TaskUrgency) => {
+    setNewTaskUrgency(urgency);
+    if (!newTaskDueDate) {
+      const suggestedDue = getSuggestedDueDateForUrgency(urgency);
+      if (suggestedDue) {
+        setNewTaskDueDate(suggestedDue);
+        setNewTaskDuePreset('tomorrow_9');
+      }
+    }
+  };
+
+  const handleFacultyUrgencyChange = (urgency: TaskUrgency) => {
+    setNewFacultyTaskUrgency(urgency);
+    if (!newFacultyTaskDueDate) {
+      const suggestedDue = getSuggestedDueDateForUrgency(urgency);
+      if (suggestedDue) {
+        setNewFacultyTaskDueDate(suggestedDue);
+        setNewFacultyTaskDuePreset('tomorrow_9');
+      }
+    }
+  };
+
+  const applyCustomTaskDueDate = () => {
+    const parsed = parseCustomDueDateTime(newTaskCustomDate, newTaskCustomTime);
+    if (!parsed.isoDate) {
+      Alert.alert('Invalid Date/Time', parsed.error || 'Please enter a valid date and time.');
+      return;
+    }
+
+    setNewTaskDueDate(parsed.isoDate);
+    setNewTaskDuePreset(null);
+  };
+
+  const applyCustomFacultyDueDate = () => {
+    const parsed = parseCustomDueDateTime(newFacultyTaskCustomDate, newFacultyTaskCustomTime);
+    if (!parsed.isoDate) {
+      Alert.alert('Invalid Date/Time', parsed.error || 'Please enter a valid date and time.');
+      return;
+    }
+
+    setNewFacultyTaskDueDate(parsed.isoDate);
+    setNewFacultyTaskDuePreset(null);
+  };
 
   // ============================================
   // Render
@@ -556,7 +671,7 @@ export default function SubjectDetails() {
                 {facultyUrgencyChoices.map((urgency) => (
                   <TouchableOpacity
                     key={`faculty-${urgency}`}
-                    onPress={() => setNewFacultyTaskUrgency(urgency)}
+                    onPress={() => handleFacultyUrgencyChange(urgency)}
                     className={`mr-2 mb-2 px-3 py-1.5 rounded-full border ${newFacultyTaskUrgency === urgency ? 'border-black bg-black' : 'border-gray-300 bg-white'}`}
                   >
                     <Text className={`text-xs font-semibold uppercase ${newFacultyTaskUrgency === urgency ? 'text-white' : 'text-gray-700'}`}>
@@ -565,6 +680,60 @@ export default function SubjectDetails() {
                   </TouchableOpacity>
                 ))}
               </View>
+              <Text className="text-xs font-semibold text-gray-600 mb-1">Due Date</Text>
+              <View className="flex-row mb-2 flex-wrap">
+                {dueDatePresets.map((preset) => (
+                  <TouchableOpacity
+                    key={`faculty-due-${preset.key}`}
+                    onPress={() => applyFacultyDuePreset(preset)}
+                    className={`mr-2 mb-2 px-3 py-1.5 rounded-full border ${newFacultyTaskDuePreset === preset.key ? 'border-orange-500 bg-orange-500' : 'border-gray-300 bg-white'}`}
+                  >
+                    <Text className={`text-xs font-semibold ${newFacultyTaskDuePreset === preset.key ? 'text-white' : 'text-gray-700'}`}>
+                      {preset.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity
+                  onPress={clearFacultyDueDate}
+                  className="mr-2 mb-2 px-3 py-1.5 rounded-full border border-gray-300 bg-white"
+                >
+                  <Text className="text-xs font-semibold text-gray-700">No Due Date</Text>
+                </TouchableOpacity>
+              </View>
+              <View className="flex-row items-center mb-2">
+                <TextInput
+                  value={newFacultyTaskCustomDate}
+                  onChangeText={setNewFacultyTaskCustomDate}
+                  placeholder="YYYY-MM-DD"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  className="flex-1 bg-white border border-gray-300 rounded-lg px-3 py-2 mr-2 text-xs"
+                />
+                <TextInput
+                  value={newFacultyTaskCustomTime}
+                  onChangeText={setNewFacultyTaskCustomTime}
+                  placeholder="HH:mm"
+                  keyboardType="numbers-and-punctuation"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  className="w-24 bg-white border border-gray-300 rounded-lg px-3 py-2 mr-2 text-xs"
+                />
+                <TouchableOpacity
+                  onPress={applyCustomFacultyDueDate}
+                  className="bg-orange-500 px-3 py-2 rounded-lg"
+                >
+                  <Text className="text-white text-xs font-semibold">Set</Text>
+                </TouchableOpacity>
+              </View>
+              <Text className="text-[11px] text-gray-500 mb-1">
+                Custom format uses your local timezone.
+              </Text>
+              <Text className="text-xs text-gray-500 mb-1">
+                Selected: {formatDueDatePreview(newFacultyTaskDueDate)}
+              </Text>
+              <Text className={`text-[11px] mb-2 ${requiresDueDate(newFacultyTaskUrgency) && !newFacultyTaskDueDate ? 'text-red-600' : 'text-gray-500'}`}>
+                {getUrgencyHint(newFacultyTaskUrgency, newFacultyTaskDueDate)}
+              </Text>
               <View className="bg-white p-3 rounded-xl shadow flex-row items-center">
                 <TextInput
                   value={newFacultyTaskText}
@@ -825,7 +994,7 @@ export default function SubjectDetails() {
                 {urgencyChoices.map((urgency) => (
                   <TouchableOpacity
                     key={urgency}
-                    onPress={() => setNewTaskUrgency(urgency)}
+                    onPress={() => handleTaskUrgencyChange(urgency)}
                     className={`mr-2 mb-2 px-3 py-1.5 rounded-full border ${newTaskUrgency === urgency ? 'border-black bg-black' : 'border-gray-300 bg-white'}`}
                   >
                     <Text className={`text-xs font-semibold uppercase ${newTaskUrgency === urgency ? 'text-white' : 'text-gray-700'}`}>
@@ -834,6 +1003,60 @@ export default function SubjectDetails() {
                   </TouchableOpacity>
                 ))}
               </View>
+              <Text className="text-xs font-semibold text-gray-600 mb-1">Due Date</Text>
+              <View className="flex-row mb-2 flex-wrap">
+                {dueDatePresets.map((preset) => (
+                  <TouchableOpacity
+                    key={`personal-due-${preset.key}`}
+                    onPress={() => applyTaskDuePreset(preset)}
+                    className={`mr-2 mb-2 px-3 py-1.5 rounded-full border ${newTaskDuePreset === preset.key ? 'border-black bg-black' : 'border-gray-300 bg-white'}`}
+                  >
+                    <Text className={`text-xs font-semibold ${newTaskDuePreset === preset.key ? 'text-white' : 'text-gray-700'}`}>
+                      {preset.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity
+                  onPress={clearTaskDueDate}
+                  className="mr-2 mb-2 px-3 py-1.5 rounded-full border border-gray-300 bg-white"
+                >
+                  <Text className="text-xs font-semibold text-gray-700">No Due Date</Text>
+                </TouchableOpacity>
+              </View>
+              <View className="flex-row items-center mb-2">
+                <TextInput
+                  value={newTaskCustomDate}
+                  onChangeText={setNewTaskCustomDate}
+                  placeholder="YYYY-MM-DD"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  className="flex-1 bg-white border border-gray-300 rounded-lg px-3 py-2 mr-2 text-xs"
+                />
+                <TextInput
+                  value={newTaskCustomTime}
+                  onChangeText={setNewTaskCustomTime}
+                  placeholder="HH:mm"
+                  keyboardType="numbers-and-punctuation"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  className="w-24 bg-white border border-gray-300 rounded-lg px-3 py-2 mr-2 text-xs"
+                />
+                <TouchableOpacity
+                  onPress={applyCustomTaskDueDate}
+                  className="bg-black px-3 py-2 rounded-lg"
+                >
+                  <Text className="text-white text-xs font-semibold">Set</Text>
+                </TouchableOpacity>
+              </View>
+              <Text className="text-[11px] text-gray-500 mb-1">
+                Custom format uses your local timezone.
+              </Text>
+              <Text className="text-xs text-gray-500 mb-1">
+                Selected: {formatDueDatePreview(newTaskDueDate)}
+              </Text>
+              <Text className={`text-[11px] mb-2 ${requiresDueDate(newTaskUrgency) && !newTaskDueDate ? 'text-red-600' : 'text-gray-500'}`}>
+                {getUrgencyHint(newTaskUrgency, newTaskDueDate)}
+              </Text>
               <View className="bg-white p-3 rounded-xl shadow flex-row items-center">
                 <TextInput
                   value={newTaskText}

@@ -12,8 +12,17 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 import os
+import importlib
 from dotenv import load_dotenv
 from datetime import timedelta
+
+crontab = None
+try:
+    celery_schedules = importlib.import_module('celery.schedules')
+    crontab = celery_schedules.crontab
+except ModuleNotFoundError:
+    # Keep settings importable even when celery package is not installed yet.
+    pass
 
 # Define base directory
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -331,6 +340,42 @@ STRIPE_CURRENCY = 'php'
 # Local (on-device) class reminders are the default implementation.
 # Keep server-side class reminders disabled unless explicitly enabled.
 ENABLE_SERVER_CLASS_REMINDERS = os.getenv('ENABLE_SERVER_CLASS_REMINDERS', 'False') == 'True'
+
+# Server-side due-task reminders (personal + faculty tasks).
+ENABLE_SERVER_TASK_DUE_REMINDERS = os.getenv('ENABLE_SERVER_TASK_DUE_REMINDERS', 'True') == 'True'
+TASK_DUE_REMINDER_LOOKAHEAD_HOURS = int(
+    os.getenv('TASK_DUE_REMINDER_LOOKAHEAD_HOURS', '24')
+)
+TASK_DUE_OVERDUE_GRACE_MINUTES = int(
+    os.getenv('TASK_DUE_OVERDUE_GRACE_MINUTES', '30')
+)
+
+# Celery worker / beat settings.
+# To enable: set CELERY_BROKER_URL (e.g., redis://...).
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', '').strip()
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', CELERY_BROKER_URL).strip()
+CELERY_TASK_ALWAYS_EAGER = os.getenv('CELERY_TASK_ALWAYS_EAGER', 'False') == 'True'
+CELERY_TASK_TIME_LIMIT = int(os.getenv('CELERY_TASK_TIME_LIMIT', '180'))
+CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv('CELERY_TASK_SOFT_TIME_LIMIT', '150'))
+CELERY_WORKER_PREFETCH_MULTIPLIER = int(os.getenv('CELERY_WORKER_PREFETCH_MULTIPLIER', '1'))
+CELERY_TASK_ACKS_LATE = True
+CELERY_ENABLE_UTC = True
+CELERY_TIMEZONE = TIME_ZONE
+
+CELERY_BEAT_SCHEDULE = {}
+if CELERY_BROKER_URL and crontab is not None:
+    if ENABLE_SERVER_TASK_DUE_REMINDERS:
+        CELERY_BEAT_SCHEDULE['send-due-task-reminders-every-5-min'] = {
+            'task': 'api.tasks.send_due_task_reminders',
+            'schedule': crontab(minute='*/5'),
+            'kwargs': {'dry_run': False},
+        }
+    if ENABLE_SERVER_CLASS_REMINDERS:
+        CELERY_BEAT_SCHEDULE['send-class-reminders-every-5-min'] = {
+            'task': 'api.tasks.send_upcoming_class_reminders',
+            'schedule': crontab(minute='*/5'),
+            'kwargs': {'minutes_before': None, 'dry_run': False},
+        }
 
 # Invasive urgent task popup tuning
 TASK_URGENT_POPUP_COOLDOWN_MINUTES = int(

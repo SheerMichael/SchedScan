@@ -40,21 +40,44 @@ export default function RootLayout() {
   }, [appIsReady]);
 
   useEffect(() => {
-    const handleExtractionNotification = async (rawData: unknown) => {
+    const openTaskFromNotification = (data: Record<string, any>) => {
+      const subjectCode = String(data?.subject_code || '').trim();
+      if (!subjectCode) {
+        router.push('/Home/home');
+        return;
+      }
+
+      router.push({
+        pathname: '/Home/Subject/subjectdetails',
+        params: {
+          title: subjectCode,
+          subjectName: '',
+          time: 'N/A',
+          startTime: '',
+          endTime: '',
+          location: '',
+          day: '',
+          priorityLevel: 'Class',
+          sourceType: data?.task_kind === 'faculty' ? 'faculty' : 'student',
+        },
+      });
+    };
+
+    const handleExtractionNotification = async (rawData: unknown): Promise<boolean> => {
       const data = (rawData ?? {}) as Record<string, any>;
       const jobId = typeof data?.job_id === 'string' ? data.job_id : '';
 
       if (data?.type !== 'extraction_job') {
-        return;
+        return false;
       }
 
       if (jobId && handledExtractionJobIdsRef.current.has(jobId)) {
-        return;
+        return true;
       }
 
       // Scanner owns active extraction UX and polling lifecycle.
       if (pathname === '/Home/scanner') {
-        return;
+        return true;
       }
 
       if (data?.status === 'failed' && jobId) {
@@ -103,7 +126,7 @@ export default function RootLayout() {
             ]
           );
         }
-        return;
+        return true;
       }
 
       if (data?.status === 'done') {
@@ -111,17 +134,86 @@ export default function RootLayout() {
           handledExtractionJobIdsRef.current.add(jobId);
         }
         router.push('/Home/schedules');
+        return true;
       }
+
+      return true;
+    };
+
+    const handleTaskReminderNotification = (
+      rawData: unknown,
+      title: string | null | undefined,
+      body: string | null | undefined,
+      fromResponse: boolean,
+    ): boolean => {
+      const data = (rawData ?? {}) as Record<string, any>;
+      const type = String(data?.type || '');
+
+      if (type !== 'task_due_reminder' && type !== 'faculty_task_due_reminder') {
+        return false;
+      }
+
+      const urgency = String(data?.urgency || '').toLowerCase();
+      const invasive = data?.invasive === true || urgency === 'critical';
+
+      if (fromResponse) {
+        openTaskFromNotification(data);
+        return true;
+      }
+
+      if (invasive) {
+        Alert.alert(
+          title || 'Critical Task Reminder',
+          body || 'A critical task deadline is near or overdue.',
+          [
+            {
+              text: 'Open Task',
+              onPress: () => openTaskFromNotification(data),
+            },
+            {
+              text: 'Later',
+              style: 'cancel',
+            },
+          ],
+          { cancelable: false }
+        );
+      }
+
+      return true;
+    };
+
+    const handleIncomingNotification = async (
+      rawData: unknown,
+      title: string | null | undefined,
+      body: string | null | undefined,
+      fromResponse: boolean,
+    ) => {
+      const handledExtraction = await handleExtractionNotification(rawData);
+      if (handledExtraction) {
+        return;
+      }
+
+      handleTaskReminderNotification(rawData, title, body, fromResponse);
     };
 
     const receivedSub = Notifications.addNotificationReceivedListener((notification) => {
-      handleExtractionNotification(notification.request.content.data).catch((error) => {
+      handleIncomingNotification(
+        notification.request.content.data,
+        notification.request.content.title,
+        notification.request.content.body,
+        false,
+      ).catch((error) => {
         console.warn('Failed to handle extraction notification:', error);
       });
     });
 
     const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
-      handleExtractionNotification(response.notification.request.content.data).catch((error) => {
+      handleIncomingNotification(
+        response.notification.request.content.data,
+        response.notification.request.content.title,
+        response.notification.request.content.body,
+        true,
+      ).catch((error) => {
         console.warn('Failed to handle extraction notification response:', error);
       });
     });

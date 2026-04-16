@@ -133,6 +133,49 @@ python manage.py runserver
 
 API available at `http://127.0.0.1:8000`.
 
+### Due-Task Reminder Scheduler
+
+SchedScan now includes a server-side due-date reminder runner for personal and faculty tasks:
+
+```bash
+cd SchedScan/backend
+source venv/bin/activate
+python manage.py send_task_due_reminders
+```
+
+Recommended cadence: run every 5 minutes in production.
+
+Production architecture (recommended): Celery Worker + Celery Beat with Redis broker.
+
+```bash
+# worker
+cd SchedScan/backend
+source venv/bin/activate
+CELERY_BROKER_URL=redis://localhost:6379/0 python -m celery -A core worker --loglevel=INFO
+
+# beat scheduler (separate process)
+cd SchedScan/backend
+source venv/bin/activate
+CELERY_BROKER_URL=redis://localhost:6379/0 python -m celery -A core beat --loglevel=INFO
+```
+
+Celery beat schedules these jobs every 5 minutes:
+
+- `api.tasks.send_due_task_reminders`
+- `api.tasks.send_upcoming_class_reminders`
+
+If you cannot use Celery yet, fallback is still available via management commands (`send_task_due_reminders` and `send_class_reminders`) from cron.
+
+Configuration flags:
+
+- `ENABLE_SERVER_TASK_DUE_REMINDERS` (default: `True`)
+- `TASK_DUE_REMINDER_LOOKAHEAD_HOURS` (default: `24`)
+- `TASK_DUE_OVERDUE_GRACE_MINUTES` (default: `30`)
+- `CELERY_BROKER_URL` (required for worker/beat mode)
+- `CELERY_RESULT_BACKEND` (optional, defaults to `CELERY_BROKER_URL`)
+
+Critical reminders are sent with an urgent payload so the mobile app can show invasive alerts.
+
 ### 2. Mobile Application
 
 ```bash

@@ -42,7 +42,8 @@ class NotificationService:
         data: Optional[Dict[str, Any]] = None,
         sound: str = "default",
         badge: Optional[int] = None,
-        channel_id: str = "default"
+        channel_id: str = "default",
+        priority: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Send a push notification to a single device.
@@ -75,6 +76,8 @@ class NotificationService:
             message["data"] = data
         if badge is not None:
             message["badge"] = badge
+        if priority:
+            message["priority"] = priority
         
         try:
             response = requests.post(
@@ -126,14 +129,21 @@ class NotificationService:
         for notif in notifications:
             if not notif.get("token"):
                 continue
-            messages.append({
+            message = {
                 "to": notif["token"],
                 "title": notif.get("title", "SchedScan"),
                 "body": notif.get("body", ""),
-                "sound": "default",
-                "channelId": "default",
+                "sound": notif.get("sound", "default"),
+                "channelId": notif.get("channel_id", "default"),
                 "data": notif.get("data", {}),
-            })
+            }
+
+            if notif.get("priority"):
+                message["priority"] = notif["priority"]
+            if notif.get("badge") is not None:
+                message["badge"] = notif["badge"]
+
+            messages.append(message)
         
         if not messages:
             return []
@@ -349,6 +359,373 @@ def send_upcoming_class_reminders(
                         stats["errors"] += 1
     
     logger.info(f"Reminder check complete: {stats}")
+    return stats
+
+
+def _get_due_reminder_stage(
+    minutes_until_due: Optional[int],
+    lookahead_minutes: int,
+    overdue_grace_minutes: int,
+) -> Optional[str]:
+    """
+    Map time-to-deadline to a dedupe stage label.
+
+    Stage windows:
+    - due_24h: due within lookahead window but more than 60 minutes away
+    - due_1h: due within 60 minutes
+    - overdue: overdue within grace window
+    """
+    if minutes_until_due is None:
+        return None
+
+    if minutes_until_due > lookahead_minutes:
+        return None
+
+    if minutes_until_due < -overdue_grace_minutes:
+        return None
+
+    if minutes_until_due <= 0:
+        return 'overdue'
+
+    if minutes_until_due <= 60:
+        return 'due_1h'
+
+    return 'due_24h'
+
+
+def _build_due_reminder_title(prefix: str, stage: str, subject_code: str) -> str:
+    if stage == 'overdue':
+        return f"Overdue {prefix}: {subject_code}"
+    if stage == 'due_1h':
+        return f"Urgent {prefix}: {subject_code}"
+    return f"Upcoming {prefix}: {subject_code}"
+
+
+def _build_due_reminder_message(task_text: str, due_date_label: str, stage: str) -> str:
+    base_text = (task_text or '').strip()
+    if len(base_text) > 180:
+        base_text = base_text[:177] + '...'
+
+    if stage == 'overdue':
+        return f"{base_text}\nOverdue since: {due_date_label}"
+    if stage == 'due_1h':
+        return f"{base_text}\nDue soon: {due_date_label}"
+    return f"{base_text}\nDue: {due_date_label}"
+
+
+def _is_invasive_due_reminder(stage: str, effective_urgency: str) -> bool:
+    return stage in ('due_1h', 'overdue') or (effective_urgency or '').lower() == 'critical'
+
+
+def _claim_task_reminder_dispatch(
+    user,
+    task_kind: str,
+    task_id: int,
+    reminder_stage: str,
+    effective_urgency: str,
+    is_invasive: bool,
+    due_date,
+) -> bool:
+    """
+    Attempt to claim a reminder dispatch slot.
+
+    Returns True when this process should dispatch now,
+    False when another dispatch already exists for the same stage.
+    """
+    from django.db import IntegrityError, transaction
+    from api.models import TaskReminderDispatch
+
+    try:
+        with transaction.atomic():
+            TaskReminderDispatch.objects.create(
+                user=user,
+                task_kind=task_kind,
+                task_id=task_id,
+                reminder_stage=reminder_stage,
+                effective_urgency=effective_urgency,
+                is_invasive=is_invasive,
+                due_date=due_date,
+            )
+        return True
+    except IntegrityError:
+        return False
+
+
+def send_due_task_reminders(dry_run: bool = False) -> Dict[str, Any]:
+    """
+    Send due-date reminders for personal and faculty tasks.
+
+    Personal task recipients:
+    - task owner for incomplete tasks with due dates
+
+    Faculty task recipients:
+    - active enrolled students for the faculty+subject pair
+    - skips students who already completed the specific task
+
+    Dedupe:
+    - one reminder per user+task+stage via TaskReminderDispatch unique constraint
+    """
+    from django.conf import settings
+    from django.utils import timezone
+    from api.models import (
+        Task,
+        FacultyTask,
+        FacultyTaskCompletion,
+        ClassEnrollment,
+        Notification,
+        TaskReminderDispatch,
+    )
+
+    lookahead_hours = int(getattr(settings, 'TASK_DUE_REMINDER_LOOKAHEAD_HOURS', 24) or 24)
+    overdue_grace_minutes = int(getattr(settings, 'TASK_DUE_OVERDUE_GRACE_MINUTES', 30) or 30)
+    lookahead_minutes = max(60, lookahead_hours * 60)
+    overdue_grace_minutes = max(5, overdue_grace_minutes)
+
+    stats = {
+        'tasks_scanned': 0,
+        'faculty_tasks_scanned': 0,
+        'notifications_sent': 0,
+        'notifications_stored': 0,
+        'duplicates_skipped': 0,
+        'completed_skipped': 0,
+        'errors': 0,
+        'dry_run': dry_run,
+        'skipped': False,
+        'skip_reason': None,
+    }
+
+    if not getattr(settings, 'ENABLE_SERVER_TASK_DUE_REMINDERS', True):
+        stats['skipped'] = True
+        stats['skip_reason'] = 'disabled_by_setting'
+        logger.info('Server-side task due reminders are disabled (ENABLE_SERVER_TASK_DUE_REMINDERS=False)')
+        return stats
+
+    now = timezone.now()
+    service = NotificationService()
+    batch_messages: List[Dict[str, Any]] = []
+
+    personal_tasks = Task.objects.filter(
+        is_completed=False,
+        due_date__isnull=False,
+        due_date__lte=now + timedelta(minutes=lookahead_minutes),
+    ).select_related('user')
+
+    for task in personal_tasks:
+        stats['tasks_scanned'] += 1
+
+        minutes_until_due = task.minutes_until_due(now=now)
+        stage = _get_due_reminder_stage(
+            minutes_until_due,
+            lookahead_minutes=lookahead_minutes,
+            overdue_grace_minutes=overdue_grace_minutes,
+        )
+        if not stage:
+            continue
+
+        effective_urgency = task.get_effective_urgency(now=now)
+        invasive = _is_invasive_due_reminder(stage, effective_urgency)
+
+        if dry_run:
+            duplicate = TaskReminderDispatch.objects.filter(
+                user=task.user,
+                task_kind='personal',
+                task_id=task.id,
+                reminder_stage=stage,
+            ).exists()
+            if duplicate:
+                stats['duplicates_skipped'] += 1
+                continue
+        else:
+            claimed = _claim_task_reminder_dispatch(
+                user=task.user,
+                task_kind='personal',
+                task_id=task.id,
+                reminder_stage=stage,
+                effective_urgency=effective_urgency,
+                is_invasive=invasive,
+                due_date=task.due_date,
+            )
+            if not claimed:
+                stats['duplicates_skipped'] += 1
+                continue
+
+        due_date_label = timezone.localtime(task.due_date).strftime('%Y-%m-%d %I:%M %p')
+        title = _build_due_reminder_title('Task Due', stage, task.subject_code)
+        body = _build_due_reminder_message(task.text, due_date_label, stage)
+        data_payload = {
+            'type': 'task_due_reminder',
+            'task_kind': 'personal',
+            'task_id': task.id,
+            'subject_code': task.subject_code,
+            'urgency': effective_urgency,
+            'reminder_stage': stage,
+            'minutes_until_due': minutes_until_due,
+            'invasive': invasive,
+        }
+
+        if dry_run:
+            stats['notifications_sent'] += 1
+            continue
+
+        notification = Notification.objects.create(
+            user=task.user,
+            notification_type='general',
+            title=title,
+            message=body,
+            data=data_payload,
+        )
+        stats['notifications_stored'] += 1
+
+        TaskReminderDispatch.objects.filter(
+            user=task.user,
+            task_kind='personal',
+            task_id=task.id,
+            reminder_stage=stage,
+        ).update(notification=notification)
+
+        if task.user.expo_push_token:
+            batch_messages.append(
+                {
+                    'token': task.user.expo_push_token,
+                    'title': title,
+                    'body': body,
+                    'data': data_payload,
+                    'channel_id': 'urgent' if invasive else 'default',
+                    'priority': 'high' if invasive else None,
+                }
+            )
+
+    faculty_tasks = FacultyTask.objects.filter(
+        due_date__isnull=False,
+        due_date__lte=now + timedelta(minutes=lookahead_minutes),
+    ).select_related('faculty')
+
+    for task in faculty_tasks:
+        stats['faculty_tasks_scanned'] += 1
+
+        minutes_until_due = task.minutes_until_due(now=now)
+        stage = _get_due_reminder_stage(
+            minutes_until_due,
+            lookahead_minutes=lookahead_minutes,
+            overdue_grace_minutes=overdue_grace_minutes,
+        )
+        if not stage:
+            continue
+
+        effective_urgency = task.get_effective_urgency(now=now)
+        invasive = _is_invasive_due_reminder(stage, effective_urgency)
+
+        enrollments = ClassEnrollment.objects.filter(
+            faculty=task.faculty,
+            subject_code=task.subject_code,
+            status='active',
+            student__is_active=True,
+        ).select_related('student')
+
+        recipient_ids = [enrollment.student_id for enrollment in enrollments]
+        if not recipient_ids:
+            continue
+
+        completed_ids = set(
+            FacultyTaskCompletion.objects.filter(
+                task=task,
+                student_id__in=recipient_ids,
+                is_completed=True,
+            ).values_list('student_id', flat=True)
+        )
+
+        due_date_label = timezone.localtime(task.due_date).strftime('%Y-%m-%d %I:%M %p')
+        title = _build_due_reminder_title('Class Task Due', stage, task.subject_code)
+        body = _build_due_reminder_message(task.text, due_date_label, stage)
+
+        for enrollment in enrollments:
+            student = enrollment.student
+
+            if student.id in completed_ids:
+                stats['completed_skipped'] += 1
+                continue
+
+            if dry_run:
+                duplicate = TaskReminderDispatch.objects.filter(
+                    user=student,
+                    task_kind='faculty',
+                    task_id=task.id,
+                    reminder_stage=stage,
+                ).exists()
+                if duplicate:
+                    stats['duplicates_skipped'] += 1
+                    continue
+            else:
+                claimed = _claim_task_reminder_dispatch(
+                    user=student,
+                    task_kind='faculty',
+                    task_id=task.id,
+                    reminder_stage=stage,
+                    effective_urgency=effective_urgency,
+                    is_invasive=invasive,
+                    due_date=task.due_date,
+                )
+                if not claimed:
+                    stats['duplicates_skipped'] += 1
+                    continue
+
+            data_payload = {
+                'type': 'faculty_task_due_reminder',
+                'task_kind': 'faculty',
+                'task_id': task.id,
+                'subject_code': task.subject_code,
+                'urgency': effective_urgency,
+                'reminder_stage': stage,
+                'minutes_until_due': minutes_until_due,
+                'faculty_id': task.faculty_id,
+                'invasive': invasive,
+            }
+
+            if dry_run:
+                stats['notifications_sent'] += 1
+                continue
+
+            notification = Notification.objects.create(
+                user=student,
+                notification_type='faculty_task',
+                title=title,
+                message=body,
+                data=data_payload,
+            )
+            stats['notifications_stored'] += 1
+
+            TaskReminderDispatch.objects.filter(
+                user=student,
+                task_kind='faculty',
+                task_id=task.id,
+                reminder_stage=stage,
+            ).update(notification=notification)
+
+            if student.expo_push_token:
+                batch_messages.append(
+                    {
+                        'token': student.expo_push_token,
+                        'title': title,
+                        'body': body,
+                        'data': data_payload,
+                        'channel_id': 'urgent' if invasive else 'default',
+                        'priority': 'high' if invasive else None,
+                    }
+                )
+
+    if batch_messages and not dry_run:
+        results = service.send_batch_notifications(batch_messages)
+        if not results:
+            # Batch call failed at transport level.
+            stats['errors'] += len(batch_messages)
+        else:
+            for result in results:
+                if result.get('status') == 'ok':
+                    stats['notifications_sent'] += 1
+                else:
+                    stats['errors'] += 1
+
+    logger.info(f"Task due reminder run complete: {stats}")
     return stats
 
 

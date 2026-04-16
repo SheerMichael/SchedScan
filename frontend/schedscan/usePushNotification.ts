@@ -18,7 +18,7 @@ export interface PushNotificationState {
 export const usePushNotification = (): PushNotificationState => {
     Notification.setNotificationHandler({
         handleNotification: async () => ({
-            shouldPlaySound: false,
+            shouldPlaySound: true,
             shouldShowAlert: true,
             shouldSetBadge: false,
             shouldShowBanner: true,
@@ -66,6 +66,14 @@ export const usePushNotification = (): PushNotificationState => {
                     importance: Notification.AndroidImportance.MAX,
                     vibrationPattern: [0, 250, 250, 250],
                     lightColor: "#FF231F7C",
+                });
+
+                Notification.setNotificationChannelAsync("urgent", {
+                    name: "urgent",
+                    importance: Notification.AndroidImportance.MAX,
+                    vibrationPattern: [0, 400, 200, 400, 200, 400],
+                    lightColor: "#FF0000",
+                    lockscreenVisibility: Notification.AndroidNotificationVisibility.PUBLIC,
                 });
             }
 

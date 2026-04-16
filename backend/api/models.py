@@ -1176,6 +1176,87 @@ class Notification(models.Model):
         return f"[{read}] {self.user.email}: {self.title}"
 
 
+class TaskReminderDispatch(models.Model):
+    """
+    Ledger of due-task reminders that were dispatched (or claimed for dispatch).
+    Used for strict per-user/task/stage deduplication under concurrent workers.
+    """
+
+    TASK_KIND_CHOICES = [
+        ('personal', 'Personal Task'),
+        ('faculty', 'Faculty Task'),
+    ]
+    REMINDER_STAGE_CHOICES = [
+        ('due_24h', 'Due Within 24 Hours'),
+        ('due_1h', 'Due Within 1 Hour'),
+        ('overdue', 'Overdue'),
+    ]
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='task_reminder_dispatches',
+        help_text='Recipient user for this reminder dispatch',
+    )
+    task_kind = models.CharField(
+        max_length=10,
+        choices=TASK_KIND_CHOICES,
+        help_text='Whether the reminder targets a personal or faculty task',
+    )
+    task_id = models.PositiveBigIntegerField(
+        help_text='Primary key of the related task model',
+    )
+    reminder_stage = models.CharField(
+        max_length=10,
+        choices=REMINDER_STAGE_CHOICES,
+        help_text='Reminder stage window used for dedupe (24h, 1h, overdue)',
+    )
+    effective_urgency = models.CharField(
+        max_length=10,
+        default='medium',
+        help_text='Effective urgency at dispatch time',
+    )
+    is_invasive = models.BooleanField(
+        default=False,
+        help_text='Whether this dispatch used invasive/urgent alert behavior',
+    )
+    due_date = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='Task due date at dispatch time (if available)',
+    )
+    notification = models.ForeignKey(
+        Notification,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='task_reminder_dispatches',
+        help_text='Persistent Notification row associated with this dispatch',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Task Reminder Dispatch'
+        verbose_name_plural = 'Task Reminder Dispatches'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'task_kind', 'task_id'], name='api_taskrem_user_id_751153_idx'),
+            models.Index(fields=['user', 'reminder_stage', '-created_at'], name='api_taskrem_user_id_2c0f49_idx'),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'task_kind', 'task_id', 'reminder_stage'],
+                name='unique_task_reminder_dispatch_stage',
+            )
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.user.email} - {self.task_kind}:{self.task_id} "
+            f"({self.reminder_stage})"
+        )
+
+
 # ============================================
 # Faculty Remark Model
 # ============================================
