@@ -776,8 +776,7 @@ class BaseCORUploadView(APIView):
                 )
 
             if (
-                self.upload_type == 'student'
-                and bool(getattr(settings, 'EXTRACTION_OLD_SCHEDULE_CONFIRMATION_ENABLED', True))
+                bool(getattr(settings, 'EXTRACTION_OLD_SCHEDULE_CONFIRMATION_ENABLED', True))
                 and not confirm_old_schedule
             ):
                 if not (detected_semester and detected_school_year):

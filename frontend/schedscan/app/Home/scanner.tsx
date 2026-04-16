@@ -903,8 +903,8 @@ export default function Scanner() {
           .filter(Boolean)
           .join(' ');
         const fallbackMessage = detectedTerm && currentTerm
-          ? `Detected ${detectedTerm}, which looks older than current term ${currentTerm}. Continue anyway?`
-          : 'This document appears to be from an older term. Continue extraction anyway?';
+          ? `Detected ${detectedTerm}, which looks older than current term ${currentTerm}. Save and process this old schedule anyway?`
+          : 'This document appears to be from an older term. Save and process this old schedule anyway?';
 
         Alert.alert(
           'Old Schedule Detected',
@@ -915,7 +915,7 @@ export default function Scanner() {
               style: 'cancel',
             },
             {
-              text: 'Continue Extraction',
+              text: 'Save Old Schedule',
               onPress: () => {
                 uploadFile(file, uploadType, {
                   isRetry,

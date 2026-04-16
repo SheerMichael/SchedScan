@@ -669,6 +669,59 @@ class ExtractionViewIntegrationTestCase(TestCase):
         self.assertEqual(response.data.get('status'), 'processing')
         mock_submit_job.assert_called_once()
 
+    @patch('api.views.upload_views.parse_document_metadata_with_llm_vision')
+    def test_faculty_upload_old_term_requires_confirmation(self, mock_parse_document_metadata):
+        """Old faculty term metadata should also require explicit confirmation before queueing."""
+        mock_parse_document_metadata.return_value = (
+            {
+                'semester': '1ST',
+                'school_year': '2020-2021',
+            },
+            {},
+        )
+
+        pdf_file = SimpleUploadedFile(
+            'old_term_faculty_cor.pdf',
+            b'fake pdf content',
+            content_type='application/pdf'
+        )
+
+        with patch('api.views.upload_views._submit_extraction_job') as mock_submit_job:
+            response = self.client.post(
+                '/api/upload-cor/faculty/',
+                {'file': pdf_file},
+                format='multipart'
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data.get('code'), 'OLD_SCHEDULE_CONFIRM_REQUIRED')
+        self.assertTrue(response.data.get('confirmation_required', False))
+        mock_submit_job.assert_not_called()
+
+    @patch('api.views.upload_views.parse_document_metadata_with_llm_vision')
+    def test_faculty_upload_old_term_with_confirmation_continues(self, mock_parse_document_metadata):
+        """Confirmed old-term faculty uploads should continue to async extraction."""
+        pdf_file = SimpleUploadedFile(
+            'old_term_confirmed_faculty_cor.pdf',
+            b'fake pdf content',
+            content_type='application/pdf'
+        )
+
+        with patch('api.views.upload_views._submit_extraction_job', return_value=True) as mock_submit_job:
+            response = self.client.post(
+                '/api/upload-cor/faculty/',
+                {
+                    'file': pdf_file,
+                    'confirm_old_schedule': 'true',
+                },
+                format='multipart'
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.data.get('status'), 'processing')
+        self.assertEqual(mock_parse_document_metadata.call_count, 0)
+        mock_submit_job.assert_called_once()
+
 
 class PerformanceTestCase(TestCase):
     """Performance benchmark tests"""
