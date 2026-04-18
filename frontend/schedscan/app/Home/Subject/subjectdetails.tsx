@@ -59,8 +59,8 @@ export default function SubjectDetails() {
   const taskLabelPlural = isNonClassItem ? 'Tasks' : 'Class Tasks';
   const addTaskLabel = isNonClassItem ? 'Add Task' : 'Add Class Task';
   const noTasksLabel = isNonClassItem
-    ? 'No tasks yet. Create one below!'
-    : 'No class tasks yet. Create one below!';
+    ? 'No tasks yet. Tap + to add one.'
+    : 'No class tasks yet. Tap + to add one.';
 
   // ============================================
   // Personal Task State
@@ -102,6 +102,7 @@ export default function SubjectDetails() {
   const [showFacultyTaskDuePicker, setShowFacultyTaskDuePicker] = useState(false);
   const [facultyTaskDuePickerMode, setFacultyTaskDuePickerMode] = useState<'date' | 'time'>('date');
   const [isAddingFacultyTask, setIsAddingFacultyTask] = useState(false);
+  const [isFabMenuOpen, setIsFabMenuOpen] = useState(false);
 
   const taskComposerAnimation = useRef(new Animated.Value(0)).current;
   const noteComposerAnimation = useRef(new Animated.Value(0)).current;
@@ -694,6 +695,20 @@ export default function SubjectDetails() {
     setShowNoteComposer(true);
   };
 
+  const openTaskComposerFromFab = () => {
+    setIsFabMenuOpen(false);
+    if (shouldUseFacultyTaskFlow) {
+      setShowFacultyTaskComposer(true);
+      return;
+    }
+    setShowTaskComposer(true);
+  };
+
+  const openNoteComposerFromFab = () => {
+    setIsFabMenuOpen(false);
+    openCreateNoteComposer();
+  };
+
   const openTaskDuePicker = (mode: 'date' | 'time') => {
     setTaskDuePickerMode(mode);
     setShowTaskDuePicker(true);
@@ -813,6 +828,10 @@ export default function SubjectDetails() {
   // ============================================
   // Render
   // ============================================
+  const fabTaskLabel = shouldUseFacultyTaskFlow ? addTaskLabel : 'Add Task';
+  const fabButtonColor = shouldUseFacultyTaskFlow ? '#F97316' : '#2563EB';
+  const shouldShowFab = !showTaskComposer && !showFacultyTaskComposer && !showNoteComposer;
+
   return (
     <>
       <View className='pl-8 pt-2'>
@@ -821,7 +840,7 @@ export default function SubjectDetails() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView className="flex-1 p-4">
+      <ScrollView className="flex-1 p-4" onScrollBeginDrag={() => setIsFabMenuOpen(false)}>
         {/* Subject Title Box */}
         <View className="w-full bg-primary-500 p-4 rounded-xl mb-4">
           <Text className="text-white/75 mb-2">Class Title</Text>
@@ -965,29 +984,6 @@ export default function SubjectDetails() {
                 </TouchableOpacity>
               ))
             )}
-
-            {/* Add Faculty Task */}
-            <View className="mt-4 mb-6">
-              <View className="bg-orange-600 rounded-3xl p-5">
-                <View className="flex-row items-center justify-between mb-1">
-                  <Text className="font-bold text-lg text-white">Quick Add Class Task</Text>
-                  <View className="bg-white/20 px-2 py-1 rounded-full">
-                    <Text className="text-[10px] font-semibold text-white uppercase">Class</Text>
-                  </View>
-                </View>
-                <Text className="text-xs text-orange-100 mb-4">
-                  Use a focused composer with quick urgency and deadline options to publish class tasks faster.
-                </Text>
-
-                <TouchableOpacity
-                  onPress={() => setShowFacultyTaskComposer(true)}
-                  className="bg-white py-3 rounded-xl items-center"
-                >
-                  <Text className="text-orange-700 font-bold">Open Class Task Composer</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
 
           </>
         )}
@@ -1170,7 +1166,7 @@ export default function SubjectDetails() {
                 <Text className="text-gray-500 mt-2">Loading tasks...</Text>
               </View>
             ) : tasks.length === 0 ? (
-              <Text className="text-gray-500 mb-4">No tasks for this subject.</Text>
+              <Text className="text-gray-500 mb-4">No active tasks yet. Tap + to add one.</Text>
             ) : (
               tasks.map((task) => (
                 <View
@@ -1216,27 +1212,6 @@ export default function SubjectDetails() {
               ))
             )}
 
-            {/* Add New Personal Task */}
-            <View className="mt-6 mb-8">
-              <View className="bg-slate-900 rounded-3xl p-5">
-                <View className="flex-row items-center justify-between mb-1">
-                  <Text className="font-bold text-lg text-white">Quick Add Task</Text>
-                  <View className="bg-white/20 px-2 py-1 rounded-full">
-                    <Text className="text-[10px] font-semibold text-white uppercase">Personal</Text>
-                  </View>
-                </View>
-                <Text className="text-xs text-slate-300 mb-4">
-                  Add tasks in a focused composer with quick due-date shortcuts and native date/time picking.
-                </Text>
-
-                <TouchableOpacity
-                  onPress={() => setShowTaskComposer(true)}
-                  className="bg-white py-3 rounded-xl items-center"
-                >
-                  <Text className="text-slate-900 font-bold">Open Task Composer</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
           </>
         )}
 
@@ -1255,7 +1230,7 @@ export default function SubjectDetails() {
               <Text className="text-gray-500 mt-2">Loading notes...</Text>
             </View>
           ) : sortedNotes.length === 0 ? (
-            <Text className="text-gray-500 mb-4">No quick notes yet. Add one for this subject.</Text>
+            <Text className="text-gray-500 mb-4">No quick notes yet. Tap + to add one.</Text>
           ) : (
             sortedNotes.map((note) => (
               <View key={`note-${note.id}`} className="bg-white border border-sky-100 p-3 rounded-xl mb-2">
@@ -1335,29 +1310,76 @@ export default function SubjectDetails() {
             ))
           )}
 
-          <View className="mt-4">
-            <View className="bg-sky-700 rounded-3xl p-5">
-              <View className="flex-row items-center justify-between mb-1">
-                <Text className="font-bold text-lg text-white">Quick Add Note</Text>
-                <View className="bg-white/20 px-2 py-1 rounded-full">
-                  <Text className="text-[10px] font-semibold text-white uppercase">Personal</Text>
-                </View>
-              </View>
-              <Text className="text-xs text-sky-100 mb-4">
-                Save short reminders, ideas, or context for this subject without creating a checklist task.
-              </Text>
-
-              <TouchableOpacity
-                onPress={openCreateNoteComposer}
-                className="bg-white py-3 rounded-xl items-center"
-              >
-                <Text className="text-sky-700 font-bold">Open Note Composer</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
         </View>
 
       </ScrollView>
+
+      {shouldShowFab && (
+        <>
+          {isFabMenuOpen && (
+            <TouchableOpacity
+              activeOpacity={1}
+              onPress={() => setIsFabMenuOpen(false)}
+              className="absolute inset-0 bg-black/10"
+            />
+          )}
+
+          <View pointerEvents="box-none" className="absolute bottom-6 right-5 items-end">
+            {isFabMenuOpen && (
+              <View className="mb-3 items-end">
+                <TouchableOpacity
+                  onPress={openTaskComposerFromFab}
+                  className="bg-white border border-gray-200 rounded-full px-4 py-2.5 mb-2"
+                  style={{
+                    shadowColor: '#000',
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: 0.1,
+                    shadowRadius: 4,
+                    elevation: 3,
+                  }}
+                >
+                  <Text className="text-[13px] font-semibold text-gray-800">{fabTaskLabel}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={openNoteComposerFromFab}
+                  className="bg-white border border-gray-200 rounded-full px-4 py-2.5"
+                  style={{
+                    shadowColor: '#000',
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: 0.1,
+                    shadowRadius: 4,
+                    elevation: 3,
+                  }}
+                >
+                  <Text className="text-[13px] font-semibold text-gray-800">Add Note</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <TouchableOpacity
+              onPress={() => setIsFabMenuOpen((prev) => !prev)}
+              className="w-14 h-14 rounded-full items-center justify-center"
+              style={{
+                backgroundColor: fabButtonColor,
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.18,
+                shadowRadius: 6,
+                elevation: 6,
+              }}
+            >
+              <Svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.5">
+                {isFabMenuOpen ? (
+                  <Path d="M18 6L6 18M6 6l12 12" />
+                ) : (
+                  <Path d="M12 5v14M5 12h14" />
+                )}
+              </Svg>
+            </TouchableOpacity>
+          </View>
+        </>
+      )}
 
       <Modal
         visible={showTaskComposer}
