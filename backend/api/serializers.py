@@ -4,7 +4,7 @@ from django.contrib.auth.password_validation import validate_password
 from rest_framework.validators import UniqueValidator
 from rest_framework_simplejwt.tokens import RefreshToken
 import re
-from .models import Course, Schedule, Task, ParentChildLink, ParentLinkRequest, ClassCode, ClassEnrollment, FacultyTask, FacultyTaskFile, FacultyTaskCompletion, Notification, FacultyRemark
+from .models import Course, Schedule, Task, Note, ParentChildLink, ParentLinkRequest, ClassCode, ClassEnrollment, FacultyTask, FacultyTaskFile, FacultyTaskCompletion, Notification, FacultyRemark
 from .utils.timetable_generator import generate_and_save_timetable
 
 User = get_user_model()
@@ -496,6 +496,33 @@ class TaskSerializer(serializers.ModelSerializer):
         """
         user = self.context['request'].user
         return Task.objects.create(user=user, **validated_data)
+
+
+class NoteSerializer(serializers.ModelSerializer):
+    """
+    Serializer for Note model - used for quick subject notes.
+    """
+
+    text = serializers.CharField(max_length=2000, trim_whitespace=True)
+
+    class Meta:
+        model = Note
+        fields = [
+            'id',
+            'subject_code',
+            'text',
+            'is_pinned',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def create(self, validated_data):
+        """
+        Create a note associated with the current user.
+        """
+        user = self.context['request'].user
+        return Note.objects.create(user=user, **validated_data)
 
 
 class PushTokenSerializer(serializers.Serializer):

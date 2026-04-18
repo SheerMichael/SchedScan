@@ -440,6 +440,46 @@ class Task(models.Model):
         return int((self.due_date - now).total_seconds() // 60)
 
 
+class Note(models.Model):
+    """
+    Lightweight quick notes associated with a subject code.
+    Notes are user-specific and shared across schedules with the same subject code.
+    """
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='notes',
+        help_text='The user who owns this note'
+    )
+    subject_code = models.CharField(
+        max_length=50,
+        help_text='Subject code this note is associated with'
+    )
+    text = models.TextField(
+        help_text='Quick note content'
+    )
+    is_pinned = models.BooleanField(
+        default=False,
+        help_text='Whether this note is pinned to the top of the list'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Note'
+        verbose_name_plural = 'Notes'
+        ordering = ['-is_pinned', '-updated_at', '-created_at']
+        indexes = [
+            models.Index(fields=['user', 'subject_code']),
+            models.Index(fields=['user', 'updated_at']),
+            models.Index(fields=['user', 'subject_code', 'is_pinned']),
+        ]
+
+    def __str__(self):
+        return f"{self.subject_code}: {self.text[:40]}"
+
+
 class TaskUrgencyEvent(models.Model):
     """
     Tracks user interactions with invasive urgent-task popup flow.

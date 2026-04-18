@@ -52,6 +52,10 @@ urlpatterns = [
     path('tasks/<int:pk>/urgent-action/', views.TaskUrgentActionView.as_view(), name='task_urgent_action'),
     path('tasks/urgent-analytics/', views.TaskUrgencyAnalyticsView.as_view(), name='task_urgency_analytics'),
     path('tasks/<int:pk>/', views.TaskDetailView.as_view(), name='task_detail'),
+
+    # Quick note endpoints
+    path('notes/', views.NoteListCreateView.as_view(), name='note_list_create'),
+    path('notes/<int:pk>/', views.NoteDetailView.as_view(), name='note_detail'),
     
     # Push notification endpoints
     path('push-token/', views.RegisterPushTokenView.as_view(), name='register_push_token'),

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Image, ActivityIndicator, Modal } from 'react-native';
 import Svg, { Path, Circle, G, Rect, Polygon } from "react-native-svg";
 import { router } from "expo-router";
@@ -12,6 +12,7 @@ import FacultyModeModal from '../../components/FacultyModeModal';
 import JoinClassModal from '../../components/JoinClassModal';
 import { getUnreadCount } from '../../services/notificationService';
 import { scheduleClassReminders } from '../../services/classReminderService';
+import { resyncTaskDueReminders } from '../../services/taskReminderService';
 import { getHolidays, buildHolidayMap, formatHolidayDateRange, Holiday } from '../../services/holidayService';
 import { getCalendarEvents, buildCalendarEventMap, formatEventTime, formatCalendarEventDateRange, CalendarEvent } from '../../services/calendarEventService';
 import { getSemesterMonths, getSemesterLabel, getInitialMonth } from '../../utils/semesterUtils';
@@ -143,7 +144,7 @@ export default function SchedScanApp() {
   const [showUrgentTaskModal, setShowUrgentTaskModal] = useState(false);
   const [isUrgentActionLoading, setIsUrgentActionLoading] = useState(false);
 
-  const isWithinQuietHours = (): boolean => {
+  const isWithinQuietHours = useCallback((): boolean => {
     if (!user?.urgent_popup_quiet_hours_enabled) {
       return false;
     }
@@ -159,7 +160,11 @@ export default function SchedScanApp() {
       return nowHour >= start && nowHour < end;
     }
     return nowHour >= start || nowHour < end;
-  };
+  }, [
+    user?.urgent_popup_quiet_hours_enabled,
+    user?.urgent_popup_quiet_hours_start,
+    user?.urgent_popup_quiet_hours_end,
+  ]);
 
   // Modals
   const [showFacultyModeModal, setShowFacultyModeModal] = useState(false);
@@ -178,7 +183,7 @@ export default function SchedScanApp() {
     }, [user?.id]) // eslint-disable-line react-hooks/exhaustive-deps
   );
 
-  const loadUrgentPopupCandidate = async () => {
+  const loadUrgentPopupCandidate = useCallback(async () => {
     if (!user?.id || user.user_type === 'parent') {
       setUrgentTask(null);
       setShowUrgentTaskModal(false);
@@ -200,7 +205,26 @@ export default function SchedScanApp() {
     } catch (error) {
       console.warn('Failed to load urgent popup candidate:', error);
     }
-  };
+  }, [
+    user?.id,
+    user?.user_type,
+    user?.urgent_popup_enabled,
+    isWithinQuietHours,
+  ]);
+
+  useEffect(() => {
+    if (!user?.id || user.user_type === 'parent') {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      loadUrgentPopupCandidate();
+    }, 60 * 1000);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [user?.id, user?.user_type, loadUrgentPopupCandidate]);
 
   const closeUrgentModal = () => {
     setShowUrgentTaskModal(false);
@@ -354,6 +378,10 @@ export default function SchedScanApp() {
           const counts = await taskService.getTaskCounts(subjectCodes);
           setTaskCounts(counts);
 
+          resyncTaskDueReminders(subjectCodes).catch(err =>
+            console.warn('Failed to sync local task reminders:', err)
+          );
+
           // Load faculty task counts for students
           if (user?.user_type === 'student') {
             try {
@@ -371,6 +399,9 @@ export default function SchedScanApp() {
         setCourses([]);
         setDaySchedule([]);
         setTaskCounts({});
+        resyncTaskDueReminders([]).catch(err =>
+          console.warn('Failed to clear local task reminders:', err)
+        );
         console.log('No active schedule found');
       }
     } catch (error: any) {

@@ -51,6 +51,12 @@ from .task_views import (
     TaskUrgencyAnalyticsView,
 )
 
+# Note views
+from .note_views import (
+    NoteListCreateView,
+    NoteDetailView,
+)
+
 # Account management views
 from .account_views import (
     ChangePasswordView,

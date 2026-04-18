@@ -1,12 +1,13 @@
 import { View, Text, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Alert, Modal, KeyboardAvoidingView, Platform, Animated, Easing } from "react-native";
 import * as Clipboard from 'expo-clipboard';
 import ExpoCheckbox from "expo-checkbox";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import Svg, { Path } from 'react-native-svg';
 import { useLocalSearchParams, router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { taskService, Task, TaskUrgency } from "../../../services/taskService";
+import { noteService, Note } from "../../../services/noteService";
 import { useAuth } from "../../../context/AuthContext";
 import {
   facultyTaskService,
@@ -21,6 +22,7 @@ import {
 } from "../../../services/remarkService";
 import JoinClassModal from "../../../components/JoinClassModal";
 import { useFileDownload } from "../../../hooks/useFileDownload";
+import { cancelTaskDueReminders, scheduleTaskDueRemindersForTask } from "../../../services/taskReminderService";
 import {
   formatDueDatePreview,
   getDueDatePresets,
@@ -75,6 +77,18 @@ export default function SubjectDetails() {
   const [isAddingTask, setIsAddingTask] = useState(false);
 
   // ============================================
+  // Quick Note State
+  // ============================================
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [newNoteText, setNewNoteText] = useState<string>("");
+  const [showNoteComposer, setShowNoteComposer] = useState(false);
+  const [isAddingNote, setIsAddingNote] = useState(false);
+  const [inlineEditingNoteId, setInlineEditingNoteId] = useState<number | null>(null);
+  const [inlineNoteText, setInlineNoteText] = useState<string>('');
+  const [isSavingInlineNote, setIsSavingInlineNote] = useState(false);
+  const skipInlineBlurSaveRef = useRef(false);
+
+  // ============================================
   // Faculty Task State
   // ============================================
   const [facultyTasks, setFacultyTasks] = useState<FacultyTaskWithStats[]>([]);
@@ -90,6 +104,7 @@ export default function SubjectDetails() {
   const [isAddingFacultyTask, setIsAddingFacultyTask] = useState(false);
 
   const taskComposerAnimation = useRef(new Animated.Value(0)).current;
+  const noteComposerAnimation = useRef(new Animated.Value(0)).current;
   const facultyComposerAnimation = useRef(new Animated.Value(0)).current;
 
   // ============================================
@@ -122,25 +137,34 @@ export default function SubjectDetails() {
     setIsFacultyLoading(true);
 
     try {
+      const notesPromise = noteService.getNotes(subjectCode, user?.id).catch((error) => {
+        console.error('Error loading notes:', error);
+        return [] as Note[];
+      });
+
       if (shouldUseFacultyTaskFlow) {
         // Faculty + faculty-sourced class: load class code and faculty tasks
-        const [tasksData, codes] = await Promise.all([
+        const [tasksData, codes, notesData] = await Promise.all([
           facultyTaskService.getFacultyTasks(subjectCode),
           facultyTaskService.getClassCodes(subjectCode),
+          notesPromise,
         ]);
         setFacultyTasks(tasksData);
+        setNotes(notesData);
         if (codes.length > 0) setClassCode(codes[0]);
       } else if (isStudent) {
         // Student: load personal tasks + faculty tasks + enrollment status + remarks
-        const [personalTasks, fTasks, enrollments, remarksData] = await Promise.all([
+        const [personalTasks, fTasks, enrollments, remarksData, notesData] = await Promise.all([
           taskService.getTasks(subjectCode),
           studentEnrollmentService.getFacultyTasks(subjectCode).catch(() => []),
           studentEnrollmentService.getEnrollments().catch(() => []),
           studentRemarkService.getRemarks(subjectCode).catch(() => []),
+          notesPromise,
         ]);
         setTasks(personalTasks);
         setStudentFacultyTasks(fTasks);
         setStudentRemarks(remarksData);
+        setNotes(notesData);
         // Check enrollment using actual enrollments, not task count
         const enrolled = enrollments.some(
           (e) => e.subject_code === subjectCode && e.status === 'active'
@@ -148,8 +172,12 @@ export default function SubjectDetails() {
         setIsEnrolled(enrolled);
       } else {
         // Personal-task flow: faculty on student-sourced classes + other user types
-        const personalTasks = await taskService.getTasks(subjectCode);
+        const [personalTasks, notesData] = await Promise.all([
+          taskService.getTasks(subjectCode),
+          notesPromise,
+        ]);
         setTasks(personalTasks);
+        setNotes(notesData);
       }
     } catch (error) {
       console.error('Error loading data:', error);
@@ -157,7 +185,7 @@ export default function SubjectDetails() {
       setIsLoading(false);
       setIsFacultyLoading(false);
     }
-  }, [subjectCode, shouldUseFacultyTaskFlow, isStudent]);
+  }, [subjectCode, shouldUseFacultyTaskFlow, isStudent, user?.id]);
 
   // ============================================
   // Load Data
@@ -184,6 +212,15 @@ export default function SubjectDetails() {
   }, [showTaskComposer, taskComposerAnimation]);
 
   useEffect(() => {
+    Animated.timing(noteComposerAnimation, {
+      toValue: showNoteComposer ? 1 : 0,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [showNoteComposer, noteComposerAnimation]);
+
+  useEffect(() => {
     Animated.timing(facultyComposerAnimation, {
       toValue: showFacultyTaskComposer ? 1 : 0,
       duration: 220,
@@ -200,7 +237,17 @@ export default function SubjectDetails() {
       setTasks(prev => prev.map(t =>
         t.id === task.id ? { ...t, is_completed: !t.is_completed } : t
       ));
-      await taskService.toggleTaskCompletion(task);
+      const updatedTask = await taskService.toggleTaskCompletion(task);
+
+      if (updatedTask.is_completed) {
+        await cancelTaskDueReminders(updatedTask.id).catch((error) => {
+          console.warn('Failed to cancel local task reminders:', error);
+        });
+      } else {
+        await scheduleTaskDueRemindersForTask(updatedTask).catch((error) => {
+          console.warn('Failed to schedule local task reminders:', error);
+        });
+      }
     } catch (error) {
       console.error('Error toggling task:', error);
       setTasks(prev => prev.map(t =>
@@ -229,6 +276,11 @@ export default function SubjectDetails() {
         urgency: newTaskUrgency,
         due_date: newTaskDueDate,
       });
+
+      await scheduleTaskDueRemindersForTask(newTask).catch((error) => {
+        console.warn('Failed to schedule local task reminders:', error);
+      });
+
       setTasks(prev => [newTask, ...prev]);
       setNewTaskText("");
       setNewTaskUrgency('medium');
@@ -257,6 +309,9 @@ export default function SubjectDetails() {
             try {
               setTasks(prev => prev.filter(t => t.id !== task.id));
               await taskService.deleteTask(task.id, subjectCode);
+              await cancelTaskDueReminders(task.id).catch((error) => {
+                console.warn('Failed to cancel local task reminders:', error);
+              });
             } catch (error) {
               console.error('Error deleting task:', error);
               loadAllData();
@@ -264,6 +319,127 @@ export default function SubjectDetails() {
             }
           }
         }
+      ]
+    );
+  };
+
+  // ============================================
+  // Quick Note Handlers
+  // ============================================
+  const handleSaveNote = async () => {
+    if (!newNoteText.trim() || !subjectCode) return;
+
+    try {
+      setIsAddingNote(true);
+      const createdNote = await noteService.createNote({
+        subject_code: subjectCode,
+        text: newNoteText.trim(),
+      }, user?.id);
+      setNotes((prev) => [createdNote, ...prev]);
+      setNewNoteText('');
+      setShowNoteComposer(false);
+    } catch (error) {
+      console.error('Error saving note:', error);
+      Alert.alert('Error', 'Failed to save note. Please try again.');
+    } finally {
+      setIsAddingNote(false);
+    }
+  };
+
+  const handleStartInlineEdit = (note: Note) => {
+    setInlineEditingNoteId(note.id);
+    setInlineNoteText(note.text);
+  };
+
+  const handleCancelInlineEdit = () => {
+    if (isSavingInlineNote) return;
+    setInlineEditingNoteId(null);
+    setInlineNoteText('');
+  };
+
+  const handleSaveInlineEdit = async (note: Note) => {
+    if (!subjectCode) return;
+
+    const nextText = inlineNoteText.trim();
+    if (!nextText) {
+      handleCancelInlineEdit();
+      return;
+    }
+
+    if (nextText === note.text.trim()) {
+      handleCancelInlineEdit();
+      return;
+    }
+
+    try {
+      setIsSavingInlineNote(true);
+      const updatedNote = await noteService.updateNote(note.id, subjectCode, {
+        text: nextText,
+      }, user?.id);
+      setNotes((prev) => prev.map((n) => (n.id === note.id ? updatedNote : n)));
+      setInlineEditingNoteId(null);
+      setInlineNoteText('');
+    } catch (error) {
+      console.error('Error updating note:', error);
+      Alert.alert('Error', 'Failed to update note. Please try again.');
+    } finally {
+      setIsSavingInlineNote(false);
+    }
+  };
+
+  const handleInlineNoteBlur = async (note: Note) => {
+    if (skipInlineBlurSaveRef.current) {
+      skipInlineBlurSaveRef.current = false;
+      return;
+    }
+
+    if (isSavingInlineNote || inlineEditingNoteId !== note.id) {
+      return;
+    }
+
+    await handleSaveInlineEdit(note);
+  };
+
+  const handleTogglePinNote = async (note: Note) => {
+    if (!subjectCode) return;
+
+    const nextPinned = !note.is_pinned;
+    setNotes((prev) => prev.map((n) => (n.id === note.id ? { ...n, is_pinned: nextPinned } : n)));
+
+    try {
+      const updatedNote = await noteService.updateNote(note.id, subjectCode, { is_pinned: nextPinned }, user?.id);
+      setNotes((prev) => prev.map((n) => (n.id === note.id ? updatedNote : n)));
+    } catch (error) {
+      console.error('Error updating note pin:', error);
+      setNotes((prev) => prev.map((n) => (n.id === note.id ? { ...n, is_pinned: note.is_pinned } : n)));
+      Alert.alert('Error', 'Failed to update favorite note. Please try again.');
+    }
+  };
+
+  const handleDeleteNote = async (note: Note) => {
+    Alert.alert(
+      'Delete Note',
+      'Are you sure you want to delete this note?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setNotes((prev) => prev.filter((n) => n.id !== note.id));
+              if (inlineEditingNoteId === note.id) {
+                setInlineEditingNoteId(null);
+                setInlineNoteText('');
+              }
+              await noteService.deleteNote(note.id, subjectCode, user?.id);
+            } catch (error) {
+              console.error('Error deleting note:', error);
+              loadAllData();
+              Alert.alert('Error', 'Failed to delete note. Please try again.');
+            }
+          },
+        },
       ]
     );
   };
@@ -439,6 +615,12 @@ export default function SubjectDetails() {
     </Svg>
   );
 
+  const FavoriteIcon = ({ size = 18, color = '#0284C7', active = false }) => (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill={active ? color : 'none'} stroke={color} strokeWidth="2">
+      <Path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.77 5.82 22 7 14.14 2 9.27l6.91-1.01L12 2z" />
+    </Svg>
+  );
+
   const urgencyBadgeStyles: Record<TaskUrgency, { bg: string; text: string }> = {
     low: { bg: 'bg-gray-100', text: 'text-gray-700' },
     medium: { bg: 'bg-blue-100', text: 'text-blue-700' },
@@ -499,6 +681,17 @@ export default function SubjectDetails() {
     if (isAddingTask) return;
     setShowTaskDuePicker(false);
     setShowTaskComposer(false);
+  };
+
+  const closeNoteComposer = () => {
+    if (isAddingNote) return;
+    setNewNoteText('');
+    setShowNoteComposer(false);
+  };
+
+  const openCreateNoteComposer = () => {
+    setNewNoteText('');
+    setShowNoteComposer(true);
   };
 
   const openTaskDuePicker = (mode: 'date' | 'time') => {
@@ -581,6 +774,29 @@ export default function SubjectDetails() {
       },
     ],
   };
+
+  const noteComposerPanelStyle = {
+    opacity: noteComposerAnimation,
+    transform: [
+      {
+        translateY: noteComposerAnimation.interpolate({
+          inputRange: [0, 1],
+          outputRange: [28, 0],
+        }),
+      },
+    ],
+  };
+
+  const sortedNotes = useMemo(
+    () =>
+      [...notes].sort((a, b) => {
+        if (a.is_pinned !== b.is_pinned) {
+          return a.is_pinned ? -1 : 1;
+        }
+        return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+      }),
+    [notes]
+  );
 
   const facultyComposerPanelStyle = {
     opacity: facultyComposerAnimation,
@@ -1024,6 +1240,123 @@ export default function SubjectDetails() {
           </>
         )}
 
+        {/* ============================================ */}
+        {/* QUICK NOTES (all users)                      */}
+        {/* ============================================ */}
+        <View className="mb-8">
+          <View className="flex-row justify-between items-center mb-3">
+            <Text className="text-xl font-bold text-sky-800">Quick Notes</Text>
+            {(isLoading || isFacultyLoading) && <ActivityIndicator size="small" color="#0284C7" />}
+          </View>
+
+          {isLoading || isFacultyLoading ? (
+            <View className="py-4 items-center">
+              <ActivityIndicator size="small" color="#0284C7" />
+              <Text className="text-gray-500 mt-2">Loading notes...</Text>
+            </View>
+          ) : sortedNotes.length === 0 ? (
+            <Text className="text-gray-500 mb-4">No quick notes yet. Add one for this subject.</Text>
+          ) : (
+            sortedNotes.map((note) => (
+              <View key={`note-${note.id}`} className="bg-white border border-sky-100 p-3 rounded-xl mb-2">
+                <View className="flex-row items-start justify-between">
+                  <View className="flex-1 mr-3">
+                    <View className="flex-row items-center mb-1.5">
+                      {note.is_pinned && (
+                        <View className="bg-sky-100 px-2 py-0.5 rounded-full mr-2">
+                          <Text className="text-[10px] font-semibold text-sky-700 uppercase">Favorite</Text>
+                        </View>
+                      )}
+                      <Text className="text-[11px] text-sky-700">
+                        {inlineEditingNoteId === note.id ? 'Editing... auto-saves when you tap away' : 'Tap to edit inline'}
+                      </Text>
+                    </View>
+
+                    {inlineEditingNoteId === note.id ? (
+                      <>
+                        <View className="bg-sky-50 border border-sky-200 rounded-xl p-2.5 mb-2">
+                          <TextInput
+                            value={inlineNoteText}
+                            onChangeText={setInlineNoteText}
+                            onBlur={() => handleInlineNoteBlur(note)}
+                            editable={!isSavingInlineNote}
+                            multiline
+                            textAlignVertical="top"
+                            autoFocus
+                            className="text-gray-800 min-h-[72px]"
+                          />
+                        </View>
+                        <View className="flex-row items-center">
+                          <TouchableOpacity
+                            onPress={() => {
+                              skipInlineBlurSaveRef.current = true;
+                              handleSaveInlineEdit(note);
+                            }}
+                            disabled={isSavingInlineNote || !inlineNoteText.trim()}
+                            className={`px-3 py-2 rounded-lg mr-2 ${isSavingInlineNote || !inlineNoteText.trim() ? 'bg-gray-300' : 'bg-sky-700'}`}
+                          >
+                            <Text className="text-white text-xs font-semibold">Save</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => {
+                              skipInlineBlurSaveRef.current = true;
+                              handleCancelInlineEdit();
+                            }}
+                            disabled={isSavingInlineNote}
+                            className="px-3 py-2 rounded-lg bg-gray-100"
+                          >
+                            <Text className="text-gray-700 text-xs font-semibold">Cancel</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </>
+                    ) : (
+                      <TouchableOpacity activeOpacity={0.7} onPress={() => handleStartInlineEdit(note)}>
+                        <Text className="text-gray-800 leading-5">{note.text}</Text>
+                        <Text className="text-[11px] text-sky-700 mt-2">
+                          Updated {new Date(note.updated_at).toLocaleString()}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  <View className="items-center">
+                    <TouchableOpacity
+                      onPress={() => handleTogglePinNote(note)}
+                      disabled={inlineEditingNoteId === note.id && isSavingInlineNote}
+                      className={`p-2 rounded-full mb-1 ${(note.is_pinned ? 'bg-sky-50' : '')} ${inlineEditingNoteId === note.id && isSavingInlineNote ? 'opacity-50' : ''}`}
+                    >
+                      <FavoriteIcon size={18} color="#0284C7" active={note.is_pinned} />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => handleDeleteNote(note)} className="p-2" disabled={inlineEditingNoteId === note.id && isSavingInlineNote}>
+                      <TrashIcon size={18} color="#9CA3AF" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            ))
+          )}
+
+          <View className="mt-4">
+            <View className="bg-sky-700 rounded-3xl p-5">
+              <View className="flex-row items-center justify-between mb-1">
+                <Text className="font-bold text-lg text-white">Quick Add Note</Text>
+                <View className="bg-white/20 px-2 py-1 rounded-full">
+                  <Text className="text-[10px] font-semibold text-white uppercase">Personal</Text>
+                </View>
+              </View>
+              <Text className="text-xs text-sky-100 mb-4">
+                Save short reminders, ideas, or context for this subject without creating a checklist task.
+              </Text>
+
+              <TouchableOpacity
+                onPress={openCreateNoteComposer}
+                className="bg-white py-3 rounded-xl items-center"
+              >
+                <Text className="text-sky-700 font-bold">Open Note Composer</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+
       </ScrollView>
 
       <Modal
@@ -1169,6 +1502,66 @@ export default function SubjectDetails() {
                   <ActivityIndicator size="small" color="#ffffff" />
                 ) : (
                   <Text className="text-white font-bold">Create Task</Text>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
+          </Animated.View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal
+        visible={showNoteComposer}
+        transparent
+        animationType="slide"
+        onRequestClose={closeNoteComposer}
+      >
+        <KeyboardAvoidingView
+          className="flex-1 bg-black/45 justify-end"
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <Animated.View className="bg-white rounded-t-3xl max-h-[86%]" style={noteComposerPanelStyle}>
+            <View className="items-center pt-3 pb-2">
+              <View className="w-12 h-1 bg-gray-300 rounded-full" />
+            </View>
+
+            <ScrollView className="px-5" keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 24 }}>
+              <View className="flex-row items-start justify-between mb-4">
+                <View className="flex-1 mr-3">
+                  <Text className="text-lg font-bold text-gray-900">Add Quick Note</Text>
+                  <Text className="text-xs text-gray-500 mt-1">
+                    Keep it short and useful. Notes are tied to this subject only.
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={closeNoteComposer}
+                  className="bg-gray-100 rounded-full px-3 py-1.5"
+                >
+                  <Text className="text-xs font-semibold text-gray-600">Close</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View className="bg-sky-50 border border-sky-200 rounded-2xl p-3 mb-4">
+                <TextInput
+                  value={newNoteText}
+                  onChangeText={setNewNoteText}
+                  placeholder="Type a quick note for this subject..."
+                  className="text-base text-gray-900 min-h-[120px]"
+                  editable={!isAddingNote}
+                  multiline
+                  textAlignVertical="top"
+                  autoFocus
+                />
+              </View>
+
+              <TouchableOpacity
+                onPress={handleSaveNote}
+                disabled={isAddingNote || !newNoteText.trim()}
+                className={`py-3 rounded-xl items-center ${isAddingNote || !newNoteText.trim() ? 'bg-gray-300' : 'bg-sky-700'}`}
+              >
+                {isAddingNote ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text className="text-white font-bold">Save Note</Text>
                 )}
               </TouchableOpacity>
             </ScrollView>

@@ -5,6 +5,7 @@ import { facultyTaskService, ClassCode, FacultyModeStatus } from '../services/fa
 import { usePushNotification } from '../usePushNotification';
 import { offlineService } from '../services/offlineService';
 import { taskService } from '../services/taskService';
+import { noteService } from '../services/noteService';
 import { cancelAllClassReminders } from '../services/classReminderService';
 import * as SecureStore from 'expo-secure-store';
 
@@ -118,6 +119,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Clear any stale schedule cache from previous session
       invalidateScheduleCache();
       invalidateFacultyDataCache();
+      await noteService.clearAllCaches();
 
       // Migrate/clear legacy schedules for this user
       if (response.user?.id) {
@@ -142,6 +144,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Clear any stale schedule cache
       invalidateScheduleCache();
       invalidateFacultyDataCache();
+      await noteService.clearAllCaches();
 
       // Migrate/clear legacy schedules for this user
       if (response.user?.id) {
@@ -167,6 +170,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Clear all offline data (cache + sync queue) and task caches
       await offlineService.clearAll();
       await taskService.clearAllCaches();
+      await noteService.clearAllCaches();
       // Cancel all scheduled class reminders
       await cancelAllClassReminders();
     } catch (error) {
@@ -177,6 +181,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       invalidateFacultyDataCache();
       await offlineService.clearAll();
       await taskService.clearAllCaches();
+      await noteService.clearAllCaches();
       await cancelAllClassReminders().catch(() => {});
     } finally {
       setIsLoading(false);
