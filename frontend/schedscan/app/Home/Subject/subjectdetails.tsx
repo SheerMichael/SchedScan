@@ -1,7 +1,8 @@
-import { View, Text, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Alert, Modal } from "react-native";
+import { View, Text, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Alert, Modal, KeyboardAvoidingView, Platform, Animated, Easing } from "react-native";
 import * as Clipboard from 'expo-clipboard';
-import Checkbox from "expo-checkbox";
-import { useState, useEffect, useCallback } from "react";
+import ExpoCheckbox from "expo-checkbox";
+import { useState, useEffect, useCallback, useRef } from "react";
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import Svg, { Path } from 'react-native-svg';
 import { useLocalSearchParams, router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -25,7 +26,6 @@ import {
   getDueDatePresets,
   getSuggestedDueDateForUrgency,
   getUrgencyHint,
-  parseCustomDueDateTime,
   requiresDueDate,
   toDueDateISOString,
 } from "../../../utils/taskDueDate";
@@ -40,10 +40,7 @@ export default function SubjectDetails() {
   // Receive all course data from navigation params
   const {
     title,           // subject_code (e.g., "CS101")
-    subjectName,     // subject_name
     time,            // formatted time
-    startTime,       // start_time
-    endTime,         // end_time
     location,        // location
     day,             // day code
     priorityLevel,   // 'Class' | 'Holiday' | 'Event'
@@ -57,13 +54,11 @@ export default function SubjectDetails() {
   const isNonClassItem = normalizedPriorityLevel === 'holiday' || normalizedPriorityLevel === 'event';
   const isFacultyCourse = isClassItem && normalizedSourceType === 'faculty';
   const shouldUseFacultyTaskFlow = isFaculty && isFacultyCourse;
-  const taskLabelSingular = isNonClassItem ? 'Task' : 'Class Task';
   const taskLabelPlural = isNonClassItem ? 'Tasks' : 'Class Tasks';
   const addTaskLabel = isNonClassItem ? 'Add Task' : 'Add Class Task';
   const noTasksLabel = isNonClassItem
     ? 'No tasks yet. Create one below!'
     : 'No class tasks yet. Create one below!';
-  const addTaskPlaceholder = isNonClassItem ? 'Enter task...' : 'Enter task for students...';
 
   // ============================================
   // Personal Task State
@@ -73,8 +68,9 @@ export default function SubjectDetails() {
   const [newTaskUrgency, setNewTaskUrgency] = useState<TaskUrgency>('medium');
   const [newTaskDueDate, setNewTaskDueDate] = useState<string | null>(null);
   const [newTaskDuePreset, setNewTaskDuePreset] = useState<DueDatePresetKey | null>(null);
-  const [newTaskCustomDate, setNewTaskCustomDate] = useState<string>('');
-  const [newTaskCustomTime, setNewTaskCustomTime] = useState<string>('');
+  const [showTaskComposer, setShowTaskComposer] = useState(false);
+  const [showTaskDuePicker, setShowTaskDuePicker] = useState(false);
+  const [taskDuePickerMode, setTaskDuePickerMode] = useState<'date' | 'time'>('date');
   const [isLoading, setIsLoading] = useState(true);
   const [isAddingTask, setIsAddingTask] = useState(false);
 
@@ -88,9 +84,13 @@ export default function SubjectDetails() {
   const [newFacultyTaskUrgency, setNewFacultyTaskUrgency] = useState<TaskUrgency>('medium');
   const [newFacultyTaskDueDate, setNewFacultyTaskDueDate] = useState<string | null>(null);
   const [newFacultyTaskDuePreset, setNewFacultyTaskDuePreset] = useState<DueDatePresetKey | null>(null);
-  const [newFacultyTaskCustomDate, setNewFacultyTaskCustomDate] = useState<string>('');
-  const [newFacultyTaskCustomTime, setNewFacultyTaskCustomTime] = useState<string>('');
+  const [showFacultyTaskComposer, setShowFacultyTaskComposer] = useState(false);
+  const [showFacultyTaskDuePicker, setShowFacultyTaskDuePicker] = useState(false);
+  const [facultyTaskDuePickerMode, setFacultyTaskDuePickerMode] = useState<'date' | 'time'>('date');
   const [isAddingFacultyTask, setIsAddingFacultyTask] = useState(false);
+
+  const taskComposerAnimation = useRef(new Animated.Value(0)).current;
+  const facultyComposerAnimation = useRef(new Animated.Value(0)).current;
 
   // ============================================
   // Class Code State (Faculty only)
@@ -115,13 +115,6 @@ export default function SubjectDetails() {
   // File Download
   // ============================================
   const { downloadingTaskId, downloadProgress, downloadStatus, downloadFile: handleDownloadFile } = useFileDownload();
-
-  // ============================================
-  // Load Data
-  // ============================================
-  useEffect(() => {
-    loadAllData();
-  }, [subjectCode]);
 
   const loadAllData = useCallback(async () => {
     if (!subjectCode) return;
@@ -166,6 +159,13 @@ export default function SubjectDetails() {
     }
   }, [subjectCode, shouldUseFacultyTaskFlow, isStudent]);
 
+  // ============================================
+  // Load Data
+  // ============================================
+  useEffect(() => {
+    loadAllData();
+  }, [loadAllData]);
+
   useFocusEffect(
     useCallback(() => {
       refreshUser().catch((error) => {
@@ -173,6 +173,24 @@ export default function SubjectDetails() {
       });
     }, [refreshUser])
   );
+
+  useEffect(() => {
+    Animated.timing(taskComposerAnimation, {
+      toValue: showTaskComposer ? 1 : 0,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [showTaskComposer, taskComposerAnimation]);
+
+  useEffect(() => {
+    Animated.timing(facultyComposerAnimation, {
+      toValue: showFacultyTaskComposer ? 1 : 0,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [showFacultyTaskComposer, facultyComposerAnimation]);
 
   // ============================================
   // Personal Task Handlers
@@ -216,8 +234,8 @@ export default function SubjectDetails() {
       setNewTaskUrgency('medium');
       setNewTaskDueDate(null);
       setNewTaskDuePreset(null);
-      setNewTaskCustomDate('');
-      setNewTaskCustomTime('');
+      setShowTaskDuePicker(false);
+      setShowTaskComposer(false);
     } catch (error) {
       console.error('Error adding task:', error);
       Alert.alert('Error', 'Failed to add task. Please try again.');
@@ -277,8 +295,8 @@ export default function SubjectDetails() {
       setNewFacultyTaskUrgency('medium');
       setNewFacultyTaskDueDate(null);
       setNewFacultyTaskDuePreset(null);
-      setNewFacultyTaskCustomDate('');
-      setNewFacultyTaskCustomTime('');
+      setShowFacultyTaskDuePicker(false);
+      setShowFacultyTaskComposer(false);
     } catch (error) {
       console.error('Error adding faculty task:', error);
       Alert.alert('Error', 'Failed to add task. Please try again.');
@@ -454,8 +472,6 @@ export default function SubjectDetails() {
   const clearTaskDueDate = () => {
     setNewTaskDueDate(null);
     setNewTaskDuePreset(null);
-    setNewTaskCustomDate('');
-    setNewTaskCustomTime('');
   };
 
   const applyFacultyDuePreset = (preset: { key: DueDatePresetKey; date: Date }) => {
@@ -466,8 +482,6 @@ export default function SubjectDetails() {
   const clearFacultyDueDate = () => {
     setNewFacultyTaskDueDate(null);
     setNewFacultyTaskDuePreset(null);
-    setNewFacultyTaskCustomDate('');
-    setNewFacultyTaskCustomTime('');
   };
 
   const handleTaskUrgencyChange = (urgency: TaskUrgency) => {
@@ -481,6 +495,70 @@ export default function SubjectDetails() {
     }
   };
 
+  const closeTaskComposer = () => {
+    if (isAddingTask) return;
+    setShowTaskDuePicker(false);
+    setShowTaskComposer(false);
+  };
+
+  const openTaskDuePicker = (mode: 'date' | 'time') => {
+    setTaskDuePickerMode(mode);
+    setShowTaskDuePicker(true);
+  };
+
+  const handleTaskDuePickerChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowTaskDuePicker(false);
+    }
+
+    if (!selectedDate || event.type === 'dismissed') {
+      return;
+    }
+
+    const baseDate = newTaskDueDate ? new Date(newTaskDueDate) : new Date();
+
+    if (taskDuePickerMode === 'date') {
+      baseDate.setFullYear(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
+    } else {
+      baseDate.setHours(selectedDate.getHours(), selectedDate.getMinutes(), 0, 0);
+    }
+
+    setNewTaskDueDate(toDueDateISOString(baseDate));
+    setNewTaskDuePreset(null);
+  };
+
+  const closeFacultyTaskComposer = () => {
+    if (isAddingFacultyTask) return;
+    setShowFacultyTaskDuePicker(false);
+    setShowFacultyTaskComposer(false);
+  };
+
+  const openFacultyTaskDuePicker = (mode: 'date' | 'time') => {
+    setFacultyTaskDuePickerMode(mode);
+    setShowFacultyTaskDuePicker(true);
+  };
+
+  const handleFacultyTaskDuePickerChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowFacultyTaskDuePicker(false);
+    }
+
+    if (!selectedDate || event.type === 'dismissed') {
+      return;
+    }
+
+    const baseDate = newFacultyTaskDueDate ? new Date(newFacultyTaskDueDate) : new Date();
+
+    if (facultyTaskDuePickerMode === 'date') {
+      baseDate.setFullYear(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
+    } else {
+      baseDate.setHours(selectedDate.getHours(), selectedDate.getMinutes(), 0, 0);
+    }
+
+    setNewFacultyTaskDueDate(toDueDateISOString(baseDate));
+    setNewFacultyTaskDuePreset(null);
+  };
+
   const handleFacultyUrgencyChange = (urgency: TaskUrgency) => {
     setNewFacultyTaskUrgency(urgency);
     if (!newFacultyTaskDueDate) {
@@ -492,26 +570,28 @@ export default function SubjectDetails() {
     }
   };
 
-  const applyCustomTaskDueDate = () => {
-    const parsed = parseCustomDueDateTime(newTaskCustomDate, newTaskCustomTime);
-    if (!parsed.isoDate) {
-      Alert.alert('Invalid Date/Time', parsed.error || 'Please enter a valid date and time.');
-      return;
-    }
-
-    setNewTaskDueDate(parsed.isoDate);
-    setNewTaskDuePreset(null);
+  const taskComposerPanelStyle = {
+    opacity: taskComposerAnimation,
+    transform: [
+      {
+        translateY: taskComposerAnimation.interpolate({
+          inputRange: [0, 1],
+          outputRange: [28, 0],
+        }),
+      },
+    ],
   };
 
-  const applyCustomFacultyDueDate = () => {
-    const parsed = parseCustomDueDateTime(newFacultyTaskCustomDate, newFacultyTaskCustomTime);
-    if (!parsed.isoDate) {
-      Alert.alert('Invalid Date/Time', parsed.error || 'Please enter a valid date and time.');
-      return;
-    }
-
-    setNewFacultyTaskDueDate(parsed.isoDate);
-    setNewFacultyTaskDuePreset(null);
+  const facultyComposerPanelStyle = {
+    opacity: facultyComposerAnimation,
+    transform: [
+      {
+        translateY: facultyComposerAnimation.interpolate({
+          inputRange: [0, 1],
+          outputRange: [28, 0],
+        }),
+      },
+    ],
   };
 
   // ============================================
@@ -672,116 +752,22 @@ export default function SubjectDetails() {
 
             {/* Add Faculty Task */}
             <View className="mt-4 mb-6">
-              <View className="bg-white border border-orange-200 rounded-2xl p-4 shadow">
+              <View className="bg-orange-600 rounded-3xl p-5">
                 <View className="flex-row items-center justify-between mb-1">
-                  <Text className="font-bold text-lg text-gray-900">{addTaskLabel}</Text>
-                  <View className="bg-orange-100 px-2 py-1 rounded-full">
-                    <Text className="text-[10px] font-semibold text-orange-700 uppercase">Class</Text>
+                  <Text className="font-bold text-lg text-white">Quick Add Class Task</Text>
+                  <View className="bg-white/20 px-2 py-1 rounded-full">
+                    <Text className="text-[10px] font-semibold text-white uppercase">Class</Text>
                   </View>
                 </View>
-                <Text className="text-xs text-gray-500 mb-4">Set priority and deadline first, then write task details.</Text>
-
-                <Text className="text-[11px] font-semibold uppercase tracking-wide text-gray-600 mb-2">1. Priority</Text>
-                <View className="flex-row flex-wrap mb-4">
-                  {facultyUrgencyChoices.map((urgency) => {
-                    const selected = newFacultyTaskUrgency === urgency;
-                    return (
-                      <TouchableOpacity
-                        key={`faculty-${urgency}`}
-                        onPress={() => handleFacultyUrgencyChange(urgency)}
-                        className={`mr-2 mb-2 px-3 py-2 rounded-full border flex-row items-center ${selected ? 'border-orange-500 bg-orange-500' : 'border-gray-300 bg-white'}`}
-                      >
-                        <View className="w-2 h-2 rounded-full mr-2" style={{ backgroundColor: urgencyPalette[urgency] }} />
-                        <Text className={`text-xs font-semibold uppercase ${selected ? 'text-white' : 'text-gray-700'}`}>
-                          {urgency}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-
-                <Text className="text-[11px] font-semibold uppercase tracking-wide text-gray-600 mb-2">2. Deadline</Text>
-                <View className="flex-row flex-wrap mb-2">
-                  {dueDatePresets.map((preset) => (
-                    <TouchableOpacity
-                      key={`faculty-due-${preset.key}`}
-                      onPress={() => applyFacultyDuePreset(preset)}
-                      className={`mr-2 mb-2 px-3 py-2 rounded-full border ${newFacultyTaskDuePreset === preset.key ? 'border-orange-500 bg-orange-500' : 'border-gray-300 bg-white'}`}
-                    >
-                      <Text className={`text-xs font-semibold ${newFacultyTaskDuePreset === preset.key ? 'text-white' : 'text-gray-700'}`}>
-                        {preset.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                  <TouchableOpacity
-                    onPress={clearFacultyDueDate}
-                    className={`mr-2 mb-2 px-3 py-2 rounded-full border ${!newFacultyTaskDueDate ? 'border-orange-500 bg-orange-500' : 'border-gray-300 bg-white'}`}
-                  >
-                    <Text className={`text-xs font-semibold ${!newFacultyTaskDueDate ? 'text-white' : 'text-gray-700'}`}>No Due Date</Text>
-                  </TouchableOpacity>
-                </View>
-
-                <View className="mb-3">
-                  <View className="flex-row">
-                    <TextInput
-                      value={newFacultyTaskCustomDate}
-                      onChangeText={setNewFacultyTaskCustomDate}
-                      placeholder="YYYY-MM-DD"
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      className="flex-1 bg-white border border-gray-300 rounded-lg px-3 py-2.5 mr-2 text-xs"
-                    />
-                    <TextInput
-                      value={newFacultyTaskCustomTime}
-                      onChangeText={setNewFacultyTaskCustomTime}
-                      placeholder="HH:mm"
-                      keyboardType="numbers-and-punctuation"
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      className="w-24 bg-white border border-gray-300 rounded-lg px-3 py-2.5 text-xs"
-                    />
-                  </View>
-                  <TouchableOpacity
-                    onPress={applyCustomFacultyDueDate}
-                    className="bg-orange-500 py-2.5 rounded-lg mt-2 items-center"
-                  >
-                    <Text className="text-white text-xs font-semibold">Set Custom Deadline</Text>
-                  </TouchableOpacity>
-                </View>
-
-                <View className="bg-orange-50 border border-orange-100 rounded-xl p-3 mb-4">
-                  <Text className="text-[11px] text-orange-700 font-semibold uppercase mb-1">Selected Deadline</Text>
-                  <Text className="text-sm font-semibold text-gray-900">{formatDueDatePreview(newFacultyTaskDueDate)}</Text>
-                  <Text className={`text-[11px] mt-1 ${requiresDueDate(newFacultyTaskUrgency) && !newFacultyTaskDueDate ? 'text-red-600' : 'text-gray-600'}`}>
-                    {getUrgencyHint(newFacultyTaskUrgency, newFacultyTaskDueDate)}
-                  </Text>
-                </View>
-
-                <Text className="text-[11px] text-gray-500 mb-3">Custom date uses your local timezone.</Text>
-
-                <Text className="text-[11px] font-semibold uppercase tracking-wide text-gray-600 mb-2">3. Details</Text>
-                <View className="bg-gray-50 border border-gray-200 rounded-xl p-3">
-                  <TextInput
-                    value={newFacultyTaskText}
-                    onChangeText={setNewFacultyTaskText}
-                    placeholder={addTaskPlaceholder}
-                    className="text-base text-gray-900"
-                    editable={!isAddingFacultyTask}
-                    onSubmitEditing={handleAddFacultyTask}
-                    returnKeyType="done"
-                  />
-                </View>
+                <Text className="text-xs text-orange-100 mb-4">
+                  Use a focused composer with quick urgency and deadline options to publish class tasks faster.
+                </Text>
 
                 <TouchableOpacity
-                  onPress={handleAddFacultyTask}
-                  disabled={isAddingFacultyTask || !newFacultyTaskText.trim()}
-                  className={`mt-3 py-3 rounded-xl items-center ${isAddingFacultyTask || !newFacultyTaskText.trim() ? 'bg-gray-300' : 'bg-orange-500'}`}
+                  onPress={() => setShowFacultyTaskComposer(true)}
+                  className="bg-white py-3 rounded-xl items-center"
                 >
-                  {isAddingFacultyTask ? (
-                    <ActivityIndicator size="small" color="#ffffff" />
-                  ) : (
-                    <Text className="text-white font-bold">Create Class Task</Text>
-                  )}
+                  <Text className="text-orange-700 font-bold">Open Class Task Composer</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -813,7 +799,7 @@ export default function SubjectDetails() {
                     className={`bg-orange-50 p-3 rounded-lg mb-2 border border-orange-200 flex-row items-center ${task.is_completed ? 'opacity-60' : ''
                       }`}
                   >
-                    <Checkbox
+                    <ExpoCheckbox
                       value={task.is_completed}
                       onValueChange={() => handleToggleFacultyTaskComplete(task)}
                       color="#f97316"
@@ -976,7 +962,7 @@ export default function SubjectDetails() {
                   className={`bg-white p-3 rounded-lg mb-2 shadow flex-row items-center ${task.is_completed ? 'opacity-60' : ''
                     }`}
                 >
-                  <Checkbox
+                  <ExpoCheckbox
                     value={task.is_completed}
                     onValueChange={() => handleToggleComplete(task)}
                     color="#DC2626"
@@ -1016,116 +1002,22 @@ export default function SubjectDetails() {
 
             {/* Add New Personal Task */}
             <View className="mt-6 mb-8">
-              <View className="bg-white border border-gray-200 rounded-2xl p-4 shadow">
+              <View className="bg-slate-900 rounded-3xl p-5">
                 <View className="flex-row items-center justify-between mb-1">
-                  <Text className="font-bold text-lg text-gray-900">Add New Task</Text>
-                  <View className="bg-primary-50 px-2 py-1 rounded-full">
-                    <Text className="text-[10px] font-semibold text-primary-700 uppercase">Personal</Text>
+                  <Text className="font-bold text-lg text-white">Quick Add Task</Text>
+                  <View className="bg-white/20 px-2 py-1 rounded-full">
+                    <Text className="text-[10px] font-semibold text-white uppercase">Personal</Text>
                   </View>
                 </View>
-                <Text className="text-xs text-gray-500 mb-4">A quick 3-step flow to add tasks with the right urgency and due date.</Text>
-
-                <Text className="text-[11px] font-semibold uppercase tracking-wide text-gray-600 mb-2">1. Priority</Text>
-                <View className="flex-row flex-wrap mb-4">
-                  {urgencyChoices.map((urgency) => {
-                    const selected = newTaskUrgency === urgency;
-                    return (
-                      <TouchableOpacity
-                        key={urgency}
-                        onPress={() => handleTaskUrgencyChange(urgency)}
-                        className={`mr-2 mb-2 px-3 py-2 rounded-full border flex-row items-center ${selected ? 'border-gray-900 bg-gray-900' : 'border-gray-300 bg-white'}`}
-                      >
-                        <View className="w-2 h-2 rounded-full mr-2" style={{ backgroundColor: urgencyPalette[urgency] }} />
-                        <Text className={`text-xs font-semibold uppercase ${selected ? 'text-white' : 'text-gray-700'}`}>
-                          {urgency}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-
-                <Text className="text-[11px] font-semibold uppercase tracking-wide text-gray-600 mb-2">2. Deadline</Text>
-                <View className="flex-row flex-wrap mb-2">
-                  {dueDatePresets.map((preset) => (
-                    <TouchableOpacity
-                      key={`personal-due-${preset.key}`}
-                      onPress={() => applyTaskDuePreset(preset)}
-                      className={`mr-2 mb-2 px-3 py-2 rounded-full border ${newTaskDuePreset === preset.key ? 'border-gray-900 bg-gray-900' : 'border-gray-300 bg-white'}`}
-                    >
-                      <Text className={`text-xs font-semibold ${newTaskDuePreset === preset.key ? 'text-white' : 'text-gray-700'}`}>
-                        {preset.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                  <TouchableOpacity
-                    onPress={clearTaskDueDate}
-                    className={`mr-2 mb-2 px-3 py-2 rounded-full border ${!newTaskDueDate ? 'border-gray-900 bg-gray-900' : 'border-gray-300 bg-white'}`}
-                  >
-                    <Text className={`text-xs font-semibold ${!newTaskDueDate ? 'text-white' : 'text-gray-700'}`}>No Due Date</Text>
-                  </TouchableOpacity>
-                </View>
-
-                <View className="mb-3">
-                  <View className="flex-row">
-                    <TextInput
-                      value={newTaskCustomDate}
-                      onChangeText={setNewTaskCustomDate}
-                      placeholder="YYYY-MM-DD"
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      className="flex-1 bg-white border border-gray-300 rounded-lg px-3 py-2.5 mr-2 text-xs"
-                    />
-                    <TextInput
-                      value={newTaskCustomTime}
-                      onChangeText={setNewTaskCustomTime}
-                      placeholder="HH:mm"
-                      keyboardType="numbers-and-punctuation"
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      className="w-24 bg-white border border-gray-300 rounded-lg px-3 py-2.5 text-xs"
-                    />
-                  </View>
-                  <TouchableOpacity
-                    onPress={applyCustomTaskDueDate}
-                    className="bg-gray-900 py-2.5 rounded-lg mt-2 items-center"
-                  >
-                    <Text className="text-white text-xs font-semibold">Set Custom Deadline</Text>
-                  </TouchableOpacity>
-                </View>
-
-                <View className="bg-gray-50 border border-gray-200 rounded-xl p-3 mb-4">
-                  <Text className="text-[11px] text-gray-600 font-semibold uppercase mb-1">Selected Deadline</Text>
-                  <Text className="text-sm font-semibold text-gray-900">{formatDueDatePreview(newTaskDueDate)}</Text>
-                  <Text className={`text-[11px] mt-1 ${requiresDueDate(newTaskUrgency) && !newTaskDueDate ? 'text-red-600' : 'text-gray-600'}`}>
-                    {getUrgencyHint(newTaskUrgency, newTaskDueDate)}
-                  </Text>
-                </View>
-
-                <Text className="text-[11px] text-gray-500 mb-3">Custom date uses your local timezone.</Text>
-
-                <Text className="text-[11px] font-semibold uppercase tracking-wide text-gray-600 mb-2">3. Details</Text>
-                <View className="bg-gray-50 border border-gray-200 rounded-xl p-3">
-                  <TextInput
-                    value={newTaskText}
-                    onChangeText={setNewTaskText}
-                    placeholder="Enter new task..."
-                    className="text-base text-gray-900"
-                    editable={!isAddingTask}
-                    onSubmitEditing={handleAddTask}
-                    returnKeyType="done"
-                  />
-                </View>
+                <Text className="text-xs text-slate-300 mb-4">
+                  Add tasks in a focused composer with quick due-date shortcuts and native date/time picking.
+                </Text>
 
                 <TouchableOpacity
-                  onPress={handleAddTask}
-                  disabled={isAddingTask || !newTaskText.trim()}
-                  className={`mt-3 py-3 rounded-xl items-center ${isAddingTask || !newTaskText.trim() ? 'bg-gray-300' : 'bg-primary-600'}`}
+                  onPress={() => setShowTaskComposer(true)}
+                  className="bg-white py-3 rounded-xl items-center"
                 >
-                  {isAddingTask ? (
-                    <ActivityIndicator size="small" color="#ffffff" />
-                  ) : (
-                    <Text className="text-white font-bold">Create Task</Text>
-                  )}
+                  <Text className="text-slate-900 font-bold">Open Task Composer</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -1133,6 +1025,306 @@ export default function SubjectDetails() {
         )}
 
       </ScrollView>
+
+      <Modal
+        visible={showTaskComposer}
+        transparent
+        animationType="slide"
+        onRequestClose={closeTaskComposer}
+      >
+        <KeyboardAvoidingView
+          className="flex-1 bg-black/45 justify-end"
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <Animated.View className="bg-white rounded-t-3xl max-h-[92%]" style={taskComposerPanelStyle}>
+            <View className="items-center pt-3 pb-2">
+              <View className="w-12 h-1 bg-gray-300 rounded-full" />
+            </View>
+
+            <ScrollView className="px-5" keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 24 }}>
+              <View className="flex-row items-start justify-between mb-4">
+                <View className="flex-1 mr-3">
+                  <Text className="text-lg font-bold text-gray-900">Add New Task</Text>
+                  <Text className="text-xs text-gray-500 mt-1">
+                    Capture it fast, then set urgency and due date in one place.
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={closeTaskComposer}
+                  className="bg-gray-100 rounded-full px-3 py-1.5"
+                >
+                  <Text className="text-xs font-semibold text-gray-600">Close</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View className="bg-gray-50 border border-gray-200 rounded-2xl p-3 mb-4">
+                <TextInput
+                  value={newTaskText}
+                  onChangeText={setNewTaskText}
+                  placeholder="What needs to be done?"
+                  className="text-base text-gray-900"
+                  editable={!isAddingTask}
+                  onSubmitEditing={handleAddTask}
+                  returnKeyType="done"
+                  autoFocus
+                />
+              </View>
+
+              <Text className="text-[11px] font-semibold uppercase tracking-wide text-gray-600 mb-2">Priority</Text>
+              <View className="flex-row flex-wrap mb-4">
+                {urgencyChoices.map((urgency) => {
+                  const selected = newTaskUrgency === urgency;
+                  return (
+                    <TouchableOpacity
+                      key={`modal-${urgency}`}
+                      onPress={() => handleTaskUrgencyChange(urgency)}
+                      className={`mr-2 mb-2 px-3.5 py-2 rounded-full border flex-row items-center ${selected ? 'border-primary-600 bg-primary-600' : 'border-gray-300 bg-white'}`}
+                    >
+                      <View className="w-2 h-2 rounded-full mr-2" style={{ backgroundColor: urgencyPalette[urgency] }} />
+                      <Text className={`text-xs font-semibold uppercase ${selected ? 'text-white' : 'text-gray-700'}`}>
+                        {urgency}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <Text className="text-[11px] font-semibold uppercase tracking-wide text-gray-600 mb-2">Due Date</Text>
+              <View className="flex-row flex-wrap mb-1">
+                {dueDatePresets.map((preset) => (
+                  <TouchableOpacity
+                    key={`modal-personal-due-${preset.key}`}
+                    onPress={() => applyTaskDuePreset(preset)}
+                    className={`mr-2 mb-2 px-3 py-2 rounded-full border ${newTaskDuePreset === preset.key ? 'border-primary-600 bg-primary-600' : 'border-gray-300 bg-white'}`}
+                  >
+                    <Text className={`text-xs font-semibold ${newTaskDuePreset === preset.key ? 'text-white' : 'text-gray-700'}`}>
+                      {preset.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity
+                  onPress={clearTaskDueDate}
+                  className={`mr-2 mb-2 px-3 py-2 rounded-full border ${!newTaskDueDate ? 'border-primary-600 bg-primary-600' : 'border-gray-300 bg-white'}`}
+                >
+                  <Text className={`text-xs font-semibold ${!newTaskDueDate ? 'text-white' : 'text-gray-700'}`}>No Due Date</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View className="flex-row mb-3">
+                <TouchableOpacity
+                  onPress={() => openTaskDuePicker('date')}
+                  className="flex-1 bg-white border border-gray-300 rounded-xl py-2.5 px-3 mr-2"
+                >
+                  <Text className="text-[11px] font-semibold uppercase text-gray-500 mb-0.5">Date</Text>
+                  <Text className="text-sm text-gray-800">
+                    {newTaskDueDate ? new Date(newTaskDueDate).toLocaleDateString() : 'Select date'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => openTaskDuePicker('time')}
+                  className="flex-1 bg-white border border-gray-300 rounded-xl py-2.5 px-3"
+                >
+                  <Text className="text-[11px] font-semibold uppercase text-gray-500 mb-0.5">Time</Text>
+                  <Text className="text-sm text-gray-800">
+                    {newTaskDueDate
+                      ? new Date(newTaskDueDate).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                      : 'Select time'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {showTaskDuePicker && (
+                <View className="bg-gray-50 border border-gray-200 rounded-xl p-3 mb-3">
+                  <DateTimePicker
+                    value={newTaskDueDate ? new Date(newTaskDueDate) : new Date()}
+                    mode={taskDuePickerMode}
+                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                    onChange={handleTaskDuePickerChange}
+                  />
+                  {Platform.OS === 'ios' && (
+                    <TouchableOpacity
+                      onPress={() => setShowTaskDuePicker(false)}
+                      className="bg-primary-600 py-2.5 rounded-lg mt-2 items-center"
+                    >
+                      <Text className="text-white text-xs font-semibold">Done</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
+
+              <View className="bg-gray-50 border border-gray-200 rounded-xl p-3 mb-4">
+                <Text className="text-[11px] text-gray-600 font-semibold uppercase mb-1">Selected Deadline</Text>
+                <Text className="text-sm font-semibold text-gray-900">{formatDueDatePreview(newTaskDueDate)}</Text>
+                <Text className={`text-[11px] mt-1 ${requiresDueDate(newTaskUrgency) && !newTaskDueDate ? 'text-red-600' : 'text-gray-600'}`}>
+                  {getUrgencyHint(newTaskUrgency, newTaskDueDate)}
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                onPress={handleAddTask}
+                disabled={isAddingTask || !newTaskText.trim()}
+                className={`py-3 rounded-xl items-center ${isAddingTask || !newTaskText.trim() ? 'bg-gray-300' : 'bg-primary-600'}`}
+              >
+                {isAddingTask ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text className="text-white font-bold">Create Task</Text>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
+          </Animated.View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal
+        visible={showFacultyTaskComposer}
+        transparent
+        animationType="slide"
+        onRequestClose={closeFacultyTaskComposer}
+      >
+        <KeyboardAvoidingView
+          className="flex-1 bg-black/45 justify-end"
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <Animated.View className="bg-white rounded-t-3xl max-h-[92%]" style={facultyComposerPanelStyle}>
+            <View className="items-center pt-3 pb-2">
+              <View className="w-12 h-1 bg-gray-300 rounded-full" />
+            </View>
+
+            <ScrollView className="px-5" keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 24 }}>
+              <View className="flex-row items-start justify-between mb-4">
+                <View className="flex-1 mr-3">
+                  <Text className="text-lg font-bold text-gray-900">{addTaskLabel}</Text>
+                  <Text className="text-xs text-gray-500 mt-1">
+                    Keep class assignments clear with urgency, due date, and a concise task description.
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={closeFacultyTaskComposer}
+                  className="bg-gray-100 rounded-full px-3 py-1.5"
+                >
+                  <Text className="text-xs font-semibold text-gray-600">Close</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View className="bg-orange-50 border border-orange-200 rounded-2xl p-3 mb-4">
+                <TextInput
+                  value={newFacultyTaskText}
+                  onChangeText={setNewFacultyTaskText}
+                  placeholder={isNonClassItem ? 'Enter task...' : 'Enter task for students...'}
+                  className="text-base text-gray-900"
+                  editable={!isAddingFacultyTask}
+                  onSubmitEditing={handleAddFacultyTask}
+                  returnKeyType="done"
+                  autoFocus
+                />
+              </View>
+
+              <Text className="text-[11px] font-semibold uppercase tracking-wide text-gray-600 mb-2">Priority</Text>
+              <View className="flex-row flex-wrap mb-4">
+                {facultyUrgencyChoices.map((urgency) => {
+                  const selected = newFacultyTaskUrgency === urgency;
+                  return (
+                    <TouchableOpacity
+                      key={`modal-faculty-${urgency}`}
+                      onPress={() => handleFacultyUrgencyChange(urgency)}
+                      className={`mr-2 mb-2 px-3.5 py-2 rounded-full border flex-row items-center ${selected ? 'border-orange-500 bg-orange-500' : 'border-gray-300 bg-white'}`}
+                    >
+                      <View className="w-2 h-2 rounded-full mr-2" style={{ backgroundColor: urgencyPalette[urgency] }} />
+                      <Text className={`text-xs font-semibold uppercase ${selected ? 'text-white' : 'text-gray-700'}`}>
+                        {urgency}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <Text className="text-[11px] font-semibold uppercase tracking-wide text-gray-600 mb-2">Due Date</Text>
+              <View className="flex-row flex-wrap mb-1">
+                {dueDatePresets.map((preset) => (
+                  <TouchableOpacity
+                    key={`modal-faculty-due-${preset.key}`}
+                    onPress={() => applyFacultyDuePreset(preset)}
+                    className={`mr-2 mb-2 px-3 py-2 rounded-full border ${newFacultyTaskDuePreset === preset.key ? 'border-orange-500 bg-orange-500' : 'border-gray-300 bg-white'}`}
+                  >
+                    <Text className={`text-xs font-semibold ${newFacultyTaskDuePreset === preset.key ? 'text-white' : 'text-gray-700'}`}>
+                      {preset.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity
+                  onPress={clearFacultyDueDate}
+                  className={`mr-2 mb-2 px-3 py-2 rounded-full border ${!newFacultyTaskDueDate ? 'border-orange-500 bg-orange-500' : 'border-gray-300 bg-white'}`}
+                >
+                  <Text className={`text-xs font-semibold ${!newFacultyTaskDueDate ? 'text-white' : 'text-gray-700'}`}>No Due Date</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View className="flex-row mb-3">
+                <TouchableOpacity
+                  onPress={() => openFacultyTaskDuePicker('date')}
+                  className="flex-1 bg-white border border-gray-300 rounded-xl py-2.5 px-3 mr-2"
+                >
+                  <Text className="text-[11px] font-semibold uppercase text-gray-500 mb-0.5">Date</Text>
+                  <Text className="text-sm text-gray-800">
+                    {newFacultyTaskDueDate ? new Date(newFacultyTaskDueDate).toLocaleDateString() : 'Select date'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => openFacultyTaskDuePicker('time')}
+                  className="flex-1 bg-white border border-gray-300 rounded-xl py-2.5 px-3"
+                >
+                  <Text className="text-[11px] font-semibold uppercase text-gray-500 mb-0.5">Time</Text>
+                  <Text className="text-sm text-gray-800">
+                    {newFacultyTaskDueDate
+                      ? new Date(newFacultyTaskDueDate).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                      : 'Select time'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {showFacultyTaskDuePicker && (
+                <View className="bg-orange-50 border border-orange-200 rounded-xl p-3 mb-3">
+                  <DateTimePicker
+                    value={newFacultyTaskDueDate ? new Date(newFacultyTaskDueDate) : new Date()}
+                    mode={facultyTaskDuePickerMode}
+                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                    onChange={handleFacultyTaskDuePickerChange}
+                  />
+                  {Platform.OS === 'ios' && (
+                    <TouchableOpacity
+                      onPress={() => setShowFacultyTaskDuePicker(false)}
+                      className="bg-orange-500 py-2.5 rounded-lg mt-2 items-center"
+                    >
+                      <Text className="text-white text-xs font-semibold">Done</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
+
+              <View className="bg-orange-50 border border-orange-100 rounded-xl p-3 mb-4">
+                <Text className="text-[11px] text-orange-700 font-semibold uppercase mb-1">Selected Deadline</Text>
+                <Text className="text-sm font-semibold text-gray-900">{formatDueDatePreview(newFacultyTaskDueDate)}</Text>
+                <Text className={`text-[11px] mt-1 ${requiresDueDate(newFacultyTaskUrgency) && !newFacultyTaskDueDate ? 'text-red-600' : 'text-gray-600'}`}>
+                  {getUrgencyHint(newFacultyTaskUrgency, newFacultyTaskDueDate)}
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                onPress={handleAddFacultyTask}
+                disabled={isAddingFacultyTask || !newFacultyTaskText.trim()}
+                className={`py-3 rounded-xl items-center ${isAddingFacultyTask || !newFacultyTaskText.trim() ? 'bg-gray-300' : 'bg-orange-500'}`}
+              >
+                {isAddingFacultyTask ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text className="text-white font-bold">Create Class Task</Text>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
+          </Animated.View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       {/* Download Progress Modal */}
       <Modal
