@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Shield, ChevronLeft, ChevronRight, UserMinus, Power, Loader2, AlertCircle, CheckCircle2, XCircle } from 'lucide-react';
+import { Search, Shield, ChevronLeft, ChevronRight, UserMinus, Power, Loader2, AlertCircle, CheckCircle2, XCircle, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import DeactivateUserModal from '../components/modal/DeactivateUserModal';
 import VerifyFacultyModal from '../components/modal/VerifyFacultyModal';
@@ -58,6 +58,9 @@ export default function UsersScreen() {
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsError, setDetailsError] = useState(null);
   const detailsRequestSeq = useRef(0);
+
+  // Role-change state — tracks which user is mid-request
+  const [changingRoleUserId, setChangingRoleUserId] = useState(null);
 
   // -----------------------------------------------------------------------
   // Fetch users whenever filters / page change
@@ -126,6 +129,28 @@ export default function UsersScreen() {
       user,
       nextVerified: !user.is_verified,
     });
+  };
+
+  const handleRoleChange = async (user, newRole) => {
+    if (!user || !newRole || newRole === user.user_type) return;
+    if (window.confirm(
+      `Change ${user.first_name} ${user.last_name}'s role from "${user.user_type}" to "${newRole}"?\n\nThis affects their app experience and visible features.`
+    )) {
+      setChangingRoleUserId(user.id);
+      try {
+        await usersApi.setUserType(user.id, newRole);
+        setUsers((prev) =>
+          prev.map((u) =>
+            u.id === user.id ? { ...u, user_type: newRole, is_verified: newRole === 'faculty' ? u.is_verified : false } : u
+          )
+        );
+        toast.success(`Role updated to ${newRole} for ${user.first_name} ${user.last_name}.`);
+      } catch (err) {
+        toast.error(`Failed to change role: ${parseApiError(err).message}`);
+      } finally {
+        setChangingRoleUserId(null);
+      }
+    }
   };
 
   const closeVerifyModal = () => {
@@ -404,6 +429,26 @@ export default function UsersScreen() {
                         </td>
                         <td className="px-6 py-5 text-right">
                           <div className="inline-flex items-center gap-2">
+                            {/* Role selector — allows promoting/demoting any account */}
+                            <div className="relative" onClick={(e) => e.stopPropagation()}>
+                              {changingRoleUserId === user.id ? (
+                                <div className="p-2 border-2 border-slate-100">
+                                  <Loader2 size={16} className="animate-spin text-slate-400" />
+                                </div>
+                              ) : (
+                                <select
+                                  value={user.user_type}
+                                  onChange={(e) => handleRoleChange(user, e.target.value)}
+                                  title="Change account role"
+                                  className="appearance-none border-2 border-slate-200 bg-white px-2 py-2 text-[10px] font-black uppercase tracking-widest text-slate-600 cursor-pointer hover:border-slate-900 transition-colors focus:outline-none focus:border-slate-900"
+                                >
+                                  <option value="student">Student</option>
+                                  <option value="faculty">Faculty</option>
+                                  <option value="parent">Parent</option>
+                                </select>
+                              )}
+                            </div>
+
                             {user.user_type === 'faculty' && (
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleVerifyToggle(user); }}

@@ -65,7 +65,20 @@ const SignUp1Screen = ({
 }: SignUp1Props) => {
   const canProceed =
     formData.first_name.trim().length > 0 &&
-    formData.last_name.trim().length > 0;
+    formData.last_name.trim().length > 0 &&
+    Boolean(formData.user_type);
+
+  type RoleOption = {
+    value: 'student' | 'faculty' | 'parent';
+    label: string;
+    description: string;
+  };
+
+  const roles: RoleOption[] = [
+    { value: 'student', label: '🎓  Student', description: 'Upload and manage your class schedule' },
+    { value: 'faculty', label: '📋  Faculty', description: 'Share schedules and assign tasks to students' },
+    { value: 'parent', label: '👨‍👧  Parent', description: 'Monitor your child\'s schedule and tasks' },
+  ];
 
   return (
     <SafeAreaView className="flex-1 bg-white px-4 m-2">
@@ -77,8 +90,8 @@ const SignUp1Screen = ({
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 32 }}>
         <View className="mt-10 ml-4 mr-4">
-          <Text className="text-3xl font-bold mb-1 text-primary-900">What&apos;s your name?</Text>
-          <Text className="text-base font-medium mb-5 text-gray-600">Enter your details below.</Text>
+          <Text className="text-3xl font-bold mb-1 text-primary-900">Tell us about yourself.</Text>
+          <Text className="text-base font-medium mb-5 text-gray-600">Enter your name and select your role.</Text>
 
           {/* Name row */}
           <View className="flex-row gap-3 mb-6">
@@ -104,7 +117,40 @@ const SignUp1Screen = ({
             />
           </View>
 
-          {/* Next button — gated on name only */}
+          {/* Role selection */}
+          <Text className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">I am a...</Text>
+          <View className="gap-3 mb-6">
+            {roles.map((role) => {
+              const isSelected = formData.user_type === role.value;
+              return (
+                <TouchableOpacity
+                  key={role.value}
+                  onPress={() => setFormData((prev: SignUpData) => ({ ...prev, user_type: role.value }))}
+                  activeOpacity={0.8}
+                  className={`flex-row items-center rounded-xl border-2 px-4 py-3 ${
+                    isSelected
+                      ? 'border-primary-900 bg-primary-50'
+                      : 'border-gray-200 bg-gray-50'
+                  }`}
+                >
+                  {/* Selection indicator */}
+                  <View className={`w-5 h-5 rounded-full border-2 mr-3 items-center justify-center ${
+                    isSelected ? 'border-primary-900 bg-primary-900' : 'border-gray-300'
+                  }`}>
+                    {isSelected && <View className="w-2 h-2 rounded-full bg-white" />}
+                  </View>
+                  <View className="flex-1">
+                    <Text className={`font-bold text-sm ${isSelected ? 'text-primary-900' : 'text-gray-700'}`}>
+                      {role.label}
+                    </Text>
+                    <Text className="text-xs text-gray-500 mt-0.5">{role.description}</Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          {/* Next button — gated on name + role */}
           <TouchableOpacity
             className={`rounded-2xl py-4 px-8 w-full items-center ${
               canProceed ? 'bg-primary-900' : 'bg-gray-300'
@@ -234,12 +280,17 @@ const AuthFlow = () => {
     email: "",
     password: "",
     confirmPassword: "",
-    user_type: 'student',
+    // user_type intentionally left undefined — user must select on Step 1
   });
 
   const handleSignup = async () => {
     if (!formData.first_name || !formData.last_name) {
       Alert.alert('Error', 'Please enter your first and last name');
+      return;
+    }
+
+    if (!formData.user_type) {
+      Alert.alert('Error', 'Please select your account type (Student, Faculty, or Parent)');
       return;
     }
 

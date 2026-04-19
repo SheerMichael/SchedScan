@@ -275,6 +275,14 @@ export const usersApi = {
   /** Toggle faculty verification status. */
   setVerified: (id, isVerified) =>
     apiClient.patch(`/admin/users/${id}/`, { is_verified: isVerified }),
+
+  /**
+   * Change a user's account type.
+   * @param {number} id
+   * @param {'student'|'faculty'|'parent'} userType
+   */
+  setUserType: (id, userType) =>
+    apiClient.patch(`/admin/users/${id}/`, { user_type: userType }),
 };
 
 // ---------------------------------------------------------------------------
