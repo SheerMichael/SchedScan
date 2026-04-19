@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Image } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import Svg, { Path } from 'react-native-svg';
-import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../../context/AuthContext';
 
 const ChevronRightIcon = ({ size = 24, color = '#ffffff' }) => (
@@ -18,7 +17,6 @@ const ParentSignupScreen = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
-    const [image, setImage] = useState<string | null>(null);
     const [isRegistering, setIsRegistering] = useState(false);
 
     const { register } = useAuth();
@@ -50,13 +48,6 @@ const ParentSignupScreen = () => {
                 email: email.trim().toLowerCase(),
                 password,
                 user_type: 'parent',
-                profile_picture: image
-                    ? {
-                        uri: image,
-                        type: 'image/jpeg',
-                        name: 'profile.jpg',
-                    }
-                    : undefined,
             });
 
             Alert.alert(
@@ -76,50 +67,6 @@ const ParentSignupScreen = () => {
         }
     };
 
-    const pickImage = async () => {
-        Alert.alert('Select Image Source', 'Choose an option', [
-            {
-                text: 'Camera',
-                onPress: async () => {
-                    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-                    if (status !== 'granted') {
-                        alert('Camera permission required');
-                        return;
-                    }
-                    const result = await ImagePicker.launchCameraAsync({
-                        mediaTypes: ['images'],
-                        allowsEditing: true,
-                        aspect: [1, 1],
-                        quality: 0.8,
-                    });
-                    if (!result.canceled) {
-                        setImage(result.assets[0].uri);
-                    }
-                },
-            },
-            {
-                text: 'Gallery',
-                onPress: async () => {
-                    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-                    if (status !== 'granted') {
-                        alert('Gallery permission required');
-                        return;
-                    }
-                    const result = await ImagePicker.launchImageLibraryAsync({
-                        mediaTypes: ['images'],
-                        allowsEditing: true,
-                        aspect: [1, 1],
-                        quality: 0.8,
-                    });
-                    if (!result.canceled) {
-                        setImage(result.assets[0].uri);
-                    }
-                },
-            },
-            { text: 'Cancel', style: 'cancel' },
-        ]);
-    };
-
     return (
         <SafeAreaView className="flex-1 bg-white">
             <ScrollView className="flex-1 px-6" showsVerticalScrollIndicator={false}>
@@ -131,18 +78,6 @@ const ParentSignupScreen = () => {
                 <Text className="text-gray-600 mb-6">
                     After registration, search for your child and send a connection request. Your child must approve before access is granted.
                 </Text>
-
-                <View className="items-center mb-6">
-                    <TouchableOpacity onPress={pickImage}>
-                        <Image
-                            source={image ? { uri: image } : require('../../assets/images/PlaceholderImage.png')}
-                            style={{ width: 100, height: 100, borderRadius: 50 }}
-                        />
-                        <View className="absolute bottom-0 right-0 bg-primary-600 rounded-full p-2">
-                            <Text className="text-white text-[10px] font-semibold">Edit</Text>
-                        </View>
-                    </TouchableOpacity>
-                </View>
 
                 <View className="flex-row gap-3 mb-4">
                     <View className="flex-1">
