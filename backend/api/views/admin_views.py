@@ -1811,9 +1811,8 @@ class AdminPendingVerificationsView(APIView):
     GET /api/admin/pending-verifications/
 
     Returns faculty users who:
-      1. Have user_type == 'faculty'
-      2. Have is_verified == False
-      3. Have at least one Schedule of upload_type == 'faculty'
+            1. Have faculty_verification_status == 'pending'
+            2. Are not superusers
 
     These are faculty accounts waiting for admin verification after uploading
     their schedule. Each result includes the most recent faculty schedule
@@ -1828,18 +1827,9 @@ class AdminPendingVerificationsView(APIView):
     permission_classes = [IsAdminUser]
 
     def get(self, request):
-        # Only faculty who have uploaded at least one faculty schedule
-        faculty_with_schedule_ids = (
-            Schedule.objects.filter(upload_type='faculty')
-            .values_list('user_id', flat=True)
-            .distinct()
-        )
-
         qs = User.objects.filter(
-            user_type='faculty',
-            is_verified=False,
+            faculty_verification_status='pending',
             is_superuser=False,
-            id__in=faculty_with_schedule_ids,
         ).order_by('-created_at')
 
         search = request.query_params.get('search', '').strip()
@@ -1901,7 +1891,9 @@ class AdminPendingVerificationApproveView(APIView):
     """
     POST /api/admin/pending-verifications/<pk>/approve/
 
-    Marks a faculty user as verified (is_verified=True).
+    Marks a pending faculty verification as approved.
+    Sets user_type='faculty', is_verified=True, and
+    faculty_verification_status='approved'.
     Sends the faculty user a push notification to inform them.
     Writes an audit log entry.
     """
@@ -1910,21 +1902,27 @@ class AdminPendingVerificationApproveView(APIView):
 
     def post(self, request, pk):
         try:
-            user = User.objects.get(pk=pk, is_superuser=False, user_type='faculty')
+            user = User.objects.get(pk=pk, is_superuser=False)
         except User.DoesNotExist:
             return Response(
-                {'error': 'Faculty user not found.'},
+                {'error': 'User not found.'},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if user.is_verified:
+        if user.faculty_verification_status != 'pending':
             return Response(
-                {'error': 'This faculty account is already verified.'},
+                {'error': 'This user is not pending faculty verification.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        update_fields = ['faculty_verification_status', 'is_verified', 'updated_at']
+        if user.user_type != 'faculty':
+            user.user_type = 'faculty'
+            update_fields.append('user_type')
+
+        user.faculty_verification_status = 'approved'
         user.is_verified = True
-        user.save(update_fields=['is_verified', 'updated_at'])
+        user.save(update_fields=update_fields)
 
         _write_audit(
             admin=request.user,
@@ -1949,7 +1947,9 @@ class AdminPendingVerificationApproveView(APIView):
             'id': user.id,
             'email': user.email,
             'full_name': user.get_full_name(),
+            'faculty_verification_status': user.faculty_verification_status,
             'is_verified': user.is_verified,
+            'user_type': user.user_type,
         })
 
 
@@ -1957,7 +1957,9 @@ class AdminPendingVerificationRejectView(APIView):
     """
     POST /api/admin/pending-verifications/<pk>/reject/
 
-    Rejects a pending faculty verification. The user remains unverified.
+    Rejects a pending faculty verification.
+    Sets faculty_verification_status='rejected' so the user is removed
+    from the pending queue immediately.
     An optional 'reason' field in the request body is forwarded to the faculty user.
     Writes an audit log entry.
     """
@@ -1966,14 +1968,23 @@ class AdminPendingVerificationRejectView(APIView):
 
     def post(self, request, pk):
         try:
-            user = User.objects.get(pk=pk, is_superuser=False, user_type='faculty')
+            user = User.objects.get(pk=pk, is_superuser=False)
         except User.DoesNotExist:
             return Response(
-                {'error': 'Faculty user not found.'},
+                {'error': 'User not found.'},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        if user.faculty_verification_status != 'pending':
+            return Response(
+                {'error': 'This user is not pending faculty verification.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         reason = str(request.data.get('reason', '')).strip()[:500]
+
+        user.faculty_verification_status = 'rejected'
+        user.save(update_fields=['faculty_verification_status', 'updated_at'])
 
         _write_audit(
             admin=request.user,
@@ -1999,6 +2010,7 @@ class AdminPendingVerificationRejectView(APIView):
             'id': user.id,
             'email': user.email,
             'full_name': user.get_full_name(),
+            'faculty_verification_status': user.faculty_verification_status,
             'is_verified': user.is_verified,
         })
 

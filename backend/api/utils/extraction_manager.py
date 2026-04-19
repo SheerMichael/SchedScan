@@ -937,15 +937,9 @@ def run_extraction_job(job_id) -> None:
                     job_id,
                 )
 
-            # Notify admins when an unverified faculty successfully uploads a schedule
-            if job.upload_type == 'faculty' and not getattr(job.user, 'is_verified', True):
-                try:
-                    _notify_admins_of_faculty_upload(job)
-                except Exception:
-                    logger.exception(
-                        "run_extraction_job: failed to notify admins of faculty upload for job %s",
-                        job_id,
-                    )
+            # Keep faculty verification queue state in sync after faculty uploads.
+            if job.upload_type == 'faculty':
+                _handle_faculty_upload_verification(job)
 
             # ── Telemetry ────────────────────────────────────────────────────
             _write_extraction_log_for_job(job, result, success=True)
@@ -1109,10 +1103,46 @@ def _send_extraction_job_notification(job, *, success: bool) -> None:
         )
 
 
+def _handle_faculty_upload_verification(job) -> None:
+    """
+    Synchronize faculty verification state after a successful faculty upload.
+
+    Rules:
+    - Ensure the account is tagged as faculty.
+    - Transition status none/rejected -> pending.
+    - Notify admins only when transitioning into pending.
+    """
+    user = job.user
+    update_fields = []
+    should_notify_admins = False
+
+    if user.user_type != 'faculty':
+        user.user_type = 'faculty'
+        update_fields.append('user_type')
+
+    current_status = str(getattr(user, 'faculty_verification_status', 'none') or 'none')
+    if current_status in ('none', 'rejected'):
+        user.faculty_verification_status = 'pending'
+        update_fields.append('faculty_verification_status')
+        should_notify_admins = True
+
+    if update_fields:
+        user.save(update_fields=update_fields + ['updated_at'])
+
+    if should_notify_admins:
+        try:
+            _notify_admins_of_faculty_upload(job)
+        except Exception:
+            logger.exception(
+                "_handle_faculty_upload_verification: failed to notify admins for job %s",
+                job.job_id,
+            )
+
+
 def _notify_admins_of_faculty_upload(job) -> None:
     """
-    Notify all admin users (is_staff=True) that an unverified faculty member
-    has uploaded a schedule and is awaiting verification.
+    Notify all admin users (is_staff=True) that a user has uploaded a
+    faculty schedule and entered pending verification.
 
     Creates a Notification DB record for each admin and fires a push
     notification to admins who have registered an Expo push token.

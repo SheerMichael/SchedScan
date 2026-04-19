@@ -49,6 +49,12 @@ class User(AbstractUser):
         ('faculty', 'Faculty'),
         ('parent', 'Parent'),
     ]
+    FACULTY_VERIFICATION_CHOICES = [
+        ('none', 'None'),
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+    ]
     CLASS_REMINDER_MINUTES_CHOICES = [
         (5, '5 minutes'),
         (10, '10 minutes'),
@@ -122,6 +128,14 @@ class User(AbstractUser):
         help_text=(
             "Whether this account has been admin-verified. "
             "Faculty accounts should be verified before they can generate class codes."
+        ),
+    )
+    faculty_verification_status = models.CharField(
+        max_length=10,
+        choices=FACULTY_VERIFICATION_CHOICES,
+        default='none',
+        help_text=(
+            "Faculty verification workflow status: none, pending, approved, or rejected."
         ),
     )
     created_at = models.DateTimeField(auto_now_add=True)
