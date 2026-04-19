@@ -38,8 +38,21 @@ const ShareWithParentScreen = () => {
             await parentService.approveParentLinkRequest(requestId);
             Alert.alert('Request Approved', `${parentName} can now view your schedule.`);
             await loadData();
-        } catch (error) {
-            Alert.alert('Error', 'Failed to approve request');
+        } catch (error: any) {
+            const needsPayment =
+                error?.response?.status === 402 ||
+                error?.response?.data?.needs_payment === true;
+
+            if (needsPayment) {
+                Alert.alert(
+                    'Parent Payment Required',
+                    `${parentName} has reached their child-link limit. Ask them to complete payment for an additional child slot, then try approving again.`
+                );
+                return;
+            }
+
+            const message = error?.response?.data?.error || 'Failed to approve request';
+            Alert.alert('Error', message);
         } finally {
             setIsUpdatingRequest(false);
         }

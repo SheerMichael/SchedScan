@@ -3,7 +3,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth import get_user_model
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from django.db.models import Q, Exists, OuterRef, Value, F
 from django.db.models.functions import Concat, Replace
 from django.utils import timezone
@@ -144,32 +144,43 @@ class ParentLinkRequestView(APIView):
         except User.DoesNotExist:
             return Response({"error": "Student not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        if ParentChildLink.objects.filter(parent=user, child=child, status='active').exists():
-            return Response(
-                {"error": f"You are already linked to {child.get_full_name()}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        with transaction.atomic():
+            # Serialize quota checks per parent to prevent concurrent bypasses.
+            locked_parent = User.objects.select_for_update().get(pk=user.pk)
 
-        if ParentLinkRequest.objects.filter(parent=user, child=child, status='pending').exists():
-            return Response(
-                {"error": "You already have a pending request for this student"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            if ParentChildLink.objects.filter(parent=locked_parent, child=child, status='active').exists():
+                return Response(
+                    {"error": f"You are already linked to {child.get_full_name()}"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
-        # Enforce payment gate at request time so students don't approve blocked requests.
-        active_children = ParentChildLink.objects.filter(parent=user, status='active').count()
-        pending_requests = ParentLinkRequest.objects.filter(parent=user, status='pending').count()
-        paid_slots = Payment.objects.filter(parent=user, status='completed').count()
-        total_allowed = 1 + paid_slots
-        reserved_slots = active_children + pending_requests
+            if ParentLinkRequest.objects.filter(parent=locked_parent, child=child, status='pending').exists():
+                return Response(
+                    {"error": "You already have a pending request for this student"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
-        if reserved_slots >= total_allowed:
-            return Response(
-                {"error": "Payment required to add another child", "needs_payment": True},
-                status=status.HTTP_402_PAYMENT_REQUIRED,
-            )
+            # Enforce payment gate at request time so students don't approve blocked requests.
+            active_children = ParentChildLink.objects.filter(parent=locked_parent, status='active').count()
+            pending_requests = ParentLinkRequest.objects.filter(parent=locked_parent, status='pending').count()
+            paid_slots = Payment.objects.filter(parent=locked_parent, status='completed').count()
+            total_allowed = 1 + paid_slots
+            reserved_slots = active_children + pending_requests
 
-        link_request = ParentLinkRequest.objects.create(parent=user, child=child)
+            if reserved_slots >= total_allowed:
+                return Response(
+                    {"error": "Payment required to add another child", "needs_payment": True},
+                    status=status.HTTP_402_PAYMENT_REQUIRED,
+                )
+
+            try:
+                link_request = ParentLinkRequest.objects.create(parent=locked_parent, child=child)
+            except IntegrityError:
+                # Handles rare race where a matching pending request was inserted concurrently.
+                return Response(
+                    {"error": "You already have a pending request for this student"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         parent_display_name = user.get_full_name() or user.email
         notification_title = 'New parent connection request'
@@ -332,8 +343,12 @@ class StudentParentLinkRequestApproveView(APIView):
             if not link_request:
                 return Response({"error": "Pending request not found"}, status=status.HTTP_404_NOT_FOUND)
 
+            # Serialize approvals for this parent account and re-check quota at approval time.
+            # This prevents over-linking when pending requests exist from older data or races.
+            locked_parent = User.objects.select_for_update().get(pk=link_request.parent_id)
+
             if ParentChildLink.objects.filter(
-                parent=link_request.parent,
+                parent=locked_parent,
                 child=user,
                 status='active',
             ).exists():
@@ -342,8 +357,21 @@ class StudentParentLinkRequestApproveView(APIView):
                 link_request.save(update_fields=['status', 'resolved_at'])
                 return Response({"message": "Parent is already linked to this student"}, status=status.HTTP_200_OK)
 
+            active_children = ParentChildLink.objects.filter(parent=locked_parent, status='active').count()
+            paid_slots = Payment.objects.filter(parent=locked_parent, status='completed').count()
+            total_allowed = 1 + paid_slots
+
+            if active_children >= total_allowed:
+                return Response(
+                    {
+                        "error": "Parent has reached their child limit. Payment is required before this request can be approved.",
+                        "needs_payment": True,
+                    },
+                    status=status.HTTP_402_PAYMENT_REQUIRED,
+                )
+
             link = ParentChildLink.objects.create(
-                parent=link_request.parent,
+                parent=locked_parent,
                 child=user,
                 status='active',
             )

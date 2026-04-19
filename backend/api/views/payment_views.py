@@ -10,7 +10,7 @@ import logging
 import re
 import time
 
-from ..models import Payment, ParentChildLink
+from ..models import Payment, ParentChildLink, ParentLinkRequest
 
 logger = logging.getLogger(__name__)
 
@@ -67,21 +67,26 @@ class CanAddChildView(APIView):
         active_children = ParentChildLink.objects.filter(
             parent=user, status='active'
         ).count()
+        pending_requests = ParentLinkRequest.objects.filter(
+            parent=user, status='pending'
+        ).count()
 
         paid_slots = Payment.objects.filter(
             parent=user, status='completed'
         ).count()
 
         # First child is free (slot 1). Slots 2+ require payment.
-        # Total allowed children = 1 (free) + paid_slots
-        can_add_free = active_children < 1
+        # Reserved slots include active links + pending requests.
+        reserved_slots = active_children + pending_requests
         total_allowed = 1 + paid_slots
-        needs_payment = active_children >= total_allowed
+        can_add_free = reserved_slots < 1
+        needs_payment = reserved_slots >= total_allowed
 
         return Response({
             "can_add_free": can_add_free,
             "needs_payment": needs_payment,
             "active_children": active_children,
+            "pending_requests": pending_requests,
             "paid_slots": paid_slots,
         })
 

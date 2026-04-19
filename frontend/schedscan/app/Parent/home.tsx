@@ -134,6 +134,18 @@ const ParentHomePage = () => {
     setRequestError("");
     setSearchQuery("");
     setSearchResults([]);
+
+    try {
+      const gate = await paymentService.checkCanAddChild();
+      if (gate.needs_payment) {
+        setShowPaymentModal(true);
+        return;
+      }
+    } catch (error) {
+      // Non-blocking fallback: the request endpoint still enforces payment server-side.
+      console.log('Unable to pre-check payment gate, continuing to search flow.');
+    }
+
     setShowLinkModal(true);
   };
 
@@ -223,7 +235,11 @@ const ParentHomePage = () => {
       setSearchQuery("");
       setSearchResults([]);
     } catch (error: any) {
-      if (error.response?.status === 402) {
+      const needsPayment =
+        error.response?.status === 402 ||
+        error.response?.data?.needs_payment === true;
+
+      if (needsPayment) {
         setShowLinkModal(false);
         setShowPaymentModal(true);
       } else {

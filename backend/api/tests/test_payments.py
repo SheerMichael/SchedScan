@@ -87,6 +87,16 @@ class CanAddChildTests(PaymentTestBase):
         response = self.client.get('/api/payment/can-add-child/')
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
+    def test_pending_request_requires_payment_for_next_child(self):
+        """A pending request should reserve the free slot and require payment for another request."""
+        ParentLinkRequest.objects.create(parent=self.parent, child=self.student1, status='pending')
+
+        response = self.client.get('/api/payment/can-add-child/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data['can_add_free'])
+        self.assertTrue(response.data['needs_payment'])
+        self.assertEqual(response.data['pending_requests'], 1)
+
 
 class LinkRequestPaymentGateTests(PaymentTestBase):
     """Test that parent link requests enforce payment for additional children."""
@@ -120,6 +130,60 @@ class LinkRequestPaymentGateTests(PaymentTestBase):
 
         response = self.client.post('/api/parent/link-requests/', {'child_id': self.student2.id})
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_pending_request_consumes_free_slot(self):
+        """A pending request should reserve the free slot and block another request."""
+        ParentLinkRequest.objects.create(parent=self.parent, child=self.student1, status='pending')
+
+        response = self.client.post('/api/parent/link-requests/', {'child_id': self.student2.id})
+        self.assertEqual(response.status_code, status.HTTP_402_PAYMENT_REQUIRED)
+        self.assertTrue(response.data['needs_payment'])
+
+
+class ApproveRequestPaymentGateTests(PaymentTestBase):
+    """Test approval-time gate to prevent over-linking without payment."""
+
+    def test_approval_requires_payment_if_parent_is_at_limit(self):
+        """Student approval should be blocked when parent has no available slot."""
+        ParentChildLink.objects.create(parent=self.parent, child=self.student1, status='active')
+        link_request = ParentLinkRequest.objects.create(
+            parent=self.parent,
+            child=self.student2,
+            status='pending',
+        )
+
+        self.client.force_authenticate(user=self.student2)
+        response = self.client.post(f'/api/student/parent-link-requests/{link_request.id}/approve/')
+
+        self.assertEqual(response.status_code, status.HTTP_402_PAYMENT_REQUIRED)
+        self.assertTrue(response.data['needs_payment'])
+        self.assertFalse(
+            ParentChildLink.objects.filter(parent=self.parent, child=self.student2, status='active').exists()
+        )
+
+    def test_approval_succeeds_when_parent_has_paid_slot(self):
+        """Student approval should succeed once parent has an unlocked paid slot."""
+        ParentChildLink.objects.create(parent=self.parent, child=self.student1, status='active')
+        Payment.objects.create(
+            parent=self.parent,
+            stripe_checkout_session_id='cs_test_approval_paid_slot',
+            amount=8900,
+            status='completed',
+            child_slot_number=2,
+        )
+        link_request = ParentLinkRequest.objects.create(
+            parent=self.parent,
+            child=self.student2,
+            status='pending',
+        )
+
+        self.client.force_authenticate(user=self.student2)
+        response = self.client.post(f'/api/student/parent-link-requests/{link_request.id}/approve/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(
+            ParentChildLink.objects.filter(parent=self.parent, child=self.student2, status='active').exists()
+        )
 
 
 class CheckoutSessionTests(PaymentTestBase):
