@@ -280,9 +280,36 @@ export const usersApi = {
    * Change a user's account type.
    * @param {number} id
    * @param {'student'|'faculty'|'parent'} userType
+   * NOTE: This is intentionally removed — arbitrary role changes are no longer
+   * supported through the admin dashboard. Faculty status is granted exclusively
+   * through the faculty schedule upload → approval workflow.
    */
-  setUserType: (id, userType) =>
-    apiClient.patch(`/admin/users/${id}/`, { user_type: userType }),
+  // setUserType is deprecated and removed.
+};
+
+// ---------------------------------------------------------------------------
+// Faculty Verification — Notification-Driven Queue
+// ---------------------------------------------------------------------------
+
+export const pendingVerificationsApi = {
+  /**
+   * List faculty users who uploaded a schedule but are not yet verified.
+   * params: { search, page, page_size }
+   */
+  list: (params = {}) => apiClient.get('/admin/pending-verifications/', { params }),
+
+  /**
+   * Approve a faculty verification request.
+   * @param {number} id  faculty user id
+   */
+  approve: (id) => apiClient.post(`/admin/pending-verifications/${id}/approve/`),
+
+  /**
+   * Reject a faculty verification request.
+   * @param {number} id      faculty user id
+   * @param {string} reason  optional rejection reason forwarded to the user
+   */
+  reject: (id, reason = '') => apiClient.post(`/admin/pending-verifications/${id}/reject/`, { reason }),
 };
 
 // ---------------------------------------------------------------------------

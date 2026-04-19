@@ -1177,6 +1177,7 @@ class Notification(models.Model):
         ('faculty_task', 'Faculty Task'),
         ('faculty_remark', 'Faculty Remark'),
         ('faculty_match', 'Faculty Match'),   # Auto-detected faculty match for student
+        ('faculty_verification', 'Faculty Verification'),  # Admin notified of pending faculty upload
         ('general', 'General'),
     ]
 
@@ -1530,7 +1531,8 @@ class AdminAuditLog(models.Model):
         ('user_reactivated', 'User Reactivated'),
         ('faculty_verified', 'Faculty Verified'),
         ('faculty_unverified', 'Faculty Unverified'),
-        ('user_role_changed', 'User Role Changed'),
+        ('faculty_verification_approved', 'Faculty Verification Approved'),
+        ('faculty_verification_rejected', 'Faculty Verification Rejected'),
         ('user_profile_edited', 'User Profile Edited'),
         ('parent_link_created', 'Parent Link Created'),
         ('parent_link_revoked', 'Parent Link Revoked'),

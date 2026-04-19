@@ -937,6 +937,16 @@ def run_extraction_job(job_id) -> None:
                     job_id,
                 )
 
+            # Notify admins when an unverified faculty successfully uploads a schedule
+            if job.upload_type == 'faculty' and not getattr(job.user, 'is_verified', True):
+                try:
+                    _notify_admins_of_faculty_upload(job)
+                except Exception:
+                    logger.exception(
+                        "run_extraction_job: failed to notify admins of faculty upload for job %s",
+                        job_id,
+                    )
+
             # ── Telemetry ────────────────────────────────────────────────────
             _write_extraction_log_for_job(job, result, success=True)
 
@@ -1096,6 +1106,74 @@ def _send_extraction_job_notification(job, *, success: bool) -> None:
     except Exception:
         logger.exception(
             "_send_extraction_job_notification: failed to notify user for job %s", job.job_id
+        )
+
+
+def _notify_admins_of_faculty_upload(job) -> None:
+    """
+    Notify all admin users (is_staff=True) that an unverified faculty member
+    has uploaded a schedule and is awaiting verification.
+
+    Creates a Notification DB record for each admin and fires a push
+    notification to admins who have registered an Expo push token.
+    Silently swallows all errors to avoid disrupting the extraction pipeline.
+    """
+    from django.contrib.auth import get_user_model
+    from api.models import Notification
+    from api.utils.notification_service import NotificationService
+
+    try:
+        User = get_user_model()
+        faculty_name = job.user.get_full_name() or job.user.email
+        faculty_email = job.user.email
+
+        title = "Faculty Verification Required"
+        body = (
+            f"{faculty_name} ({faculty_email}) has uploaded a faculty schedule "
+            "and is awaiting verification."
+        )
+        data_payload = {
+            'type': 'faculty_verification_pending',
+            'faculty_user_id': job.user.id,
+            'faculty_email': faculty_email,
+        }
+
+        admin_users = User.objects.filter(is_staff=True, is_active=True)
+        service = NotificationService()
+        push_messages = []
+
+        for admin in admin_users:
+            # Persist in-app notification for each admin
+            Notification.objects.create(
+                user=admin,
+                notification_type='faculty_verification',
+                title=title,
+                message=body,
+                data=data_payload,
+            )
+            # Queue push notification if admin has a token
+            token = getattr(admin, 'expo_push_token', None)
+            if token:
+                push_messages.append({
+                    'token': token,
+                    'title': title,
+                    'body': body,
+                    'data': data_payload,
+                })
+
+        if push_messages:
+            service.send_batch_notifications(push_messages)
+
+        logger.info(
+            "_notify_admins_of_faculty_upload: notified %d admin(s) about faculty upload from %s (job=%s)",
+            admin_users.count(),
+            faculty_email,
+            job.job_id,
+        )
+
+    except Exception:
+        logger.exception(
+            "_notify_admins_of_faculty_upload: failed to notify admins for job %s", job.job_id
         )
 
 

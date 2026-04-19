@@ -169,6 +169,11 @@ urlpatterns = [
     path('admin/incidents/', views.AdminIncidentReportListView.as_view(), name='admin_incident_list'),
     path('admin/incidents/<int:pk>/', views.AdminIncidentReportDetailView.as_view(), name='admin_incident_detail'),
 
+    # Faculty verification — notification-driven queue
+    path('admin/pending-verifications/', views.AdminPendingVerificationsView.as_view(), name='admin_pending_verifications'),
+    path('admin/pending-verifications/<int:pk>/approve/', views.AdminPendingVerificationApproveView.as_view(), name='admin_pending_verification_approve'),
+    path('admin/pending-verifications/<int:pk>/reject/', views.AdminPendingVerificationRejectView.as_view(), name='admin_pending_verification_reject'),
+
     # Incident reports (mobile user)
     path('reports/submit/', views.SubmitIncidentReportView.as_view(), name='submit_incident_report'),
 ]

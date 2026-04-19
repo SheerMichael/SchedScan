@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import DeactivateUserModal from '../components/modal/DeactivateUserModal';
 import VerifyFacultyModal from '../components/modal/VerifyFacultyModal';
 import UserDetailsModal from '../components/modal/user_details';
-import { usersApi, parseApiError } from '../services/api';
+import { usersApi, pendingVerificationsApi, parseApiError } from '../services/api';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -59,8 +59,8 @@ export default function UsersScreen() {
   const [detailsError, setDetailsError] = useState(null);
   const detailsRequestSeq = useRef(0);
 
-  // Role-change state — tracks which user is mid-request
-  const [changingRoleUserId, setChangingRoleUserId] = useState(null);
+  // Pending verification count for the banner badge
+  const [pendingVerificationCount, setPendingVerificationCount] = useState(null);
 
   // -----------------------------------------------------------------------
   // Fetch users whenever filters / page change
@@ -90,6 +90,13 @@ export default function UsersScreen() {
   useEffect(() => {
     fetchUsers();
   }, [fetchUsers]);
+
+  // Fetch pending verification count for the banner badge
+  useEffect(() => {
+    pendingVerificationsApi.list({ page_size: 1 })
+      .then(({ data }) => setPendingVerificationCount(data.count ?? 0))
+      .catch(() => {});
+  }, []);
 
   // -----------------------------------------------------------------------
   // Deactivate / reactivate
@@ -131,27 +138,9 @@ export default function UsersScreen() {
     });
   };
 
-  const handleRoleChange = async (user, newRole) => {
-    if (!user || !newRole || newRole === user.user_type) return;
-    if (window.confirm(
-      `Change ${user.first_name} ${user.last_name}'s role from "${user.user_type}" to "${newRole}"?\n\nThis affects their app experience and visible features.`
-    )) {
-      setChangingRoleUserId(user.id);
-      try {
-        await usersApi.setUserType(user.id, newRole);
-        setUsers((prev) =>
-          prev.map((u) =>
-            u.id === user.id ? { ...u, user_type: newRole, is_verified: newRole === 'faculty' ? u.is_verified : false } : u
-          )
-        );
-        toast.success(`Role updated to ${newRole} for ${user.first_name} ${user.last_name}.`);
-      } catch (err) {
-        toast.error(`Failed to change role: ${parseApiError(err).message}`);
-      } finally {
-        setChangingRoleUserId(null);
-      }
-    }
-  };
+  // NOTE: handleRoleChange has been intentionally removed.
+  // Arbitrary role changes are no longer supported — faculty status is granted
+  // exclusively through the faculty schedule upload → admin approval workflow.
 
   const closeVerifyModal = () => {
     if (verifyingUserId) return;
@@ -295,6 +284,14 @@ export default function UsersScreen() {
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-primary-700">Identity Control</p>
               <p className="text-sm font-black uppercase tracking-wide text-slate-900">Need to confirm real faculty accounts?</p>
+              {pendingVerificationCount !== null && pendingVerificationCount > 0 && (
+                <p className="mt-1 text-[11px] font-bold text-amber-700">
+                  <span className="inline-flex items-center justify-center border-2 border-amber-600 bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-700 mr-1.5">
+                    {pendingVerificationCount}
+                  </span>
+                  {pendingVerificationCount === 1 ? 'faculty member awaits' : 'faculty members await'} verification
+                </p>
+              )}
             </div>
             <Link
               to="/faculty-verification"
@@ -429,31 +426,14 @@ export default function UsersScreen() {
                         </td>
                         <td className="px-6 py-5 text-right">
                           <div className="inline-flex items-center gap-2">
-                            {/* Role selector — allows promoting/demoting any account */}
-                            <div className="relative" onClick={(e) => e.stopPropagation()}>
-                              {changingRoleUserId === user.id ? (
-                                <div className="p-2 border-2 border-slate-100">
-                                  <Loader2 size={16} className="animate-spin text-slate-400" />
-                                </div>
-                              ) : (
-                                <select
-                                  value={user.user_type}
-                                  onChange={(e) => handleRoleChange(user, e.target.value)}
-                                  title="Change account role"
-                                  className="appearance-none border-2 border-slate-200 bg-white px-2 py-2 text-[10px] font-black uppercase tracking-widest text-slate-600 cursor-pointer hover:border-slate-900 transition-colors focus:outline-none focus:border-slate-900"
-                                >
-                                  <option value="student">Student</option>
-                                  <option value="faculty">Faculty</option>
-                                  <option value="parent">Parent</option>
-                                </select>
-                              )}
-                            </div>
+                            {/* Role dropdown removed — role changes are not supported via admin panel.
+                                Faculty status is granted through the upload → verification workflow. */}
 
                             {user.user_type === 'faculty' && (
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleVerifyToggle(user); }}
                                 disabled={verifyingUserId === user.id}
-                                title={user.is_verified ? 'Mark faculty as unverified' : 'Verify faculty'}
+                                title={user.is_verified ? 'Faculty is verified' : 'Awaiting verification via Faculty Verification screen'}
                                 className={`p-2 border-2 transition-all ${
                                   verifyingUserId === user.id
                                     ? 'border-slate-100 text-slate-200 cursor-not-allowed'

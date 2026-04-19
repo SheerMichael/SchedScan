@@ -28,6 +28,7 @@ from ..models import (
     ExtractionLog,
     Holiday,
     IncidentReport,
+    Notification,
     ParentChildLink,
     Payment,
     Schedule,
@@ -394,27 +395,9 @@ class AdminUserDetailView(APIView):
                 )
                 changes_made.append("is_verified")
 
-        # --- user_type (role change) ---
-        if "user_type" in request.data:
-            new_type = str(request.data["user_type"]).strip().lower()
-            if new_type not in ("student", "faculty", "parent"):
-                return Response(
-                    {"error": "user_type must be 'student', 'faculty', or 'parent'."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            if new_type != user.user_type:
-                old_type = user.user_type
-                user.user_type = new_type
-                _write_audit(
-                    admin=request.user, action="user_role_changed",
-                    target_type="User", target_id=user.id,
-                    detail=(
-                        f"User {user.email} role changed from '{old_type}' to '{new_type}' "
-                        f"by {request.user.email}"
-                    ),
-                    ip=ip,
-                )
-                changes_made.append("user_type")
+        # NOTE: user_type / role changes are intentionally NOT supported here.
+        # Faculty status is granted through the faculty schedule upload → admin
+        # verification workflow, not by arbitrary role reassignment.
 
         # --- Profile fields (first_name, last_name, student_number) ---
         profile_fields = {}
@@ -1817,3 +1800,254 @@ class AdminIncidentReportDetailView(APIView):
             "created_at": r.created_at,
             "updated_at": r.updated_at,
         }
+
+
+# ---------------------------------------------------------------------------
+# Faculty Verification — Notification-Driven Workflow
+# ---------------------------------------------------------------------------
+
+class AdminPendingVerificationsView(APIView):
+    """
+    GET /api/admin/pending-verifications/
+
+    Returns faculty users who:
+      1. Have user_type == 'faculty'
+      2. Have is_verified == False
+      3. Have at least one Schedule of upload_type == 'faculty'
+
+    These are faculty accounts waiting for admin verification after uploading
+    their schedule. Each result includes the most recent faculty schedule
+    details so the admin can see what was uploaded.
+
+    Query params:
+        search    : string (name or email)
+        page      : int (default 1)
+        page_size : int (default 20, max 100)
+    """
+
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        # Only faculty who have uploaded at least one faculty schedule
+        faculty_with_schedule_ids = (
+            Schedule.objects.filter(upload_type='faculty')
+            .values_list('user_id', flat=True)
+            .distinct()
+        )
+
+        qs = User.objects.filter(
+            user_type='faculty',
+            is_verified=False,
+            is_superuser=False,
+            id__in=faculty_with_schedule_ids,
+        ).order_by('-created_at')
+
+        search = request.query_params.get('search', '').strip()
+        if search:
+            qs = qs.filter(
+                Q(email__icontains=search)
+                | Q(first_name__icontains=search)
+                | Q(last_name__icontains=search)
+            )
+
+        try:
+            page = max(1, int(request.query_params.get('page', 1)))
+            page_size = min(100, max(1, int(request.query_params.get('page_size', 20))))
+        except (ValueError, TypeError):
+            page, page_size = 1, 20
+
+        total = qs.count()
+        start = (page - 1) * page_size
+        users = qs[start:start + page_size]
+
+        results = []
+        for user in users:
+            latest_schedule = (
+                Schedule.objects.filter(user=user, upload_type='faculty')
+                .order_by('-created_at')
+                .first()
+            )
+            schedule_count = Schedule.objects.filter(user=user, upload_type='faculty').count()
+
+            results.append({
+                'id': user.id,
+                'email': user.email,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
+                'full_name': user.get_full_name(),
+                'is_active': user.is_active,
+                'created_at': user.created_at,
+                'schedule_count': schedule_count,
+                'latest_schedule': {
+                    'id': latest_schedule.id,
+                    'title': latest_schedule.title,
+                    'semester': latest_schedule.semester,
+                    'school_year': latest_schedule.school_year,
+                    'created_at': latest_schedule.created_at,
+                    'course_count': latest_schedule.courses.count(),
+                } if latest_schedule else None,
+            })
+
+        return Response({
+            'count': total,
+            'page': page,
+            'page_size': page_size,
+            'total_pages': max(1, -(-total // page_size)),
+            'results': results,
+        })
+
+
+class AdminPendingVerificationApproveView(APIView):
+    """
+    POST /api/admin/pending-verifications/<pk>/approve/
+
+    Marks a faculty user as verified (is_verified=True).
+    Sends the faculty user a push notification to inform them.
+    Writes an audit log entry.
+    """
+
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, pk):
+        try:
+            user = User.objects.get(pk=pk, is_superuser=False, user_type='faculty')
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'Faculty user not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if user.is_verified:
+            return Response(
+                {'error': 'This faculty account is already verified.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.is_verified = True
+        user.save(update_fields=['is_verified', 'updated_at'])
+
+        _write_audit(
+            admin=request.user,
+            action='faculty_verification_approved',
+            target_type='User',
+            target_id=user.id,
+            detail=(
+                f"Faculty account {user.email} approved by admin "
+                f"{request.user.email} after schedule upload review."
+            ),
+            ip=_get_client_ip(request),
+        )
+
+        logger.info(
+            'Admin %s approved faculty verification for %s (pk=%s)',
+            request.user.email, user.email, pk,
+        )
+
+        _notify_faculty_verification_result(user, approved=True)
+
+        return Response({
+            'id': user.id,
+            'email': user.email,
+            'full_name': user.get_full_name(),
+            'is_verified': user.is_verified,
+        })
+
+
+class AdminPendingVerificationRejectView(APIView):
+    """
+    POST /api/admin/pending-verifications/<pk>/reject/
+
+    Rejects a pending faculty verification. The user remains unverified.
+    An optional 'reason' field in the request body is forwarded to the faculty user.
+    Writes an audit log entry.
+    """
+
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, pk):
+        try:
+            user = User.objects.get(pk=pk, is_superuser=False, user_type='faculty')
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'Faculty user not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        reason = str(request.data.get('reason', '')).strip()[:500]
+
+        _write_audit(
+            admin=request.user,
+            action='faculty_verification_rejected',
+            target_type='User',
+            target_id=user.id,
+            detail=(
+                f"Faculty verification rejected for {user.email} by admin "
+                f"{request.user.email}."
+                + (f" Reason: {reason}" if reason else "")
+            ),
+            ip=_get_client_ip(request),
+        )
+
+        logger.info(
+            'Admin %s rejected faculty verification for %s (pk=%s)',
+            request.user.email, user.email, pk,
+        )
+
+        _notify_faculty_verification_result(user, approved=False, reason=reason)
+
+        return Response({
+            'id': user.id,
+            'email': user.email,
+            'full_name': user.get_full_name(),
+            'is_verified': user.is_verified,
+        })
+
+
+def _notify_faculty_verification_result(user, *, approved: bool, reason: str = '') -> None:
+    """
+    Persist a Notification record and optionally fire a push notification
+    to inform the faculty user of their verification outcome.
+    Silently swallows errors so it never breaks the calling view.
+    """
+    from api.utils.notification_service import NotificationService
+
+    try:
+        if approved:
+            title = "Faculty Account Verified ✓"
+            body = (
+                "Your faculty account has been approved! "
+                "You can now generate class codes and connect with students."
+            )
+        else:
+            title = "Faculty Verification Update"
+            body = (
+                "Your faculty verification could not be approved at this time. "
+                + (f"Reason: {reason}" if reason else "Please re-upload a clearer faculty schedule.")
+            )
+
+        data_payload = {
+            'type': 'faculty_verification',
+            'approved': approved,
+        }
+
+        Notification.objects.create(
+            user=user,
+            notification_type='faculty_verification',
+            title=title,
+            message=body,
+            data=data_payload,
+        )
+
+        token = getattr(user, 'expo_push_token', None)
+        if token:
+            service = NotificationService()
+            service.send_push_notification(
+                token=token,
+                title=title,
+                body=body,
+                data=data_payload,
+            )
+    except Exception:
+        logger.exception(
+            '_notify_faculty_verification_result: failed to notify user %s', user.email
+        )

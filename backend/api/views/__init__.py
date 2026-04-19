@@ -164,6 +164,10 @@ from .admin_views import (
     AdminExtractionJobListView,
     AdminIncidentReportListView,
     AdminIncidentReportDetailView,
+    # Faculty verification — notification-driven workflow
+    AdminPendingVerificationsView,
+    AdminPendingVerificationApproveView,
+    AdminPendingVerificationRejectView,
 )
 
 # Pending enrollment consent views (student-facing faculty match flow)
