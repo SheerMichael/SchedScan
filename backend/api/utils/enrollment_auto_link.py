@@ -20,7 +20,7 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 from django.conf import settings
 from django.db import transaction
 
-from ..models import ClassEnrollment, Course, User
+from ..models import ClassEnrollment, Course, Notification, User
 
 logger = logging.getLogger(__name__)
 
@@ -254,13 +254,13 @@ def _apply_auto_enrollment_sync(
         existing_qs = ClassEnrollment.objects.filter(
             student=user,
             enrollment_type="auto",
-            status="active",
+            status__in=("active", "pending"),
         )
     elif user.user_type == "faculty":
         existing_qs = ClassEnrollment.objects.filter(
             faculty=user,
             enrollment_type="auto",
-            status="active",
+            status__in=("active", "pending"),
         )
     else:
         return {"created": 0, "removed": 0, "desired": 0}
@@ -287,23 +287,29 @@ def _apply_auto_enrollment_sync(
 
     created_count = 0
     missing = [key for key in desired if key not in existing_keys]
+    new_enrollments: list[ClassEnrollment] = []
     for student_id, faculty_id, subject_code in missing:
         if ClassEnrollment.objects.filter(
             student_id=student_id,
             faculty_id=faculty_id,
             subject_code=subject_code,
-            status="active",
+            status__in=("active", "pending", "declined"),
         ).exists():
             continue
 
-        ClassEnrollment.objects.create(
+        enrollment = ClassEnrollment.objects.create(
             student_id=student_id,
             faculty_id=faculty_id,
             subject_code=subject_code,
             enrollment_type="auto",
-            status="active",
+            status="pending",   # Requires student consent — not active until accepted
         )
+        new_enrollments.append(enrollment)
         created_count += 1
+
+    # Fire in-app (+ push) notifications for each new pending suggestion.
+    if new_enrollments:
+        _notify_pending_enrollments(new_enrollments)
 
     return {
         "created": created_count,
@@ -346,3 +352,80 @@ def sync_auto_enrollments_for_user(user: User) -> Dict[str, int]:
         )
 
     return stats
+
+
+def _notify_pending_enrollments(enrollments: List) -> None:
+    """
+    Fire in-app and push notifications for newly created pending (auto-detected)
+    faculty match suggestions. Called after creating pending ClassEnrollment rows.
+    Silently swallows all errors so notification failures never break enrollment sync.
+    """
+    try:
+        from django.contrib.auth import get_user_model
+        from api.utils.notification_service import NotificationService
+
+        _User = get_user_model()
+        notifications = []
+        push_payloads = []  # (token, title, body, data)
+
+        for enrollment in enrollments:
+            try:
+                faculty = enrollment.faculty_id and _User.objects.filter(
+                    pk=enrollment.faculty_id
+                ).values("first_name", "last_name", "expo_push_token").first()
+                if not faculty:
+                    continue
+
+                faculty_name = f"{faculty['first_name']} {faculty['last_name']}".strip() or "Your faculty"
+                subject_code = enrollment.subject_code
+
+                title = "Faculty Match Found 🏫"
+                body = (
+                    f"{faculty_name} teaches {subject_code}. "
+                    f"Tap to join their class."
+                )
+                data_payload = {
+                    "type": "faculty_match",
+                    "enrollment_id": enrollment.id,
+                    "faculty_id": enrollment.faculty_id,
+                    "subject_code": subject_code,
+                    "screen": "pending_enrollments",
+                }
+
+                notifications.append(
+                    Notification(
+                        user_id=enrollment.student_id,
+                        notification_type="faculty_match",
+                        title=title,
+                        message=body,
+                        data=data_payload,
+                    )
+                )
+
+                student = _User.objects.filter(pk=enrollment.student_id).values("expo_push_token").first()
+                if student and student["expo_push_token"]:
+                    push_payloads.append((student["expo_push_token"], title, body, data_payload))
+
+            except Exception:
+                logger.exception(
+                    "_notify_pending_enrollments: failed to build notification for enrollment %s",
+                    getattr(enrollment, "id", "?"),
+                )
+
+        if notifications:
+            Notification.objects.bulk_create(notifications, batch_size=500)
+
+        if push_payloads:
+            service = NotificationService()
+            for token, title, body, data in push_payloads:
+                try:
+                    service.send_push_notification(
+                        token=token, title=title, body=body, data=data
+                    )
+                except Exception:
+                    logger.exception(
+                        "_notify_pending_enrollments: push send failed for token %s", token[:12]
+                    )
+
+    except Exception:
+        logger.exception("_notify_pending_enrollments: unexpected error")

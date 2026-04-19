@@ -164,3 +164,17 @@ from .admin_views import (
     AdminIncidentReportListView,
     AdminIncidentReportDetailView,
 )
+
+# Pending enrollment consent views (student-facing faculty match flow)
+from .pending_enrollment_views import (
+    PendingEnrollmentListView,
+    PendingEnrollmentAcceptView,
+    PendingEnrollmentDeclineView,
+    PendingEnrollmentBulkAcceptView,
+)
+
+# Classmate discovery views
+from .classmate_views import (
+    StudentClassmateListView,
+    FacultyClassRosterView,
+)

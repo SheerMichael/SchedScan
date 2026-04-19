@@ -99,6 +99,16 @@ urlpatterns = [
     path('student/faculty-tasks/counts/', views.StudentFacultyTaskCountsView.as_view(), name='student_faculty_task_counts'),
     path('student/faculty-tasks/<int:pk>/complete/', views.StudentFacultyTaskCompleteView.as_view(), name='student_faculty_task_complete'),
 
+    # Pending enrollment consent (auto-detected faculty matches)
+    path('student/pending-enrollments/', views.PendingEnrollmentListView.as_view(), name='pending_enrollments'),
+    path('student/pending-enrollments/accept-all/', views.PendingEnrollmentBulkAcceptView.as_view(), name='pending_enrollment_bulk_accept'),
+    path('student/pending-enrollments/<int:pk>/accept/', views.PendingEnrollmentAcceptView.as_view(), name='pending_enrollment_accept'),
+    path('student/pending-enrollments/<int:pk>/decline/', views.PendingEnrollmentDeclineView.as_view(), name='pending_enrollment_decline'),
+
+    # Classmate discovery
+    path('student/classmates/', views.StudentClassmateListView.as_view(), name='student_classmates'),
+    path('faculty/class-roster/', views.FacultyClassRosterView.as_view(), name='faculty_class_roster'),
+
     # Faculty Remark endpoints
     path('faculty/remarks/', views.FacultyRemarkListCreateView.as_view(), name='faculty_remark_list_create'),
     path('faculty/remarks/<int:pk>/', views.FacultyRemarkDetailView.as_view(), name='faculty_remark_detail'),

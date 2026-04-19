@@ -18,6 +18,8 @@ import {
 import { scheduleStorageService } from '../../services/scheduleStorageService';
 import { useAuth } from '../../context/AuthContext';
 import FacultyModeModal from '../../components/FacultyModeModal';
+import FacultyMatchModal from '../../components/FacultyMatchModal';
+import { pendingEnrollmentService } from '../../services/pendingEnrollmentService';
 import { detectSemesterFromDate } from '../../utils/semesterUtils';
 import api from '../../services/api';
 
@@ -111,6 +113,9 @@ export default function Scanner() {
 
   // Faculty mode unlock modal
   const [showFacultyModeModal, setShowFacultyModeModal] = useState(false);
+
+  // Faculty match modal — shown after student extraction when pending enrollments exist
+  const [showFacultyMatchModal, setShowFacultyMatchModal] = useState(false);
 
   // --- Logic Helpers (Rate Limit, Upload, Etc) ---
 
@@ -288,6 +293,22 @@ export default function Scanner() {
     setIsUploading(false);
     setShowBehindScenesModal(false);
     setBackgroundJobId('');
+
+    // For student uploads, check if the backend found any faculty matches.
+    // Show the FacultyMatchModal so the student can join those classes.
+    if (uploadType === 'student') {
+      try {
+        const pending = await pendingEnrollmentService.getPendingEnrollments();
+        if (pending.count > 0) {
+          setShowFacultyMatchModal(true);
+          // Show schedules alert AFTER they dismiss the match modal
+          return;
+        }
+      } catch {
+        // Silently ignore — don't block the success flow
+      }
+    }
+
     Alert.alert(
       'Schedule Saved',
       'Extraction completed and your schedule has been saved automatically. You can review it in Schedules.',
@@ -1581,6 +1602,45 @@ export default function Scanner() {
         visible={showFacultyModeModal}
         onConfirm={handleFacultyModeConfirm}
         onDismiss={handleFacultyModeDismiss}
+      />
+
+      {/* Faculty Match Modal — shown after student extraction when matches exist */}
+      <FacultyMatchModal
+        visible={showFacultyMatchModal}
+        onClose={() => {
+          setShowFacultyMatchModal(false);
+          Alert.alert(
+            'Schedule Saved',
+            'Your schedule has been saved. You can join faculty classes later from your profile.',
+            [
+              {
+                text: 'View Schedules',
+                onPress: () => {
+                  resetScanner();
+                  router.push('/Home/schedules');
+                },
+              },
+              { text: 'OK', style: 'cancel' },
+            ]
+          );
+        }}
+        onAccepted={(count) => {
+          setShowFacultyMatchModal(false);
+          Alert.alert(
+            '🎉 Joined!',
+            `You've joined ${count} class${count !== 1 ? 'es' : ''}. Your schedule has been saved.`,
+            [
+              {
+                text: 'View Schedules',
+                onPress: () => {
+                  resetScanner();
+                  router.push('/Home/schedules');
+                },
+              },
+              { text: 'OK', style: 'cancel' },
+            ]
+          );
+        }}
       />
 
     <Modal

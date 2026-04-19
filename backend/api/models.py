@@ -916,8 +916,10 @@ class ClassEnrollment(models.Model):
         ('code', 'Via class code'),
     ]
     STATUS_CHOICES = [
-        ('active', 'Active'),
-        ('removed', 'Removed'),
+        ('pending', 'Pending'),     # Auto-detected, awaiting student consent
+        ('active', 'Active'),       # Confirmed enrollment (accepted or code-joined)
+        ('removed', 'Removed'),     # Removed by faculty or schedule change
+        ('declined', 'Declined'),   # Student explicitly declined the suggestion
     ]
 
     faculty = models.ForeignKey(
@@ -957,13 +959,19 @@ class ClassEnrollment(models.Model):
         indexes = [
             models.Index(fields=['faculty', 'subject_code', 'status']),
             models.Index(fields=['student', 'subject_code', 'status']),
+            models.Index(fields=['student', 'status']),
         ]
         constraints = [
             models.UniqueConstraint(
                 fields=['student', 'faculty', 'subject_code'],
                 condition=models.Q(status='active'),
                 name='unique_active_enrollment'
-            )
+            ),
+            models.UniqueConstraint(
+                fields=['student', 'faculty', 'subject_code'],
+                condition=models.Q(status='pending'),
+                name='unique_pending_enrollment'
+            ),
         ]
 
     def __str__(self):
@@ -1168,6 +1176,7 @@ class Notification(models.Model):
         ('class_reminder', 'Class Reminder'),
         ('faculty_task', 'Faculty Task'),
         ('faculty_remark', 'Faculty Remark'),
+        ('faculty_match', 'Faculty Match'),   # Auto-detected faculty match for student
         ('general', 'General'),
     ]
 

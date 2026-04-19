@@ -760,6 +760,128 @@ class ClassEnrollmentSerializer(serializers.ModelSerializer):
         return obj.student.id
 
 
+class PendingEnrollmentSerializer(serializers.ModelSerializer):
+    """
+    Serializer for pending (auto-detected) faculty enrollments shown to students.
+    Displays faculty profile and schedule details to help the student decide
+    whether to accept or decline the class suggestion.
+    """
+    faculty_name = serializers.SerializerMethodField()
+    faculty_email = serializers.SerializerMethodField()
+    faculty_profile_picture = serializers.SerializerMethodField()
+    subject_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ClassEnrollment
+        fields = [
+            'id',
+            'subject_code',
+            'subject_name',
+            'enrollment_type',
+            'status',
+            'enrolled_at',
+            'faculty_name',
+            'faculty_email',
+            'faculty_profile_picture',
+        ]
+        read_only_fields = fields
+
+    def get_faculty_name(self, obj):
+        return obj.faculty.get_full_name()
+
+    def get_faculty_email(self, obj):
+        return obj.faculty.email
+
+    def get_faculty_profile_picture(self, obj):
+        pic = obj.faculty.profile_picture
+        if pic and pic.name:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(pic.url)
+            return pic.url
+        return None
+
+    def get_subject_name(self, obj):
+        """Try to find the subject name from the faculty's courses."""
+        from .models import Course
+        course = Course.objects.filter(
+            user=obj.faculty,
+            subject_code=obj.subject_code,
+        ).values('subject_name').first()
+        return course['subject_name'] if course else ''
+
+
+class ClassmateSerializer(serializers.ModelSerializer):
+    """
+    Read-only serializer exposing a limited public profile for classmate discovery.
+    Intentionally omits email and student number for privacy.
+    """
+    full_name = serializers.SerializerMethodField()
+    profile_picture = serializers.SerializerMethodField()
+    enrollment_type = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ['id', 'first_name', 'last_name', 'full_name', 'profile_picture', 'enrollment_type']
+        read_only_fields = fields
+
+    def get_full_name(self, obj):
+        return obj.get_full_name()
+
+    def get_profile_picture(self, obj):
+        if obj.profile_picture and obj.profile_picture.name:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.profile_picture.url)
+            return obj.profile_picture.url
+        return None
+
+    def get_enrollment_type(self, obj):
+        return getattr(obj, 'enrollment_type', None)
+
+
+class FacultyRosterStudentSerializer(serializers.ModelSerializer):
+    """
+    Faculty-facing serializer for the class roster endpoint.
+    Includes slightly more detail since faculty owns the relationship.
+    """
+    full_name = serializers.SerializerMethodField()
+    profile_picture = serializers.SerializerMethodField()
+    enrollment_type = serializers.SerializerMethodField()
+    enrollment_status = serializers.SerializerMethodField()
+    enrolled_at = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = [
+            'id', 'first_name', 'last_name', 'full_name',
+            'student_number', 'profile_picture',
+            'enrollment_type', 'enrollment_status', 'enrolled_at',
+        ]
+        read_only_fields = fields
+
+    def get_full_name(self, obj):
+        return obj.get_full_name()
+
+    def get_profile_picture(self, obj):
+        if obj.profile_picture and obj.profile_picture.name:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.profile_picture.url)
+            return obj.profile_picture.url
+        return None
+
+    def get_enrollment_type(self, obj):
+        return getattr(obj, 'enrollment_type', None)
+
+    def get_enrollment_status(self, obj):
+        return getattr(obj, 'enrollment_status', None)
+
+    def get_enrolled_at(self, obj):
+        val = getattr(obj, 'enrolled_at', None)
+        return val.isoformat() if val else None
+
+
 class FacultyTaskFileSerializer(serializers.ModelSerializer):
     """
     Read-only serializer for FacultyTaskFile — exposes file metadata.
