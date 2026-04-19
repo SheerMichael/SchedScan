@@ -127,7 +127,10 @@ class ParentLinkRequestView(APIView):
         if user.user_type != 'parent':
             return Response({"error": "This endpoint is for parents only"}, status=status.HTTP_403_FORBIDDEN)
 
-        requests = ParentLinkRequest.objects.filter(parent=user).select_related('parent', 'child').order_by('-requested_at')
+        requests = ParentLinkRequest.objects.filter(
+            parent=user,
+            parent_hidden_at__isnull=True,
+        ).select_related('parent', 'child').order_by('-requested_at')
         return Response({"requests": ParentLinkRequestSerializer(requests, many=True).data})
 
     def post(self, request):
@@ -297,6 +300,80 @@ class ParentLinkRequestCancelView(APIView):
             {
                 "message": f"Cancelled request to {link_request.child.get_full_name()}",
                 "request": ParentLinkRequestSerializer(link_request).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ParentLinkRequestHistoryDetailView(APIView):
+    """
+    DELETE /api/parent/link-requests/<request_id>/
+    Soft-hides a single resolved/cancelled request from the parent's request history.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, request_id):
+        user = request.user
+        if user.user_type != 'parent':
+            return Response({"error": "This endpoint is for parents only"}, status=status.HTTP_403_FORBIDDEN)
+
+        link_request = ParentLinkRequest.objects.filter(
+            id=request_id,
+            parent=user,
+            parent_hidden_at__isnull=True,
+        ).first()
+
+        if not link_request:
+            return Response({"error": "Request not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if link_request.status == 'pending':
+            return Response(
+                {"error": "Pending requests cannot be deleted from history. Cancel the request first."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        link_request.parent_hidden_at = timezone.now()
+        link_request.save(update_fields=['parent_hidden_at'])
+
+        return Response(
+            {
+                "message": "Request removed from history.",
+                "request_id": link_request.id,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ParentLinkRequestHistoryClearView(APIView):
+    """
+    DELETE /api/parent/link-requests/clear-history/
+    Soft-hides all non-pending requests from the parent's request history.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request):
+        user = request.user
+        if user.user_type != 'parent':
+            return Response({"error": "This endpoint is for parents only"}, status=status.HTTP_403_FORBIDDEN)
+
+        clearable_qs = ParentLinkRequest.objects.filter(
+            parent=user,
+            parent_hidden_at__isnull=True,
+        ).exclude(status='pending')
+
+        hidden_count = clearable_qs.update(parent_hidden_at=timezone.now())
+        remaining_pending = ParentLinkRequest.objects.filter(
+            parent=user,
+            parent_hidden_at__isnull=True,
+            status='pending',
+        ).count()
+
+        return Response(
+            {
+                "deleted_count": hidden_count,
+                "hidden_count": hidden_count,
+                "remaining_pending": remaining_pending,
+                "message": "Request history cleared.",
             },
             status=status.HTTP_200_OK,
         )

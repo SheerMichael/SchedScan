@@ -77,6 +77,8 @@ from .parent_views import (
     RegisterPushTokenView,
     ParentChildSearchView,
     ParentLinkRequestView,
+    ParentLinkRequestHistoryClearView,
+    ParentLinkRequestHistoryDetailView,
     ParentLinkRequestCancelView,
     StudentParentLinkRequestListView,
     StudentParentLinkRequestApproveView,

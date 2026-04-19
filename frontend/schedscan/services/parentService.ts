@@ -70,6 +70,13 @@ export interface ApiError {
     error: string;
 }
 
+export interface ParentRequestHistoryClearResponse {
+    deleted_count: number;
+    hidden_count: number;
+    remaining_pending: number;
+    message: string;
+}
+
 // --- Service ---
 
 export const parentService = {
@@ -151,6 +158,22 @@ export const parentService = {
      */
     cancelMyLinkRequest: async (requestId: number): Promise<{ message: string; request: ParentLinkRequest }> => {
         const response = await api.post(`/parent/link-requests/${requestId}/cancel/`);
+        return response.data;
+    },
+
+    /**
+     * Remove a single resolved/cancelled request from parent history.
+     */
+    deleteRequestHistoryItem: async (requestId: number): Promise<{ message: string; request_id: number }> => {
+        const response = await api.delete(`/parent/link-requests/${requestId}/`);
+        return response.data;
+    },
+
+    /**
+     * Clear all non-pending requests from parent history.
+     */
+    clearRequestHistory: async (): Promise<ParentRequestHistoryClearResponse> => {
+        const response = await api.delete('/parent/link-requests/clear-history/');
         return response.data;
     },
 

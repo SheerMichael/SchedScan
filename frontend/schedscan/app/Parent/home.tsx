@@ -6,8 +6,9 @@ import { useAuth } from "../../context/AuthContext";
 import { parentService, LinkedChild, ChildInfo, StudentSearchResult, ParentLinkRequest } from "../../services/parentService";
 import { parentRemarkService, FacultyRemark } from "../../services/remarkService";
 import { paymentService, CanAddChildResponse } from "../../services/paymentService";
+import { authService } from "../../services/authService";
 import * as WebBrowser from 'expo-web-browser';
-import { Plus, X, Users, Calendar, MessageSquare, CreditCard } from "lucide-react-native";
+import { Plus, X, Users, Calendar, MessageSquare, CreditCard, Trash2, ShieldAlert } from "lucide-react-native";
 import Svg, { Path } from "react-native-svg";
 
 // --- Types ---
@@ -39,6 +40,8 @@ const ParentHomePage = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [isSendingRequest, setIsSendingRequest] = useState(false);
   const [isCancellingRequestId, setIsCancellingRequestId] = useState<number | null>(null);
+  const [isDeletingHistoryRequestId, setIsDeletingHistoryRequestId] = useState<number | null>(null);
+  const [isClearingRequestHistory, setIsClearingRequestHistory] = useState(false);
   const [requestError, setRequestError] = useState("");
 
   // Payment state
@@ -51,14 +54,54 @@ const ParentHomePage = () => {
   const [isLoadingRemarks, setIsLoadingRemarks] = useState(false);
   const [viewingParentRemark, setViewingParentRemark] = useState<FacultyRemark | null>(null);
 
-  // Load data on focus
-  useFocusEffect(
-    useCallback(() => {
-      loadChildrenData();
-    }, [])
-  );
+  // Account deletion state
+  const [showDeleteAccountModal, setShowDeleteAccountModal] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [deleteError, setDeleteError] = useState("");
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
-  const loadChildrenData = async () => {
+  const loadChildSchedule = useCallback(async (childId: number) => {
+    try {
+      const scheduleData = await parentService.getChildSchedule(childId);
+      setSchedule(scheduleData.schedule);
+
+      if (scheduleData.schedule?.courses) {
+        const today = getDayAbbrev(new Date().getDay());
+        const filtered = scheduleData.schedule.courses.filter(
+          (c: Course) => c.day === today
+        );
+        setTodaysCourses(filtered);
+      } else {
+        setTodaysCourses([]);
+      }
+    } catch {
+      console.log('No schedule available for child');
+      setSchedule(null);
+      setTodaysCourses([]);
+    }
+  }, []);
+
+  const loadChildRemarks = useCallback(async (childId: number) => {
+    try {
+      setIsLoadingRemarks(true);
+      const remarksData = await parentRemarkService.getRemarks(childId);
+      setRemarks(remarksData);
+    } catch (error: any) {
+      console.log('Remarks not available:', error?.response?.status);
+      setRemarks([]);
+    } finally {
+      setIsLoadingRemarks(false);
+    }
+  }, []);
+
+  const selectChild = useCallback(async (child: ChildInfo) => {
+    setSelectedChild(child);
+    await loadChildSchedule(child.id);
+    await loadChildRemarks(child.id);
+  }, [loadChildRemarks, loadChildSchedule]);
+
+  const loadChildrenData = useCallback(async () => {
     try {
       setIsLoading(true);
 
@@ -91,47 +134,14 @@ const ParentHomePage = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [loadChildRemarks, loadChildSchedule, selectChild, selectedChild]);
 
-  const selectChild = async (child: ChildInfo) => {
-    setSelectedChild(child);
-    await loadChildSchedule(child.id);
-    await loadChildRemarks(child.id);
-  };
-
-  const loadChildSchedule = async (childId: number) => {
-    try {
-      const scheduleData = await parentService.getChildSchedule(childId);
-      setSchedule(scheduleData.schedule);
-
-      if (scheduleData.schedule?.courses) {
-        const today = getDayAbbrev(new Date().getDay());
-        const filtered = scheduleData.schedule.courses.filter(
-          (c: Course) => c.day === today
-        );
-        setTodaysCourses(filtered);
-      } else {
-        setTodaysCourses([]);
-      }
-    } catch (error: any) {
-      console.log('No schedule available for child');
-      setSchedule(null);
-      setTodaysCourses([]);
-    }
-  };
-
-  const loadChildRemarks = async (childId: number) => {
-    try {
-      setIsLoadingRemarks(true);
-      const remarksData = await parentRemarkService.getRemarks(childId);
-      setRemarks(remarksData);
-    } catch (error: any) {
-      console.log('Remarks not available:', error?.response?.status);
-      setRemarks([]);
-    } finally {
-      setIsLoadingRemarks(false);
-    }
-  };
+  // Load data on focus
+  useFocusEffect(
+    useCallback(() => {
+      loadChildrenData();
+    }, [loadChildrenData])
+  );
 
   const handleAddChild = async () => {
     setRequestError("");
@@ -150,7 +160,7 @@ const ParentHomePage = () => {
         setShowPaymentModal(true);
         return;
       }
-    } catch (error) {
+    } catch {
       // Conservative fallback to avoid bypass when eligibility cannot be verified.
       if ((children.length + localPendingRequests) >= 1) {
         setShowPaymentModal(true);
@@ -258,7 +268,7 @@ const ParentHomePage = () => {
           setShowPaymentModal(true);
           return;
         }
-      } catch (error) {
+      } catch {
         if ((children.length + myLinkRequests.filter((req) => req.status === 'pending').length) >= 1) {
           setShowLinkModal(false);
           setShowPaymentModal(true);
@@ -341,6 +351,117 @@ const ParentHomePage = () => {
     );
   };
 
+  const handleDeleteHistoryItem = (request: ParentLinkRequest) => {
+    if (request.status === 'pending' || isDeletingHistoryRequestId === request.id) {
+      return;
+    }
+
+    Alert.alert(
+      "Delete History Item",
+      `Remove request history for ${request.child_name}? This cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setIsDeletingHistoryRequestId(request.id);
+              await parentService.deleteRequestHistoryItem(request.id);
+              setMyLinkRequests(prev => prev.filter(item => item.id !== request.id));
+            } catch (error: any) {
+              const message = error.response?.data?.error || "Failed to delete request history item.";
+              Alert.alert("Error", message);
+            } finally {
+              setIsDeletingHistoryRequestId(null);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleClearRequestHistory = () => {
+    const clearableCount = myLinkRequests.filter((req) => req.status !== 'pending').length;
+    if (clearableCount === 0) {
+      Alert.alert("Nothing to Clear", "Only resolved or cancelled requests can be cleared.");
+      return;
+    }
+
+    Alert.alert(
+      "Clear Request History",
+      `This will remove ${clearableCount} history ${clearableCount === 1 ? 'item' : 'items'}. Pending requests will remain.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Clear",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setIsClearingRequestHistory(true);
+              const result = await parentService.clearRequestHistory();
+              setMyLinkRequests(prev => prev.filter(item => item.status === 'pending'));
+              Alert.alert("History Cleared", result.message);
+            } catch (error: any) {
+              const message = error.response?.data?.error || "Unable to clear request history right now.";
+              Alert.alert("Clear Failed", message);
+            } finally {
+              setIsClearingRequestHistory(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const resetDeleteAccountModal = () => {
+    setDeletePassword("");
+    setDeleteConfirmation("");
+    setDeleteError("");
+    setIsDeletingAccount(false);
+  };
+
+  const closeDeleteAccountModal = () => {
+    setShowDeleteAccountModal(false);
+    resetDeleteAccountModal();
+  };
+
+  const handleDeleteAccount = async () => {
+    setDeleteError("");
+
+    if (!deletePassword.trim()) {
+      setDeleteError("Please enter your password.");
+      return;
+    }
+
+    if (deleteConfirmation !== "DELETE") {
+      setDeleteError("Please type DELETE to confirm.");
+      return;
+    }
+
+    try {
+      setIsDeletingAccount(true);
+      await authService.deleteAccount({
+        password: deletePassword,
+        confirmation: 'DELETE',
+      });
+
+      closeDeleteAccountModal();
+      await logout();
+
+      Alert.alert(
+        "Account Deleted",
+        "Your parent account has been permanently deleted.",
+        [{ text: "OK", onPress: () => router.replace("/intro/getstarted") }]
+      );
+    } catch (error: any) {
+      const message = error.response?.data?.error || "Failed to delete account. Please try again.";
+      setDeleteError(message);
+    } finally {
+      setIsDeletingAccount(false);
+    }
+  };
+
   const handleUnlink = async (child: ChildInfo) => {
     Alert.alert(
       "Unlink Child",
@@ -365,7 +486,7 @@ const ParentHomePage = () => {
               }
 
               Alert.alert("Unlinked", `You have been unlinked from ${child.full_name}.`);
-            } catch (error) {
+            } catch {
               Alert.alert("Error", "Failed to unlink. Please try again.");
             }
           }
@@ -411,9 +532,9 @@ const ParentHomePage = () => {
   }
 
   return (
-    <View className="flex-1 bg-gray-50">
+    <View className="flex-1 bg-gray-100">
       {/* Header */}
-      <View className="w-full h-14 bg-white border-b-2 border-gray-200 justify-between items-center flex-row px-4">
+      <View className="w-full h-16 bg-white border-b border-gray-200 justify-between items-center flex-row px-4">
         <View className="flex-row items-center">
           <Image source={require("../../assets/images/logo.png")} className="w-12 h-12" />
           <View className="flex-col ml-2">
@@ -421,12 +542,12 @@ const ParentHomePage = () => {
             <Text className="text-xl font-bold text-primary-900 leading-none">Scan</Text>
           </View>
         </View>
-        <TouchableOpacity onPress={handleLogout}>
+        <TouchableOpacity onPress={handleLogout} className="px-3 py-2 rounded-lg bg-gray-100">
           <Text className="text-primary-600 font-semibold">Logout</Text>
         </TouchableOpacity>
       </View>
 
-      <ScrollView className="flex-1">
+      <ScrollView className="flex-1" contentContainerStyle={{ paddingBottom: 28 }}>
         {(() => {
           const paidSlots = paymentGate?.paid_slots ?? 0;
           const pendingRequestsCount = paymentGate?.pending_requests ?? myLinkRequests.filter((req) => req.status === 'pending').length;
@@ -435,16 +556,16 @@ const ParentHomePage = () => {
           const isPremium = paidSlots > 0;
 
           return (
-            <View className={`mx-4 mt-4 mb-2 rounded-xl border px-4 py-3 ${isPremium ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
-              <Text className={`text-sm font-semibold ${isPremium ? 'text-emerald-700' : 'text-amber-700'}`}>
+            <View className={`mx-4 mt-4 mb-3 rounded-2xl border px-4 py-4 ${isPremium ? 'border-emerald-200 bg-emerald-50' : 'border-sky-200 bg-sky-50'}`}>
+              <Text className={`text-sm font-semibold ${isPremium ? 'text-emerald-700' : 'text-sky-700'}`}>
                 {isPremium ? 'Premium Parent Active' : 'Free Parent Plan'}
               </Text>
-              <Text className={`mt-1 text-xs ${isPremium ? 'text-emerald-700/90' : 'text-amber-700/90'}`}>
+              <Text className={`mt-1 text-xs ${isPremium ? 'text-emerald-700/90' : 'text-sky-700/90'}`}>
                 {isPremium
                   ? `You have unlocked ${paidSlots} paid child slot${paidSlots > 1 ? 's' : ''}.`
                   : 'Your first child link is included. Additional child links require a one-time payment.'}
               </Text>
-              <Text className={`mt-1 text-xs ${isPremium ? 'text-emerald-700/90' : 'text-amber-700/90'}`}>
+              <Text className={`mt-1 text-xs ${isPremium ? 'text-emerald-700/90' : 'text-sky-700/90'}`}>
                 Usage: {reservedSlots}/{totalAllowed} slot{totalAllowed > 1 ? 's' : ''} reserved ({children.length} linked, {pendingRequestsCount} pending)
               </Text>
             </View>
@@ -452,9 +573,9 @@ const ParentHomePage = () => {
         })()}
 
         {/* Welcome Header */}
-        <View className="bg-primary-600 m-4 p-6 rounded-2xl">
-          <Text className="text-3xl font-bold text-white mb-1">Hi, {user?.first_name}!</Text>
-          <Text className="text-base text-primary-200">
+        <View className="bg-white mx-4 mb-4 p-5 rounded-2xl border border-gray-200">
+          <Text className="text-2xl font-bold text-gray-900 mb-1">Hello, {user?.first_name}.</Text>
+          <Text className="text-sm text-gray-600">
             {children.length > 0
               ? `Managing ${children.length} child${children.length > 1 ? 'ren' : ''}`
               : "Link to your child's account to get started"}
@@ -464,9 +585,10 @@ const ParentHomePage = () => {
         {/* Children List Section */}
         <View className="px-4 mb-4">
           <View className="flex-row justify-between items-center mb-3">
-            <Text className="text-lg font-bold text-gray-800">
-              <Users size={18} color="#374151" /> Linked Children
-            </Text>
+            <View className="flex-row items-center">
+              <Users size={18} color="#1f2937" />
+              <Text className="text-lg font-bold text-gray-800 ml-2">Linked Children</Text>
+            </View>
             <TouchableOpacity
               className="bg-primary-600 px-3 py-2 rounded-lg flex-row items-center"
               onPress={handleAddChild}
@@ -479,7 +601,7 @@ const ParentHomePage = () => {
           </View>
 
           {children.length === 0 ? (
-            <View className="bg-white rounded-xl p-8 border-2 border-dashed border-gray-300 items-center">
+            <View className="bg-white rounded-2xl p-8 border border-dashed border-gray-300 items-center">
               <Text className="text-5xl mb-4">👪</Text>
               <Text className="text-lg font-semibold text-gray-700 text-center mb-2">No children linked yet</Text>
               <Text className="text-gray-500 text-center mb-4">
@@ -498,8 +620,8 @@ const ParentHomePage = () => {
                 <TouchableOpacity
                   key={item.link_id}
                   onPress={() => selectChild(item.child)}
-                  className={`mr-3 p-4 rounded-xl border-2 min-w-[140px] ${selectedChild?.id === item.child.id
-                    ? 'bg-primary-50 border-primary-500'
+                  className={`mr-3 p-4 rounded-2xl border min-w-[150px] ${selectedChild?.id === item.child.id
+                    ? 'bg-primary-50 border-primary-400'
                     : 'bg-white border-gray-200'
                     }`}
                 >
@@ -521,9 +643,9 @@ const ParentHomePage = () => {
                     </Text>
                     <TouchableOpacity
                       onPress={() => handleUnlink(item.child)}
-                      className="mt-2"
+                      className="mt-3 px-2 py-1 rounded-md bg-red-50"
                     >
-                      <Text className="text-red-500 text-xs">Unlink</Text>
+                      <Text className="text-red-600 text-xs font-medium">Unlink</Text>
                     </TouchableOpacity>
                   </View>
                 </TouchableOpacity>
@@ -534,10 +656,21 @@ const ParentHomePage = () => {
 
         {/* Request Progress Section */}
         <View className="px-4 mb-4">
-          <Text className="text-lg font-bold text-gray-800 mb-3">Request Progress</Text>
+          <View className="flex-row items-center justify-between mb-3">
+            <Text className="text-lg font-bold text-gray-800">Request Progress</Text>
+            <TouchableOpacity
+              className={`px-3 py-2 rounded-lg border ${isClearingRequestHistory ? 'border-gray-200 bg-gray-100' : 'border-gray-300 bg-white'}`}
+              onPress={handleClearRequestHistory}
+              disabled={isClearingRequestHistory}
+            >
+              <Text className={`text-xs font-semibold ${isClearingRequestHistory ? 'text-gray-500' : 'text-gray-700'}`}>
+                {isClearingRequestHistory ? 'Clearing...' : 'Clear History'}
+              </Text>
+            </TouchableOpacity>
+          </View>
 
           {myLinkRequests.length === 0 ? (
-            <View className="bg-white rounded-xl p-6 border border-dashed border-gray-300">
+            <View className="bg-white rounded-2xl p-6 border border-dashed border-gray-300">
               <Text className="text-gray-500 text-center">
                 No parent-link requests yet. Search for a student to send your first request.
               </Text>
@@ -546,16 +679,31 @@ const ParentHomePage = () => {
             myLinkRequests.map((request) => {
               const status = getRequestStatusStyle(request.status);
               const canCancel = request.status === 'pending' && isCancellingRequestId !== request.id;
+              const canDelete = request.status !== 'pending' && isDeletingHistoryRequestId !== request.id;
 
               return (
-                <View key={request.id} className="bg-white rounded-xl p-4 border border-gray-200 mb-2">
+                <View key={request.id} className="bg-white rounded-2xl p-4 border border-gray-200 mb-2.5">
                   <View className="flex-row justify-between items-start mb-2">
                     <View className="flex-1 pr-2">
                       <Text className="font-semibold text-gray-800">{request.child_name}</Text>
                       <Text className="text-xs text-gray-500">{request.child_email}</Text>
                     </View>
-                    <View className={`rounded-full px-2 py-1 ${status.badge}`}>
-                      <Text className={`text-xs font-semibold ${status.text}`}>{status.label}</Text>
+                    <View className="items-end">
+                      <View className={`rounded-full px-2 py-1 ${status.badge}`}>
+                        <Text className={`text-xs font-semibold ${status.text}`}>{status.label}</Text>
+                      </View>
+                      {request.status !== 'pending' ? (
+                        <TouchableOpacity
+                          className={`mt-2 rounded-md px-2 py-1 flex-row items-center ${canDelete ? 'bg-red-50' : 'bg-gray-200'}`}
+                          onPress={() => handleDeleteHistoryItem(request)}
+                          disabled={!canDelete}
+                        >
+                          <Trash2 size={12} color={canDelete ? '#dc2626' : '#6b7280'} />
+                          <Text className={`ml-1 text-xs font-semibold ${canDelete ? 'text-red-600' : 'text-gray-500'}`}>
+                            {isDeletingHistoryRequestId === request.id ? 'Deleting...' : 'Delete'}
+                          </Text>
+                        </TouchableOpacity>
+                      ) : null}
                     </View>
                   </View>
 
@@ -716,6 +864,28 @@ const ParentHomePage = () => {
             </View>
           </View>
         )}
+
+        <View className="px-4 mt-2 mb-4">
+          <View className="bg-white rounded-2xl border border-red-200 p-4">
+            <View className="flex-row items-start">
+              <View className="w-9 h-9 rounded-full bg-red-50 items-center justify-center mr-3 mt-0.5">
+                <ShieldAlert size={18} color="#dc2626" />
+              </View>
+              <View className="flex-1">
+                <Text className="text-base font-bold text-red-700">Danger Zone</Text>
+                <Text className="text-xs text-gray-600 mt-1">
+                  Deleting your account is permanent. All parent links will be removed.
+                </Text>
+                <TouchableOpacity
+                  className="mt-3 rounded-lg bg-red-600 py-2.5 px-3 self-start"
+                  onPress={() => setShowDeleteAccountModal(true)}
+                >
+                  <Text className="text-white font-semibold text-sm">Delete Account</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
       </ScrollView>
 
       {/* Parent Remark Detail Modal (tap-to-expand) */}
@@ -762,6 +932,84 @@ const ParentHomePage = () => {
                 </View>
               </ScrollView>
             )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Delete Account Modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={showDeleteAccountModal}
+        onRequestClose={closeDeleteAccountModal}
+      >
+        <View className="flex-1 bg-black/50 justify-center items-center px-5">
+          <View className="bg-white rounded-2xl p-6 w-full max-w-md">
+            <View className="flex-row justify-between items-center mb-4">
+              <Text className="text-xl font-bold text-red-700">Delete Account</Text>
+              <TouchableOpacity onPress={closeDeleteAccountModal}>
+                <X size={24} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            <Text className="text-sm text-gray-600 mb-3">
+              This action is permanent. Your parent links and account data will be removed.
+            </Text>
+
+            {deleteError ? (
+              <View className="bg-red-50 border border-red-200 rounded-lg p-3 mb-3">
+                <Text className="text-red-700 text-sm">{deleteError}</Text>
+              </View>
+            ) : null}
+
+            <Text className="text-xs font-semibold text-gray-700 mb-1">Password</Text>
+            <TextInput
+              className="bg-gray-100 rounded-xl px-4 py-3 mb-3 text-gray-800"
+              secureTextEntry
+              value={deletePassword}
+              onChangeText={(text) => {
+                setDeletePassword(text);
+                setDeleteError("");
+              }}
+              autoCapitalize="none"
+              placeholder="Enter your password"
+              placeholderTextColor="#9CA3AF"
+            />
+
+            <Text className="text-xs font-semibold text-gray-700 mb-1">Type DELETE to confirm</Text>
+            <TextInput
+              className="bg-gray-100 rounded-xl px-4 py-3 mb-4 text-gray-800"
+              value={deleteConfirmation}
+              onChangeText={(text) => {
+                setDeleteConfirmation(text);
+                setDeleteError("");
+              }}
+              autoCapitalize="characters"
+              placeholder="DELETE"
+              placeholderTextColor="#9CA3AF"
+            />
+
+            <View className="flex-row gap-3">
+              <TouchableOpacity
+                className="flex-1 bg-gray-200 rounded-xl py-3"
+                onPress={closeDeleteAccountModal}
+                disabled={isDeletingAccount}
+              >
+                <Text className="text-gray-700 font-semibold text-center">Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                className={`flex-1 rounded-xl py-3 ${isDeletingAccount ? 'bg-red-300' : 'bg-red-600'}`}
+                onPress={handleDeleteAccount}
+                disabled={isDeletingAccount}
+              >
+                {isDeletingAccount ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text className="text-white font-semibold text-center">Delete</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>

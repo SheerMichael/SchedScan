@@ -629,6 +629,12 @@ class ParentLinkRequest(models.Model):
     )
     requested_at = models.DateTimeField(auto_now_add=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
+    parent_hidden_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Timestamp when this request was hidden from the parent's request history.",
+    )
 
     class Meta:
         verbose_name = 'Parent Link Request'
@@ -637,6 +643,7 @@ class ParentLinkRequest(models.Model):
         indexes = [
             models.Index(fields=['parent', 'status']),
             models.Index(fields=['child', 'status']),
+            models.Index(fields=['parent', 'parent_hidden_at'], name='api_parentl_parent__1f8b8d_idx'),
         ]
         constraints = [
             models.UniqueConstraint(

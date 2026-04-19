@@ -314,3 +314,93 @@ class ParentRegistrationAndLinkRequestTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data['error'], 'Only pending requests can be cancelled')
+
+    def test_parent_can_delete_single_non_pending_request_from_history(self):
+        parent = User.objects.create_user(
+            email='parent_delete_history@test.com',
+            password='testpass123',
+            first_name='History',
+            last_name='Delete',
+            user_type='parent',
+        )
+        request = ParentLinkRequest.objects.create(
+            parent=parent,
+            child=self.student,
+            status='rejected',
+        )
+
+        self.parent_client.force_authenticate(user=parent)
+        response = self.parent_client.delete(f'/api/parent/link-requests/{request.id}/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        request.refresh_from_db()
+        self.assertIsNotNone(request.parent_hidden_at)
+
+        list_response = self.parent_client.get('/api/parent/link-requests/')
+        self.assertEqual(list_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(list_response.data['requests'], [])
+
+    def test_parent_cannot_delete_pending_request_from_history(self):
+        parent = User.objects.create_user(
+            email='parent_pending_history@test.com',
+            password='testpass123',
+            first_name='Pending',
+            last_name='Delete',
+            user_type='parent',
+        )
+        request = ParentLinkRequest.objects.create(
+            parent=parent,
+            child=self.student,
+            status='pending',
+        )
+
+        self.parent_client.force_authenticate(user=parent)
+        response = self.parent_client.delete(f'/api/parent/link-requests/{request.id}/')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        request.refresh_from_db()
+        self.assertIsNone(request.parent_hidden_at)
+
+    def test_parent_can_clear_non_pending_request_history(self):
+        parent = User.objects.create_user(
+            email='parent_clear_history@test.com',
+            password='testpass123',
+            first_name='History',
+            last_name='Clear',
+            user_type='parent',
+        )
+        pending_request = ParentLinkRequest.objects.create(
+            parent=parent,
+            child=self.student,
+            status='pending',
+        )
+        rejected_request = ParentLinkRequest.objects.create(
+            parent=parent,
+            child=self.student,
+            status='rejected',
+        )
+        cancelled_request = ParentLinkRequest.objects.create(
+            parent=parent,
+            child=self.student,
+            status='cancelled',
+        )
+
+        self.parent_client.force_authenticate(user=parent)
+        response = self.parent_client.delete('/api/parent/link-requests/clear-history/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['deleted_count'], 2)
+        self.assertEqual(response.data['remaining_pending'], 1)
+
+        pending_request.refresh_from_db()
+        rejected_request.refresh_from_db()
+        cancelled_request.refresh_from_db()
+
+        self.assertIsNone(pending_request.parent_hidden_at)
+        self.assertIsNotNone(rejected_request.parent_hidden_at)
+        self.assertIsNotNone(cancelled_request.parent_hidden_at)
+
+        list_response = self.parent_client.get('/api/parent/link-requests/')
+        self.assertEqual(list_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(list_response.data['requests']), 1)
+        self.assertEqual(list_response.data['requests'][0]['id'], pending_request.id)

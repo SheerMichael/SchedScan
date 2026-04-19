@@ -16,6 +16,11 @@ export interface RegisterData {
   profile_picture?: any;
 }
 
+export interface DeleteAccountData {
+  password: string;
+  confirmation: 'DELETE';
+}
+
 export interface User {
   id: number;
   email: string;
@@ -229,6 +234,19 @@ export const authService = {
       return updatedUser;
     } catch (error: any) {
       console.error('Set student number error:', error.response?.data || error.message);
+      throw error;
+    }
+  },
+
+  /**
+   * Delete authenticated user account permanently.
+   */
+  deleteAccount: async (data: DeleteAccountData): Promise<{ message: string }> => {
+    try {
+      const response = await api.post('/auth/delete-account/', data);
+      return response.data;
+    } catch (error: any) {
+      console.error('Delete account error:', error.response?.data || error.message);
       throw error;
     }
   },
