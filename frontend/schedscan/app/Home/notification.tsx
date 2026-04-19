@@ -13,6 +13,9 @@ type FilterMode = 'all' | 'unread';
 const getCategoryLabel = (notificationType: NotifType['notification_type']): string => {
     if (notificationType === 'class_reminder') return 'Class Reminder';
     if (notificationType === 'faculty_task') return 'Faculty Task';
+    if (notificationType === 'faculty_match') return 'Faculty Match';
+    if (notificationType === 'faculty_remark') return 'Faculty Remark';
+    if (notificationType === 'faculty_verification') return 'Account Verification';
     return 'Notification';
 };
 

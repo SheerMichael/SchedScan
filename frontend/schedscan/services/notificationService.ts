@@ -8,7 +8,7 @@ import api from './api';
 
 export interface NotificationItem {
     id: number;
-    notification_type: 'class_reminder' | 'faculty_task' | 'general';
+    notification_type: 'class_reminder' | 'faculty_task' | 'faculty_match' | 'faculty_remark' | 'faculty_verification' | 'general';
     title: string;
     message: string;
     data: Record<string, any> | null;

@@ -13,7 +13,7 @@ type Props = {
   message: string;
   date: string;
   isRead: boolean;
-  notificationType: 'class_reminder' | 'faculty_task' | 'general';
+  notificationType: 'class_reminder' | 'faculty_task' | 'faculty_match' | 'faculty_remark' | 'faculty_verification' | 'general';
   onDelete: () => void;
 };
 
@@ -22,14 +22,20 @@ const EMOJI_REGEX = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu;
 const cleanText = (value: string): string => value.replace(EMOJI_REGEX, '').replace(/\s{2,}/g, ' ').trim();
 
 const getAccentColor = (notificationType: Props['notificationType']): string => {
-  if (notificationType === 'class_reminder') return '#2563EB';
-  if (notificationType === 'faculty_task') return '#EA580C';
-  return '#475569';
+  if (notificationType === 'class_reminder') return '#2563EB';   // blue
+  if (notificationType === 'faculty_task') return '#EA580C';     // orange
+  if (notificationType === 'faculty_match') return '#7C3AED';   // violet
+  if (notificationType === 'faculty_remark') return '#B45309';  // amber-dark
+  if (notificationType === 'faculty_verification') return '#16A34A'; // green
+  return '#475569'; // slate — general
 };
 
 const getTypeInitials = (notificationType: Props['notificationType']): string => {
   if (notificationType === 'class_reminder') return 'CR';
   if (notificationType === 'faculty_task') return 'FT';
+  if (notificationType === 'faculty_match') return 'FM';
+  if (notificationType === 'faculty_remark') return 'FR';
+  if (notificationType === 'faculty_verification') return 'FV';
   return 'NT';
 };
 

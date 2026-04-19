@@ -13,8 +13,11 @@ export default function RejectFacultyModal({
   if (!isOpen) return null;
 
   const handleConfirm = () => {
+    if (isLoading) return; // prevent double-submit
     onConfirm(reason.trim());
-    setReason('');
+    // NOTE: reason is intentionally NOT cleared here.
+    // It stays visible while the async request is in-flight.
+    // The parent closes the modal on success, which triggers handleClose → setReason('').
   };
 
   const handleClose = () => {
