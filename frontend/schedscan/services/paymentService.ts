@@ -10,6 +10,7 @@ export interface CanAddChildResponse {
     can_add_free: boolean;
     needs_payment: boolean;
     active_children: number;
+    pending_requests?: number;
     paid_slots: number;
 }
 

@@ -5,7 +5,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "../../context/AuthContext";
 import { parentService, LinkedChild, ChildInfo, StudentSearchResult, ParentLinkRequest } from "../../services/parentService";
 import { parentRemarkService, FacultyRemark } from "../../services/remarkService";
-import { paymentService } from "../../services/paymentService";
+import { paymentService, CanAddChildResponse } from "../../services/paymentService";
 import * as WebBrowser from 'expo-web-browser';
 import { Plus, X, Users, Calendar, MessageSquare, CreditCard } from "lucide-react-native";
 import Svg, { Path } from "react-native-svg";
@@ -44,6 +44,7 @@ const ParentHomePage = () => {
   // Payment state
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const [paymentGate, setPaymentGate] = useState<CanAddChildResponse | null>(null);
 
   // Remarks state
   const [remarks, setRemarks] = useState<FacultyRemark[]>([]);
@@ -61,13 +62,15 @@ const ParentHomePage = () => {
     try {
       setIsLoading(true);
 
-      const [childrenResponse, requestsResponse] = await Promise.all([
+      const [childrenResponse, requestsResponse, paymentResponse] = await Promise.all([
         parentService.getLinkedChildren(),
         parentService.getMyLinkRequests(),
+        paymentService.checkCanAddChild().catch(() => null),
       ]);
 
       setChildren(childrenResponse.children);
       setMyLinkRequests(requestsResponse);
+      setPaymentGate(paymentResponse);
 
       // Auto-select first child if available
       if (childrenResponse.children.length > 0 && !selectedChild) {
@@ -424,6 +427,30 @@ const ParentHomePage = () => {
       </View>
 
       <ScrollView className="flex-1">
+        {(() => {
+          const paidSlots = paymentGate?.paid_slots ?? 0;
+          const pendingRequestsCount = paymentGate?.pending_requests ?? myLinkRequests.filter((req) => req.status === 'pending').length;
+          const reservedSlots = children.length + pendingRequestsCount;
+          const totalAllowed = 1 + paidSlots;
+          const isPremium = paidSlots > 0;
+
+          return (
+            <View className={`mx-4 mt-4 mb-2 rounded-xl border px-4 py-3 ${isPremium ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
+              <Text className={`text-sm font-semibold ${isPremium ? 'text-emerald-700' : 'text-amber-700'}`}>
+                {isPremium ? 'Premium Parent Active' : 'Free Parent Plan'}
+              </Text>
+              <Text className={`mt-1 text-xs ${isPremium ? 'text-emerald-700/90' : 'text-amber-700/90'}`}>
+                {isPremium
+                  ? `You have unlocked ${paidSlots} paid child slot${paidSlots > 1 ? 's' : ''}.`
+                  : 'Your first child link is included. Additional child links require a one-time payment.'}
+              </Text>
+              <Text className={`mt-1 text-xs ${isPremium ? 'text-emerald-700/90' : 'text-amber-700/90'}`}>
+                Usage: {reservedSlots}/{totalAllowed} slot{totalAllowed > 1 ? 's' : ''} reserved ({children.length} linked, {pendingRequestsCount} pending)
+              </Text>
+            </View>
+          );
+        })()}
+
         {/* Welcome Header */}
         <View className="bg-primary-600 m-4 p-6 rounded-2xl">
           <Text className="text-3xl font-bold text-white mb-1">Hi, {user?.first_name}!</Text>

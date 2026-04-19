@@ -8,6 +8,7 @@ import { scheduleStorageService } from '../../services/scheduleStorageService';
 import { scheduleClassReminders } from '../../services/classReminderService';
 import * as ExpoClipboard from 'expo-clipboard';
 import api from '@/services/api';
+import { paymentService, CanAddChildResponse } from '@/services/paymentService';
 
 const UserProfile = () => {
 
@@ -26,6 +27,8 @@ const UserProfile = () => {
     const [urgentQuietEnd, setUrgentQuietEnd] = useState(7);
     const [urgentDefaultSnooze, setUrgentDefaultSnooze] = useState<5 | 10 | 15 | 30 | 60>(10);
     const [isSavingUrgentSettings, setIsSavingUrgentSettings] = useState(false);
+    const [parentPaymentStatus, setParentPaymentStatus] = useState<CanAddChildResponse | null>(null);
+    const [isLoadingParentPaymentStatus, setIsLoadingParentPaymentStatus] = useState(false);
 
     // MOCK PARENTAL CODE
     const parentalCode = "XYZ-123-ABC";
@@ -63,6 +66,39 @@ const UserProfile = () => {
         user?.urgent_popup_quiet_hours_end,
         user?.urgent_popup_default_snooze_minutes,
     ]);
+
+    useEffect(() => {
+        let isMounted = true;
+
+        const loadParentPaymentStatus = async () => {
+            if (user?.user_type !== 'parent') {
+                setParentPaymentStatus(null);
+                return;
+            }
+
+            try {
+                setIsLoadingParentPaymentStatus(true);
+                const status = await paymentService.checkCanAddChild();
+                if (isMounted) {
+                    setParentPaymentStatus(status);
+                }
+            } catch (error) {
+                if (isMounted) {
+                    setParentPaymentStatus(null);
+                }
+            } finally {
+                if (isMounted) {
+                    setIsLoadingParentPaymentStatus(false);
+                }
+            }
+        };
+
+        loadParentPaymentStatus();
+
+        return () => {
+            isMounted = false;
+        };
+    }, [user?.id, user?.user_type]);
 
     const LeftPointingArrow = ({ size = 24, color = '#ffffff' }) => (
         <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
@@ -249,6 +285,46 @@ const UserProfile = () => {
                             </Text>
                         </View>
                     </View>
+
+                    {user?.user_type === 'parent' && (
+                        <View className="mb-6">
+                            {isLoadingParentPaymentStatus ? (
+                                <View className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+                                    <Text className="text-sm font-semibold text-gray-600">Checking parent plan status...</Text>
+                                </View>
+                            ) : parentPaymentStatus ? (
+                                (() => {
+                                    const paidSlots = parentPaymentStatus.paid_slots;
+                                    const pendingRequests = parentPaymentStatus.pending_requests ?? 0;
+                                    const activeChildren = parentPaymentStatus.active_children;
+                                    const reservedSlots = activeChildren + pendingRequests;
+                                    const totalAllowed = 1 + paidSlots;
+                                    const isPremium = paidSlots > 0;
+
+                                    return (
+                                        <View className={`rounded-xl border px-4 py-3 ${isPremium ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
+                                            <Text className={`text-sm font-semibold ${isPremium ? 'text-emerald-700' : 'text-amber-700'}`}>
+                                                {isPremium ? 'Premium Parent Active' : 'Free Parent Plan'}
+                                            </Text>
+                                            <Text className={`mt-1 text-xs ${isPremium ? 'text-emerald-700/90' : 'text-amber-700/90'}`}>
+                                                {isPremium
+                                                    ? `You have unlocked ${paidSlots} paid child slot${paidSlots > 1 ? 's' : ''}.`
+                                                    : 'Your first child link is included. Additional child links require a one-time payment.'}
+                                            </Text>
+                                            <Text className={`mt-1 text-xs ${isPremium ? 'text-emerald-700/90' : 'text-amber-700/90'}`}>
+                                                Usage: {reservedSlots}/{totalAllowed} slot{totalAllowed > 1 ? 's' : ''} reserved ({activeChildren} linked, {pendingRequests} pending)
+                                            </Text>
+                                        </View>
+                                    );
+                                })()
+                            ) : (
+                                <View className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+                                    <Text className="text-sm font-semibold text-gray-600">Parent plan status unavailable</Text>
+                                    <Text className="mt-1 text-xs text-gray-500">Try refreshing this page in a moment.</Text>
+                                </View>
+                            )}
+                        </View>
+                    )}
 
                     <Text className="text-xl mb-2">Account</Text>
                     <View className="w-full border border-gray-500/50 rounded-2xl mb-10">
