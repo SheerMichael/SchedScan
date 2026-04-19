@@ -12,6 +12,10 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
+import DateTimePicker, {
+  DateTimePickerAndroid,
+  DateTimePickerEvent,
+} from "@react-native-community/datetimepicker";
 import { router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import Svg, { Path } from "react-native-svg";
@@ -46,7 +50,6 @@ import {
   getDueDatePresets,
   getSuggestedDueDateForUrgency,
   getUrgencyHint,
-  parseCustomDueDateTime,
   requiresDueDate,
   toDueDateISOString,
 } from "../../utils/taskDueDate";
@@ -109,8 +112,8 @@ export default function FacultyDashboard() {
   const [newTaskUrgency, setNewTaskUrgency] = useState<TaskUrgency>('medium');
   const [newTaskDueDate, setNewTaskDueDate] = useState<string | null>(null);
   const [newTaskDuePreset, setNewTaskDuePreset] = useState<DueDatePresetKey | null>(null);
-  const [newTaskCustomDate, setNewTaskCustomDate] = useState<string>('');
-  const [newTaskCustomTime, setNewTaskCustomTime] = useState<string>('');
+  const [showTaskDuePicker, setShowTaskDuePicker] = useState(false);
+  const [taskDuePickerMode, setTaskDuePickerMode] = useState<'date' | 'time'>('date');
   const [isAddingTask, setIsAddingTask] = useState(false);
   const [showTaskComposer, setShowTaskComposer] = useState(false);
 
@@ -362,8 +365,7 @@ export default function FacultyDashboard() {
       setNewTaskUrgency('medium');
       setNewTaskDueDate(null);
       setNewTaskDuePreset(null);
-      setNewTaskCustomDate('');
-      setNewTaskCustomTime('');
+      setShowTaskDuePicker(false);
       setSelectedFiles([]);
       setShowTaskComposer(false);
     } catch {
@@ -628,8 +630,7 @@ export default function FacultyDashboard() {
   const clearDueDate = () => {
     setNewTaskDueDate(null);
     setNewTaskDuePreset(null);
-    setNewTaskCustomDate('');
-    setNewTaskCustomTime('');
+    setShowTaskDuePicker(false);
   };
 
   const handleUrgencyChange = (urgency: TaskUrgency) => {
@@ -643,14 +644,47 @@ export default function FacultyDashboard() {
     }
   };
 
-  const applyCustomDueDate = () => {
-    const parsed = parseCustomDueDateTime(newTaskCustomDate, newTaskCustomTime);
-    if (!parsed.isoDate) {
-      Alert.alert("Invalid Date/Time", parsed.error || "Please enter a valid date and time.");
+  const openTaskDuePicker = (mode: 'date' | 'time') => {
+    if (Platform.OS === 'android') {
+      const baseDate = newTaskDueDate ? new Date(newTaskDueDate) : new Date();
+      DateTimePickerAndroid.open({
+        value: baseDate,
+        mode,
+        is24Hour: false,
+        display: 'default',
+        onChange: (event, selectedDate) => {
+          if (!selectedDate || event.type !== 'set') return;
+          const nextDate = newTaskDueDate ? new Date(newTaskDueDate) : new Date();
+          if (mode === 'date') {
+            nextDate.setFullYear(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
+          } else {
+            nextDate.setHours(selectedDate.getHours(), selectedDate.getMinutes(), 0, 0);
+          }
+          setNewTaskDueDate(toDueDateISOString(nextDate));
+          setNewTaskDuePreset(null);
+        },
+      });
       return;
     }
 
-    setNewTaskDueDate(parsed.isoDate);
+    setTaskDuePickerMode(mode);
+    setShowTaskDuePicker(true);
+  };
+
+  const handleTaskDuePickerChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
+    if (!selectedDate || event.type === 'dismissed') {
+      return;
+    }
+
+    const baseDate = newTaskDueDate ? new Date(newTaskDueDate) : new Date();
+
+    if (taskDuePickerMode === 'date') {
+      baseDate.setFullYear(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
+    } else {
+      baseDate.setHours(selectedDate.getHours(), selectedDate.getMinutes(), 0, 0);
+    }
+
+    setNewTaskDueDate(toDueDateISOString(baseDate));
     setNewTaskDuePreset(null);
   };
 
@@ -668,6 +702,7 @@ export default function FacultyDashboard() {
   const closeSubjectDetail = () => {
     if (isAddingTask || isAddingNote || isSavingEditedNote) return;
     setShowTaskComposer(false);
+    setShowTaskDuePicker(false);
     setShowNoteComposer(false);
     setEditingNoteId(null);
     setEditingNoteText("");
@@ -924,7 +959,10 @@ export default function FacultyDashboard() {
             <View>
               <View className="flex-row mb-4">
                 <TouchableOpacity
-                  onPress={() => setShowTaskComposer(true)}
+                  onPress={() => {
+                    setShowTaskDuePicker(false);
+                    setShowTaskComposer(true);
+                  }}
                   className="flex-1 bg-white border border-gray-200 rounded-xl px-4 py-3 mr-2"
                   activeOpacity={0.7}
                 >
@@ -1244,7 +1282,11 @@ export default function FacultyDashboard() {
         animationType="slide"
         transparent
         visible={showTaskComposer}
-        onRequestClose={() => !isAddingTask && setShowTaskComposer(false)}
+        onRequestClose={() => {
+          if (isAddingTask) return;
+          setShowTaskDuePicker(false);
+          setShowTaskComposer(false);
+        }}
       >
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -1255,7 +1297,11 @@ export default function FacultyDashboard() {
             <View className="flex-row items-center justify-between mb-1">
               <Text className="text-2xl font-bold text-gray-900">Add Class Task</Text>
               <TouchableOpacity
-                onPress={() => !isAddingTask && setShowTaskComposer(false)}
+                onPress={() => {
+                  if (isAddingTask) return;
+                  setShowTaskDuePicker(false);
+                  setShowTaskComposer(false);
+                }}
                 className="bg-gray-100 px-3 py-1.5 rounded-full"
                 disabled={isAddingTask}
               >
@@ -1315,31 +1361,47 @@ export default function FacultyDashboard() {
                 </TouchableOpacity>
               </View>
 
-              <View className="flex-row items-center mb-2">
-                <TextInput
-                  value={newTaskCustomDate}
-                  onChangeText={setNewTaskCustomDate}
-                  placeholder="DATE"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  className="flex-1 bg-white border border-gray-300 rounded-xl px-3 py-3 mr-2 text-sm"
-                />
-                <TextInput
-                  value={newTaskCustomTime}
-                  onChangeText={setNewTaskCustomTime}
-                  placeholder="TIME"
-                  keyboardType="numbers-and-punctuation"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  className="w-28 bg-white border border-gray-300 rounded-xl px-3 py-3 mr-2 text-sm"
-                />
+              <View className="flex-row mb-3">
                 <TouchableOpacity
-                  onPress={applyCustomDueDate}
-                  className="bg-orange-500 px-4 py-3 rounded-xl"
+                  onPress={() => openTaskDuePicker('date')}
+                  className="flex-1 bg-white border border-gray-300 rounded-xl py-2.5 px-3 mr-2"
                 >
-                  <Text className="text-white text-xs font-semibold">Set</Text>
+                  <Text className="text-[11px] font-semibold uppercase text-gray-500 mb-0.5">Date</Text>
+                  <Text className="text-sm text-gray-800">
+                    {newTaskDueDate ? new Date(newTaskDueDate).toLocaleDateString() : 'Select date'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => openTaskDuePicker('time')}
+                  className="flex-1 bg-white border border-gray-300 rounded-xl py-2.5 px-3"
+                >
+                  <Text className="text-[11px] font-semibold uppercase text-gray-500 mb-0.5">Time</Text>
+                  <Text className="text-sm text-gray-800">
+                    {newTaskDueDate
+                      ? new Date(newTaskDueDate).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                      : 'Select time'}
+                  </Text>
                 </TouchableOpacity>
               </View>
+
+              {showTaskDuePicker && (
+                <View className="bg-orange-50 border border-orange-200 rounded-xl p-3 mb-3">
+                  <DateTimePicker
+                    value={newTaskDueDate ? new Date(newTaskDueDate) : new Date()}
+                    mode={taskDuePickerMode}
+                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                    onChange={handleTaskDuePickerChange}
+                  />
+                  {Platform.OS === 'ios' && (
+                    <TouchableOpacity
+                      onPress={() => setShowTaskDuePicker(false)}
+                      className="bg-orange-500 py-2.5 rounded-lg mt-2 items-center"
+                    >
+                      <Text className="text-white text-xs font-semibold">Done</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
 
               <View className="bg-orange-50 border border-orange-100 rounded-xl p-3 mb-3">
                 <Text className="text-[11px] text-gray-600">Selected deadline</Text>
