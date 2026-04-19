@@ -244,6 +244,9 @@ const UserProfile = () => {
                                 {user?.first_name} {user?.last_name}
                             </Text>
                             <Text className="text-white">{user?.email}</Text>
+                            <Text className="text-white/90 mt-1">
+                                Student Number: {user?.student_number || 'Not set'}
+                            </Text>
                         </View>
                     </View>
 

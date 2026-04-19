@@ -885,6 +885,34 @@ export default function Scanner() {
     }
   };
 
+  const handleConfirmStudentNumberPress = () => {
+    const trimmed = studentNumberInput.trim();
+    if (!STUDENT_NUMBER_REGEX.test(trimmed)) {
+      setStudentNumberError('Use format YYYY-NNNNN (e.g., 2022-01191)');
+      return;
+    }
+
+    Alert.alert(
+      'Confirm Student Number',
+      `You entered ${trimmed}. This cannot be changed later. Continue?`,
+      [
+        {
+          text: 'Edit',
+          style: 'cancel',
+        },
+        {
+          text: 'Confirm',
+          style: 'destructive',
+          onPress: () => {
+            handleSaveStudentNumber().catch((error) => {
+              console.error('Failed to save confirmed student number:', error);
+            });
+          },
+        },
+      ]
+    );
+  };
+
   const handleDocumentUpload = async () => {
     if (!selectedRole) { Alert.alert('Error', 'Please select a role first'); return; }
     if (!(await checkRateLimit())) return;
@@ -1802,7 +1830,7 @@ export default function Scanner() {
               className={`rounded-xl py-4 items-center flex-row justify-center mb-3 ${
                 studentNumberSaving ? 'bg-gray-300' : 'bg-primary-900'
               }`}
-              onPress={handleSaveStudentNumber}
+              onPress={handleConfirmStudentNumberPress}
               disabled={studentNumberSaving}
             >
               {studentNumberSaving ? (
