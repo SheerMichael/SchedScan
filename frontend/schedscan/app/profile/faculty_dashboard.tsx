@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -9,6 +9,8 @@ import {
   RefreshControl,
   TextInput,
   Modal,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -37,6 +39,7 @@ import {
   ClassEnrollment,
   TaskUrgency,
 } from "../../services/facultyTaskService";
+import { noteService, Note } from "../../services/noteService";
 import { useFileDownload } from "../../hooks/useFileDownload";
 import {
   formatDueDatePreview,
@@ -109,6 +112,17 @@ export default function FacultyDashboard() {
   const [newTaskCustomDate, setNewTaskCustomDate] = useState<string>('');
   const [newTaskCustomTime, setNewTaskCustomTime] = useState<string>('');
   const [isAddingTask, setIsAddingTask] = useState(false);
+  const [showTaskComposer, setShowTaskComposer] = useState(false);
+
+  // Subject notes
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [isNotesLoading, setIsNotesLoading] = useState(false);
+  const [newNoteText, setNewNoteText] = useState("");
+  const [showNoteComposer, setShowNoteComposer] = useState(false);
+  const [isAddingNote, setIsAddingNote] = useState(false);
+  const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
+  const [editingNoteText, setEditingNoteText] = useState("");
+  const [isSavingEditedNote, setIsSavingEditedNote] = useState(false);
 
   // Enrolled students for selected subject
   const [enrolledStudents, setEnrolledStudents] = useState<ClassEnrollment[]>([]);
@@ -236,32 +250,38 @@ export default function FacultyDashboard() {
     async (subject: SubjectInfo, force = false) => {
       setIsTasksLoading(true);
       setIsStudentsLoading(true);
+      setIsNotesLoading(true);
       try {
         const variantCodes = Array.from(new Set(subject.subject_codes)).filter(Boolean);
 
-        const [tasksResponses, studentsResponses] = await Promise.all([
+        const [tasksResponses, studentsResponses, notesResponses] = await Promise.all([
           Promise.all(variantCodes.map((code) => facultyTaskService.getFacultyTasks(code))),
           Promise.all(variantCodes.map((code) => facultyTaskService.getEnrolledStudents(code))),
+          Promise.all(variantCodes.map((code) => noteService.getNotes(code, user?.id))),
         ]);
 
         const mergedTasks = tasksResponses.flatMap((resp) =>
           Array.isArray(resp) ? resp : (resp as any).results ?? []
         );
         const mergedStudents = studentsResponses.flatMap((resp) => resp.enrollments || []);
+        const mergedNotes = notesResponses.flatMap((resp) => resp || []);
 
         const dedupedTasks = Array.from(new Map(mergedTasks.map((task) => [task.id, task])).values());
         const dedupedStudents = Array.from(new Map(mergedStudents.map((enrollment) => [enrollment.id, enrollment])).values());
+        const dedupedNotes = Array.from(new Map(mergedNotes.map((note) => [note.id, note])).values());
 
         setFacultyTasks(dedupedTasks);
         setEnrolledStudents(dedupedStudents);
+        setNotes(dedupedNotes);
       } catch (err) {
         console.error("Error loading subject detail:", err);
       } finally {
         setIsTasksLoading(false);
         setIsStudentsLoading(false);
+        setIsNotesLoading(false);
       }
     },
-    []
+    [user?.id]
   );
 
   const onRefresh = useCallback(async () => {
@@ -277,6 +297,10 @@ export default function FacultyDashboard() {
     (sub: SubjectInfo) => {
       setSelectedSubject(sub);
       setActiveTab("tasks");
+      setShowTaskComposer(false);
+      setShowNoteComposer(false);
+      setEditingNoteId(null);
+      setEditingNoteText("");
       loadSubjectDetail(sub);
     },
     [loadSubjectDetail]
@@ -341,6 +365,7 @@ export default function FacultyDashboard() {
       setNewTaskCustomDate('');
       setNewTaskCustomTime('');
       setSelectedFiles([]);
+      setShowTaskComposer(false);
     } catch {
       Alert.alert("Error", "Failed to add task.");
     } finally {
@@ -409,6 +434,123 @@ export default function FacultyDashboard() {
           } catch {
             Alert.alert("Error", "Failed to delete task.");
             if (selectedSubject) loadSubjectDetail(selectedSubject);
+          }
+        },
+      },
+    ]);
+  };
+
+  const handleAddNote = async () => {
+    if (!newNoteText.trim() || !selectedSubject) return;
+
+    try {
+      setIsAddingNote(true);
+      const createdNote = await noteService.createNote(
+        {
+          subject_code: selectedSubject.subject_code,
+          text: newNoteText.trim(),
+        },
+        user?.id
+      );
+      setNotes((prev) => [createdNote, ...prev]);
+      setNewNoteText("");
+      setShowNoteComposer(false);
+    } catch (error) {
+      console.error("Error saving note:", error);
+      Alert.alert("Error", "Failed to save note.");
+    } finally {
+      setIsAddingNote(false);
+    }
+  };
+
+  const handleStartEditNote = (note: Note) => {
+    setEditingNoteId(note.id);
+    setEditingNoteText(note.text);
+  };
+
+  const handleCancelEditNote = () => {
+    if (isSavingEditedNote) return;
+    setEditingNoteId(null);
+    setEditingNoteText("");
+  };
+
+  const handleSaveEditedNote = async (note: Note) => {
+    if (!selectedSubject) return;
+    const nextText = editingNoteText.trim();
+
+    if (!nextText || nextText === note.text.trim()) {
+      handleCancelEditNote();
+      return;
+    }
+
+    try {
+      setIsSavingEditedNote(true);
+      const updated = await noteService.updateNote(
+        note.id,
+        selectedSubject.subject_code,
+        { text: nextText },
+        user?.id
+      );
+      setNotes((prev) => prev.map((item) => (item.id === note.id ? updated : item)));
+      setEditingNoteId(null);
+      setEditingNoteText("");
+    } catch (error) {
+      console.error("Error updating note:", error);
+      Alert.alert("Error", "Failed to update note.");
+    } finally {
+      setIsSavingEditedNote(false);
+    }
+  };
+
+  const handleTogglePinNote = async (note: Note) => {
+    if (!selectedSubject) return;
+
+    const nextPinned = !note.is_pinned;
+    setNotes((prev) =>
+      prev.map((item) =>
+        item.id === note.id ? { ...item, is_pinned: nextPinned } : item
+      )
+    );
+
+    try {
+      const updated = await noteService.updateNote(
+        note.id,
+        selectedSubject.subject_code,
+        { is_pinned: nextPinned },
+        user?.id
+      );
+      setNotes((prev) => prev.map((item) => (item.id === note.id ? updated : item)));
+    } catch (error) {
+      console.error("Error pinning note:", error);
+      setNotes((prev) =>
+        prev.map((item) =>
+          item.id === note.id ? { ...item, is_pinned: note.is_pinned } : item
+        )
+      );
+      Alert.alert("Error", "Failed to update note favorite.");
+    }
+  };
+
+  const handleDeleteNote = (note: Note) => {
+    if (!selectedSubject) return;
+
+    Alert.alert("Delete Note", "Delete this note?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            setNotes((prev) => prev.filter((item) => item.id !== note.id));
+            if (editingNoteId === note.id) {
+              setEditingNoteId(null);
+              setEditingNoteText("");
+            }
+            await noteService.deleteNote(note.id, selectedSubject.subject_code, user?.id);
+          } catch (error) {
+            console.error("Error deleting note:", error);
+            Alert.alert("Error", "Failed to delete note.");
+            loadSubjectDetail(selectedSubject);
           }
         },
       },
@@ -510,6 +652,26 @@ export default function FacultyDashboard() {
 
     setNewTaskDueDate(parsed.isoDate);
     setNewTaskDuePreset(null);
+  };
+
+  const sortedNotes = useMemo(
+    () =>
+      [...notes].sort((a, b) => {
+        if (a.is_pinned !== b.is_pinned) {
+          return a.is_pinned ? -1 : 1;
+        }
+        return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+      }),
+    [notes]
+  );
+
+  const closeSubjectDetail = () => {
+    if (isAddingTask || isAddingNote || isSavingEditedNote) return;
+    setShowTaskComposer(false);
+    setShowNoteComposer(false);
+    setEditingNoteId(null);
+    setEditingNoteText("");
+    setSelectedSubject(null);
   };
 
   // ============================================
@@ -662,7 +824,7 @@ export default function FacultyDashboard() {
           {/* Header */}
           <View className="flex-row items-center mb-4">
             <TouchableOpacity
-              onPress={() => setSelectedSubject(null)}
+              onPress={closeSubjectDetail}
               className="mr-3"
             >
               <LeftArrow size={28} />
@@ -760,6 +922,29 @@ export default function FacultyDashboard() {
           {/* ---- Tasks Tab ---- */}
           {activeTab === "tasks" && (
             <View>
+              <View className="flex-row mb-4">
+                <TouchableOpacity
+                  onPress={() => setShowTaskComposer(true)}
+                  className="flex-1 bg-white border border-gray-200 rounded-xl px-4 py-3 mr-2"
+                  activeOpacity={0.7}
+                >
+                  <Text className="text-black font-semibold">New Class Task</Text>
+                  <Text className="text-xs text-gray-500 mt-1">
+                    Assign work with urgency and deadline
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setShowNoteComposer(true)}
+                  className="flex-1 bg-white border border-gray-200 rounded-xl px-4 py-3 ml-2"
+                  activeOpacity={0.7}
+                >
+                  <Text className="text-black font-semibold">New Note</Text>
+                  <Text className="text-xs text-gray-500 mt-1">
+                    Keep class reminders in one place
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
               {isTasksLoading ? (
                 <View className="py-8 items-center">
                   <ActivityIndicator size="small" color="#f97316" />
@@ -769,7 +954,7 @@ export default function FacultyDashboard() {
                 <View className="py-8 items-center">
                   <ClipboardList size={40} color="#d1d5db" />
                   <Text className="text-gray-400 mt-3 text-center">
-                    No tasks yet.{"\n"}Create one for your students below.
+                    No tasks yet.{"\n"}Tap New Class Task to create one.
                   </Text>
                 </View>
               ) : (
@@ -847,129 +1032,110 @@ export default function FacultyDashboard() {
                 ))
               )}
 
-              {/* Add task input */}
-              <View className="mt-4 mb-6">
-                <Text className="font-bold text-base mb-2">Add Class Task</Text>
-                <View className="flex-row flex-wrap mb-2">
-                  {urgencyChoices.map((urgency) => (
-                    <TouchableOpacity
-                      key={`dash-urgency-${urgency}`}
-                      onPress={() => handleUrgencyChange(urgency)}
-                      className={`mr-2 mb-2 px-3 py-1.5 rounded-full border ${newTaskUrgency === urgency ? 'border-black bg-black' : 'border-gray-300 bg-white'}`}
-                    >
-                      <Text className={`text-xs font-semibold uppercase ${newTaskUrgency === urgency ? 'text-white' : 'text-gray-700'}`}>
-                        {urgency}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <Text className="text-xs font-semibold text-gray-600 mb-1">Due Date</Text>
-                <View className="flex-row flex-wrap mb-2">
-                  {dueDatePresets.map((preset) => (
-                    <TouchableOpacity
-                      key={`dash-due-${preset.key}`}
-                      onPress={() => applyDuePreset(preset)}
-                      className={`mr-2 mb-2 px-3 py-1.5 rounded-full border ${newTaskDuePreset === preset.key ? 'border-orange-500 bg-orange-500' : 'border-gray-300 bg-white'}`}
-                    >
-                      <Text className={`text-xs font-semibold ${newTaskDuePreset === preset.key ? 'text-white' : 'text-gray-700'}`}>
-                        {preset.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                  <TouchableOpacity
-                    onPress={clearDueDate}
-                    className="mr-2 mb-2 px-3 py-1.5 rounded-full border border-gray-300 bg-white"
-                  >
-                    <Text className="text-xs font-semibold text-gray-700">No Due Date</Text>
-                  </TouchableOpacity>
-                </View>
-                <View className="flex-row items-center mb-2">
-                  <TextInput
-                    value={newTaskCustomDate}
-                    onChangeText={setNewTaskCustomDate}
-                    placeholder="YYYY-MM-DD"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    className="flex-1 bg-white border border-gray-300 rounded-lg px-3 py-2 mr-2 text-xs"
-                  />
-                  <TextInput
-                    value={newTaskCustomTime}
-                    onChangeText={setNewTaskCustomTime}
-                    placeholder="HH:mm"
-                    keyboardType="numbers-and-punctuation"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    className="w-24 bg-white border border-gray-300 rounded-lg px-3 py-2 mr-2 text-xs"
-                  />
-                  <TouchableOpacity
-                    onPress={applyCustomDueDate}
-                    className="bg-orange-500 px-3 py-2 rounded-lg"
-                  >
-                    <Text className="text-white text-xs font-semibold">Set</Text>
-                  </TouchableOpacity>
-                </View>
-                <Text className="text-[11px] text-gray-500 mb-1">
-                  Custom format uses your local timezone.
+              <View className="bg-white border border-gray-200 rounded-xl px-4 py-3 mt-4 mb-5">
+                <Text className="text-xs font-semibold text-gray-700">Task deadline policy</Text>
+                <Text className="text-xs text-gray-500 mt-1">
+                  High and critical tasks should include a due date so students can receive reminders.
                 </Text>
-                <Text className="text-xs text-gray-500 mb-1">
-                  Selected: {formatDueDatePreview(newTaskDueDate)}
-                </Text>
-                <Text className={`text-[11px] mb-2 ${requiresDueDate(newTaskUrgency) && !newTaskDueDate ? 'text-red-600' : 'text-gray-500'}`}>
-                  {getUrgencyHint(newTaskUrgency, newTaskDueDate)}
-                </Text>
-                <View className="bg-white p-3 rounded-xl border border-gray-200">
-                  <View className="flex-row items-center">
-                    <TextInput
-                      value={newTaskText}
-                      onChangeText={setNewTaskText}
-                      placeholder="Enter task for students..."
-                      className="flex-1 text-base"
-                      editable={!isAddingTask}
-                      onSubmitEditing={handleAddTask}
-                      returnKeyType="done"
-                    />
-                    <TouchableOpacity
-                      onPress={handlePickFile}
-                      disabled={isAddingTask}
-                      className="p-2 mr-1"
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                      <Paperclip size={20} color={selectedFiles.length > 0 ? "#3b82f6" : "#9ca3af"} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={handleAddTask}
-                      disabled={isAddingTask || !newTaskText.trim()}
-                      className={`px-4 py-2 rounded-xl ${isAddingTask || !newTaskText.trim()
-                        ? "bg-gray-300"
-                        : "bg-orange-500"
-                        }`}
-                    >
-                      {isAddingTask ? (
-                        <ActivityIndicator size="small" color="#fff" />
-                      ) : (
-                        <Text className="text-white font-bold">Add</Text>
-                      )}
-                    </TouchableOpacity>
+              </View>
+
+              <View className="mb-6">
+                <View className="flex-row items-center justify-between mb-2">
+                  <Text className="font-bold text-base text-gray-900">Class Notes</Text>
+                  <View className="px-2 py-0.5 rounded-full bg-gray-100">
+                    <Text className="text-xs font-semibold text-gray-600">{sortedNotes.length}</Text>
                   </View>
-                  {selectedFiles.length > 0 && (
-                    <View className="mt-2">
-                      {selectedFiles.map((f, idx) => (
-                        <View key={idx} className="flex-row items-center bg-blue-50 px-2 py-1.5 rounded-md mb-1">
-                          <FileText size={14} color="#3b82f6" />
-                          <Text className="text-blue-600 text-xs ml-1.5 flex-1" numberOfLines={1}>
-                            {f.name}
-                          </Text>
+                </View>
+
+                {isNotesLoading ? (
+                  <View className="py-5 items-center">
+                    <ActivityIndicator size="small" color="#f97316" />
+                    <Text className="text-gray-500 mt-2 text-xs">Loading notes...</Text>
+                  </View>
+                ) : sortedNotes.length === 0 ? (
+                  <View className="bg-white border border-dashed border-gray-300 rounded-xl p-4">
+                    <Text className="text-gray-500 text-sm text-center">
+                      No notes yet. Use New Note for quick reminders.
+                    </Text>
+                  </View>
+                ) : (
+                  sortedNotes.map((note) => (
+                    <View
+                      key={`dash-note-${note.id}`}
+                      className="bg-white border border-gray-200 rounded-xl p-3 mb-2"
+                    >
+                      <View className="flex-row items-start justify-between">
+                        <View className="flex-1 mr-3">
+                          <View className="flex-row items-center mb-1.5">
+                            {note.is_pinned && (
+                              <View className="bg-orange-50 px-2 py-0.5 rounded-full mr-2">
+                                <Text className="text-[10px] uppercase font-semibold text-orange-700">Pinned</Text>
+                              </View>
+                            )}
+                            <Text className="text-[11px] text-gray-500">
+                              Updated {new Date(note.updated_at).toLocaleString()}
+                            </Text>
+                          </View>
+
+                          {editingNoteId === note.id ? (
+                            <>
+                              <TextInput
+                                value={editingNoteText}
+                                onChangeText={setEditingNoteText}
+                                editable={!isSavingEditedNote}
+                                multiline
+                                textAlignVertical="top"
+                                className="border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-800 min-h-[72px]"
+                              />
+                              <View className="flex-row mt-2">
+                                <TouchableOpacity
+                                  onPress={() => handleSaveEditedNote(note)}
+                                  disabled={isSavingEditedNote || !editingNoteText.trim()}
+                                  className={`px-3 py-2 rounded-lg mr-2 ${isSavingEditedNote || !editingNoteText.trim() ? 'bg-gray-300' : 'bg-black'}`}
+                                >
+                                  <Text className="text-white text-xs font-semibold">Save</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  onPress={handleCancelEditNote}
+                                  disabled={isSavingEditedNote}
+                                  className="px-3 py-2 rounded-lg bg-gray-100"
+                                >
+                                  <Text className="text-gray-700 text-xs font-semibold">Cancel</Text>
+                                </TouchableOpacity>
+                              </View>
+                            </>
+                          ) : (
+                            <TouchableOpacity
+                              onPress={() => handleStartEditNote(note)}
+                              activeOpacity={0.7}
+                            >
+                              <Text className="text-gray-800 text-sm leading-5">{note.text}</Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+
+                        <View className="items-end">
                           <TouchableOpacity
-                            onPress={() => setSelectedFiles((prev) => prev.filter((_, i) => i !== idx))}
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            onPress={() => handleTogglePinNote(note)}
+                            className="px-2.5 py-1 rounded-full bg-gray-100 mb-1"
+                            disabled={isSavingEditedNote}
                           >
-                            <X size={14} color="#6b7280" />
+                            <Text className="text-[11px] font-semibold text-gray-700">
+                              {note.is_pinned ? "Unpin" : "Pin"}
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => handleDeleteNote(note)}
+                            className="px-2.5 py-1 rounded-full bg-red-50"
+                            disabled={isSavingEditedNote}
+                          >
+                            <Text className="text-[11px] font-semibold text-red-600">Delete</Text>
                           </TouchableOpacity>
                         </View>
-                      ))}
+                      </View>
                     </View>
-                  )}
-                </View>
+                  ))
+                )}
               </View>
             </View>
           )}
@@ -1072,6 +1238,218 @@ export default function FacultyDashboard() {
         {/* Bottom spacing */}
         <View className="h-10" />
       </ScrollView>
+
+      {/* ---- Create Task Modal ---- */}
+      <Modal
+        animationType="slide"
+        transparent
+        visible={showTaskComposer}
+        onRequestClose={() => !isAddingTask && setShowTaskComposer(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          className="flex-1 bg-black/35 justify-end"
+        >
+          <View className="bg-white rounded-t-3xl px-5 pt-3 pb-6 max-h-[88%]">
+            <View className="w-12 h-1.5 rounded-full bg-gray-300 self-center mb-4" />
+            <View className="flex-row items-center justify-between mb-1">
+              <Text className="text-2xl font-bold text-gray-900">Add Class Task</Text>
+              <TouchableOpacity
+                onPress={() => !isAddingTask && setShowTaskComposer(false)}
+                className="bg-gray-100 px-3 py-1.5 rounded-full"
+                disabled={isAddingTask}
+              >
+                <Text className="text-gray-600 font-semibold">Close</Text>
+              </TouchableOpacity>
+            </View>
+            <Text className="text-gray-500 text-sm mb-4">
+              Keep assignments clear with urgency, due date, and a concise description.
+            </Text>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <View className="bg-orange-50 border border-orange-100 rounded-2xl p-3 mb-4">
+                <TextInput
+                  value={newTaskText}
+                  onChangeText={setNewTaskText}
+                  placeholder="Enter task for students..."
+                  multiline
+                  textAlignVertical="top"
+                  editable={!isAddingTask}
+                  className="text-base text-gray-900 min-h-[84px]"
+                />
+              </View>
+
+              <Text className="text-xs font-semibold text-gray-600 mb-2">PRIORITY</Text>
+              <View className="flex-row flex-wrap mb-4">
+                {urgencyChoices.map((urgency) => (
+                  <TouchableOpacity
+                    key={`dash-modal-urgency-${urgency}`}
+                    onPress={() => handleUrgencyChange(urgency)}
+                    className={`mr-2 mb-2 px-4 py-2 rounded-full border ${newTaskUrgency === urgency ? 'border-orange-500 bg-orange-500' : 'border-gray-300 bg-white'}`}
+                  >
+                    <Text className={`text-xs font-semibold uppercase ${newTaskUrgency === urgency ? 'text-white' : 'text-gray-700'}`}>
+                      {urgency}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text className="text-xs font-semibold text-gray-600 mb-2">DUE DATE</Text>
+              <View className="flex-row flex-wrap mb-2">
+                {dueDatePresets.map((preset) => (
+                  <TouchableOpacity
+                    key={`dash-modal-due-${preset.key}`}
+                    onPress={() => applyDuePreset(preset)}
+                    className={`mr-2 mb-2 px-3 py-2 rounded-full border ${newTaskDuePreset === preset.key ? 'border-orange-500 bg-orange-500' : 'border-gray-300 bg-white'}`}
+                  >
+                    <Text className={`text-xs font-semibold ${newTaskDuePreset === preset.key ? 'text-white' : 'text-gray-700'}`}>
+                      {preset.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity
+                  onPress={clearDueDate}
+                  className="mr-2 mb-2 px-3 py-2 rounded-full border border-gray-300 bg-white"
+                >
+                  <Text className="text-xs font-semibold text-gray-700">No Due Date</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View className="flex-row items-center mb-2">
+                <TextInput
+                  value={newTaskCustomDate}
+                  onChangeText={setNewTaskCustomDate}
+                  placeholder="DATE"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  className="flex-1 bg-white border border-gray-300 rounded-xl px-3 py-3 mr-2 text-sm"
+                />
+                <TextInput
+                  value={newTaskCustomTime}
+                  onChangeText={setNewTaskCustomTime}
+                  placeholder="TIME"
+                  keyboardType="numbers-and-punctuation"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  className="w-28 bg-white border border-gray-300 rounded-xl px-3 py-3 mr-2 text-sm"
+                />
+                <TouchableOpacity
+                  onPress={applyCustomDueDate}
+                  className="bg-orange-500 px-4 py-3 rounded-xl"
+                >
+                  <Text className="text-white text-xs font-semibold">Set</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View className="bg-orange-50 border border-orange-100 rounded-xl p-3 mb-3">
+                <Text className="text-[11px] text-gray-600">Selected deadline</Text>
+                <Text className="text-base font-semibold text-gray-900 mt-0.5">
+                  {formatDueDatePreview(newTaskDueDate)}
+                </Text>
+                <Text className={`text-xs mt-1 ${requiresDueDate(newTaskUrgency) && !newTaskDueDate ? 'text-red-600' : 'text-gray-600'}`}>
+                  {getUrgencyHint(newTaskUrgency, newTaskDueDate)}
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                onPress={handlePickFile}
+                disabled={isAddingTask}
+                className="flex-row items-center justify-center border border-gray-300 rounded-xl py-3 mb-2"
+              >
+                <Paperclip size={16} color={selectedFiles.length > 0 ? "#3b82f6" : "#6b7280"} />
+                <Text className="ml-2 text-sm font-semibold text-gray-700">
+                  {selectedFiles.length > 0 ? `Attachments (${selectedFiles.length})` : "Attach files"}
+                </Text>
+              </TouchableOpacity>
+
+              {selectedFiles.length > 0 && (
+                <View className="mb-3">
+                  {selectedFiles.map((f, idx) => (
+                    <View key={idx} className="flex-row items-center bg-blue-50 px-2 py-1.5 rounded-md mb-1">
+                      <FileText size={14} color="#3b82f6" />
+                      <Text className="text-blue-600 text-xs ml-1.5 flex-1" numberOfLines={1}>
+                        {f.name}
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => setSelectedFiles((prev) => prev.filter((_, i) => i !== idx))}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <X size={14} color="#6b7280" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              <TouchableOpacity
+                onPress={handleAddTask}
+                disabled={isAddingTask || !newTaskText.trim()}
+                className={`py-4 rounded-2xl items-center ${isAddingTask || !newTaskText.trim() ? "bg-gray-300" : "bg-orange-500"}`}
+              >
+                {isAddingTask ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text className="text-white font-bold text-lg">Create Class Task</Text>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ---- Create Note Modal ---- */}
+      <Modal
+        animationType="slide"
+        transparent
+        visible={showNoteComposer}
+        onRequestClose={() => !isAddingNote && setShowNoteComposer(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          className="flex-1 bg-black/35 justify-end"
+        >
+          <View className="bg-white rounded-t-3xl px-5 pt-3 pb-6">
+            <View className="w-12 h-1.5 rounded-full bg-gray-300 self-center mb-4" />
+            <View className="flex-row items-center justify-between mb-1">
+              <Text className="text-2xl font-bold text-gray-900">Add Note</Text>
+              <TouchableOpacity
+                onPress={() => !isAddingNote && setShowNoteComposer(false)}
+                className="bg-gray-100 px-3 py-1.5 rounded-full"
+                disabled={isAddingNote}
+              >
+                <Text className="text-gray-600 font-semibold">Close</Text>
+              </TouchableOpacity>
+            </View>
+            <Text className="text-gray-500 text-sm mb-4">
+              Save quick reminders for this class.
+            </Text>
+
+            <View className="bg-orange-50 border border-orange-100 rounded-2xl p-3 mb-4">
+              <TextInput
+                value={newNoteText}
+                onChangeText={setNewNoteText}
+                placeholder="Type a class note..."
+                multiline
+                textAlignVertical="top"
+                editable={!isAddingNote}
+                className="text-base text-gray-900 min-h-[120px]"
+              />
+            </View>
+
+            <TouchableOpacity
+              onPress={handleAddNote}
+              disabled={isAddingNote || !newNoteText.trim()}
+              className={`py-4 rounded-2xl items-center ${isAddingNote || !newNoteText.trim() ? "bg-gray-300" : "bg-black"}`}
+            >
+              {isAddingNote ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text className="text-white font-bold text-lg">Save Note</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       {/* ---- Task Stats Modal ---- */}
       <Modal
