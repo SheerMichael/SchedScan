@@ -495,6 +495,25 @@ class BaseCORUploadView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # -----------------------------------------------------------------
+        # Student COR pre-flight: require student number to be on the account
+        # before we accept any file. This is the lazy-verification gate —
+        # the frontend will prompt the user to set their number and retry.
+        # Faculty uploads are exempt from this check.
+        # -----------------------------------------------------------------
+        if self.upload_type == 'student' and not getattr(request.user, 'student_number', None):
+            return Response(
+                {
+                    "error": "Student number required before uploading a student COR.",
+                    "code": "STUDENT_NUMBER_REQUIRED",
+                    "message": (
+                        "Please set your student number first. "
+                        "It must match the number printed on your COR."
+                    ),
+                },
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+
         temp_file_path = None
         idempotency_context = None
         confirm_old_schedule = _coerce_bool(request.data.get('confirm_old_schedule'))

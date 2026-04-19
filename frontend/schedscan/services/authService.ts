@@ -214,5 +214,22 @@ export const authService = {
       throw error;
     }
   },
-};
 
+  /**
+   * Set the authenticated user's student number (one-time, immutable after set).
+   * Persists the updated user to SecureStore so callers can use it immediately.
+   */
+  setStudentNumber: async (studentNumber: string): Promise<User> => {
+    try {
+      const response = await api.patch('/auth/student-number/', {
+        student_number: studentNumber,
+      });
+      const updatedUser: User = response.data.user;
+      await SecureStore.setItemAsync('user', JSON.stringify(updatedUser));
+      return updatedUser;
+    } catch (error: any) {
+      console.error('Set student number error:', error.response?.data || error.message);
+      throw error;
+    }
+  },
+};

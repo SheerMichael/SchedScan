@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
+import re
 
 from ..serializers import (
     RegisterSerializer,
@@ -185,3 +186,74 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
 
     def get_object(self):
         return self.request.user
+
+
+_STUDENT_NUMBER_REGEX = re.compile(r'^\d{4}-\d{4,6}$')
+
+
+class SetStudentNumberView(APIView):
+    """
+    One-time endpoint to set an authenticated user's student number.
+
+    PATCH /api/auth/student-number/
+    Headers: Authorization: Bearer <access_token>
+    Request body: { "student_number": "2022-01191" }
+
+    Rules:
+    - Number must match format YYYY-NNNNN.
+    - Number must be unique across all users.
+    - Number is immutable once set (prevents gaming COR ownership checks).
+      If the user already has a student number, this endpoint returns 409.
+
+    Response (200): { "user": <UserSerializer data> }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request):
+        user = request.user
+
+        # Immutability guard
+        if user.student_number:
+            return Response(
+                {
+                    "error": "Student number is already set and cannot be changed.",
+                    "code": "STUDENT_NUMBER_ALREADY_SET",
+                    "student_number": user.student_number,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        student_number = str(request.data.get('student_number', '') or '').strip()
+
+        if not student_number:
+            return Response(
+                {"error": "student_number is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not _STUDENT_NUMBER_REGEX.match(student_number):
+            return Response(
+                {
+                    "error": "Invalid student number format. Use YYYY-NNNNN (e.g., 2022-01191).",
+                    "code": "INVALID_FORMAT",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Uniqueness check
+        if User.objects.filter(student_number=student_number).exclude(pk=user.pk).exists():
+            return Response(
+                {
+                    "error": "This student number is already registered to another account.",
+                    "code": "STUDENT_NUMBER_TAKEN",
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        user.student_number = student_number
+        user.save(update_fields=['student_number', 'updated_at'])
+
+        return Response(
+            {"user": UserSerializer(user).data},
+            status=status.HTTP_200_OK,
+        )

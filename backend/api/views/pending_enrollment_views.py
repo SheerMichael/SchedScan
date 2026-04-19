@@ -66,15 +66,16 @@ class PendingEnrollmentListView(APIView):
         qs = (
             ClassEnrollment.objects
             .filter(student=request.user, status='pending')
-            .select_related('faculty', 'faculty__profile_picture')
+            .select_related('faculty')  # profile_picture is a FileField, not a FK
             .order_by('-enrolled_at')
         )
 
         serializer = PendingEnrollmentSerializer(
             qs, many=True, context={'request': request}
         )
+        data = serializer.data
         return Response(
-            {"count": qs.count(), "results": serializer.data},
+            {"count": len(data), "results": data},
             status=status.HTTP_200_OK,
         )
 

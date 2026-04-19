@@ -3,7 +3,8 @@ import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Svg, { Path } from 'react-native-svg';
-import { Images, Files, GraduationCap, Briefcase, ArrowRight, AlertTriangle } from "lucide-react-native";
+import { Images, Files, GraduationCap, Briefcase, ArrowRight, AlertTriangle, Info, CheckCircle2, AlertCircle } from "lucide-react-native";
+import { authService } from '../../services/authService';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import * as Notifications from 'expo-notifications';
@@ -81,7 +82,7 @@ const normalizeFailureCategory = (value: unknown): ExtractionFailureCategory => 
 
 export default function Scanner() {
   const router = useRouter();
-  const { user, activateFacultyMode, setPendingFacultyUnlock } = useAuth();
+  const { user, activateFacultyMode, setPendingFacultyUnlock, refreshUser } = useAuth();
 
   const [selectedFile, setSelectedFile] = useState<any>(null);
   const [selectedRole, setSelectedRole] = useState<'faculty' | 'student' | null>(null);
@@ -116,6 +117,14 @@ export default function Scanner() {
 
   // Faculty match modal — shown after student extraction when pending enrollments exist
   const [showFacultyMatchModal, setShowFacultyMatchModal] = useState(false);
+
+  // Student number modal — shown before first student COR upload when number is not on profile
+  const [showStudentNumberModal, setShowStudentNumberModal] = useState(false);
+  const [studentNumberInput, setStudentNumberInput] = useState('');
+  const [studentNumberSaving, setStudentNumberSaving] = useState(false);
+  const [studentNumberError, setStudentNumberError] = useState('');
+  // Pending file waiting for student number to be set before upload can proceed
+  const pendingUploadFileRef = useRef<any>(null);
 
   // --- Logic Helpers (Rate Limit, Upload, Etc) ---
 
@@ -807,8 +816,61 @@ export default function Scanner() {
     return true;
   };
 
+  const STUDENT_NUMBER_REGEX = /^\d{4}-\d{4,6}$/;
+
   const handleRoleSelection = (role: 'faculty' | 'student') => {
     setSelectedRole(role);
+    // If switching to student mode and the user has no student number yet,
+    // immediately show the student number collection modal.
+    if (role === 'student' && !user?.student_number) {
+      setStudentNumberInput('');
+      setStudentNumberError('');
+      pendingUploadFileRef.current = null; // no file pending yet, just pre-collecting
+      setShowStudentNumberModal(true);
+    }
+  };
+
+  /**
+   * Save the student number via API, refresh user context, then optionally
+   * proceed with a pending file upload.
+   */
+  const handleSaveStudentNumber = async () => {
+    const trimmed = studentNumberInput.trim();
+    if (!STUDENT_NUMBER_REGEX.test(trimmed)) {
+      setStudentNumberError('Use format YYYY-NNNNN (e.g., 2022-01191)');
+      return;
+    }
+
+    try {
+      setStudentNumberSaving(true);
+      setStudentNumberError('');
+      await authService.setStudentNumber(trimmed);
+      await refreshUser(); // sync updated user into AuthContext
+      setShowStudentNumberModal(false);
+
+      // If the modal was triggered mid-upload (STUDENT_NUMBER_REQUIRED response),
+      // resume the upload automatically now that the number is saved.
+      const pending = pendingUploadFileRef.current;
+      if (pending) {
+        pendingUploadFileRef.current = null;
+        await uploadFile(pending.file, pending.uploadType, pending.options);
+      }
+    } catch (error: any) {
+      const data = error?.response?.data || {};
+      if (data.code === 'STUDENT_NUMBER_TAKEN') {
+        setStudentNumberError('This student number is already registered to another account.');
+      } else if (data.code === 'STUDENT_NUMBER_ALREADY_SET') {
+        // Edge case: another device already set it — just dismiss and proceed
+        setShowStudentNumberModal(false);
+        await refreshUser();
+      } else if (data.code === 'INVALID_FORMAT') {
+        setStudentNumberError('Invalid format. Use YYYY-NNNNN (e.g., 2022-01191).');
+      } else {
+        setStudentNumberError('Failed to save. Please try again.');
+      }
+    } finally {
+      setStudentNumberSaving(false);
+    }
   };
 
   const handleDocumentUpload = async () => {
@@ -912,6 +974,18 @@ export default function Scanner() {
       await handleExtractionSuccess(response, uploadType, { isRetry });
     } catch (error: any) {
       const responsePayload = error?.response?.data || {};
+
+      if (responsePayload.code === 'STUDENT_NUMBER_REQUIRED') {
+        // User has no student number on profile yet — show collection modal.
+        // Store the file + options so the modal's confirm handler can retry.
+        setIsUploading(false);
+        setShowBehindScenesModal(false);
+        pendingUploadFileRef.current = { file, uploadType, options };
+        setStudentNumberInput('');
+        setStudentNumberError('');
+        setShowStudentNumberModal(true);
+        return;
+      }
 
       if (responsePayload.code === 'OLD_SCHEDULE_CONFIRM_REQUIRED' && !confirmOldSchedule) {
         setIsUploading(false);
@@ -1642,6 +1716,109 @@ export default function Scanner() {
           );
         }}
       />
+
+      {/* Student Number Collection Modal
+          Shown when a user without a student number selects Student mode or
+          tries to upload a student COR. Collects the number, saves it via
+          PATCH /api/auth/student-number/, then resumes any pending upload. */}
+      <Modal
+        visible={showStudentNumberModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          if (!studentNumberSaving) {
+            setShowStudentNumberModal(false);
+            pendingUploadFileRef.current = null;
+          }
+        }}
+      >
+        <View className="flex-1 bg-black/60 justify-end">
+          <View className="bg-white rounded-t-3xl px-6 pt-6 pb-10">
+            {/* Header */}
+            <View className="items-center mb-5">
+              <View className="bg-red-100 rounded-full p-3 mb-3">
+                <GraduationCap size={28} color="#7C1515" />
+              </View>
+              <Text className="text-xl font-bold text-gray-900">Enter Your Student Number</Text>
+              <Text className="text-sm text-gray-500 text-center mt-1">
+                Required before uploading a Student COR
+              </Text>
+            </View>
+
+            {/* Information banner */}
+            <View className="flex-row bg-amber-50 border border-amber-200 rounded-xl p-3 mb-5 items-start">
+              <Info size={16} color="#B45309" style={{ marginTop: 2 }} />
+              <View className="flex-1 ml-2">
+                <Text className="text-xs font-semibold text-amber-800 mb-1">Why do we need this?</Text>
+                <Text className="text-xs text-amber-700 leading-4">
+                  Your student number is matched against the one on your Certificate of Registration to confirm ownership. It can only be set once.
+                </Text>
+              </View>
+            </View>
+
+            {/* Input */}
+            <Text className="text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wider">Student Number</Text>
+            <TextInput
+              className={`border rounded-xl px-4 py-3 text-base text-gray-800 mb-1 ${
+                studentNumberError ? 'border-red-400 bg-red-50' : 'border-gray-200 bg-gray-50'
+              }`}
+              placeholder="e.g. 2022-01191"
+              placeholderTextColor="#9CA3AF"
+              value={studentNumberInput}
+              onChangeText={(t) => {
+                setStudentNumberInput(t);
+                if (studentNumberError) setStudentNumberError('');
+              }}
+              keyboardType="numbers-and-punctuation"
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!studentNumberSaving}
+            />
+
+            {/* Error / hint */}
+            {studentNumberError ? (
+              <View className="flex-row items-center mb-3">
+                <AlertCircle size={13} color="#DC2626" />
+                <Text className="text-xs text-red-600 ml-1">{studentNumberError}</Text>
+              </View>
+            ) : (
+              <Text className="text-xs text-gray-400 mb-3">Format: YYYY-NNNNN (e.g., 2022-01191)</Text>
+            )}
+
+            {/* Confirm */}
+            <TouchableOpacity
+              className={`rounded-xl py-4 items-center flex-row justify-center mb-3 ${
+                studentNumberSaving ? 'bg-gray-300' : 'bg-primary-900'
+              }`}
+              onPress={handleSaveStudentNumber}
+              disabled={studentNumberSaving}
+            >
+              {studentNumberSaving ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <>
+                  <CheckCircle2 size={16} color="#fff" />
+                  <Text className="text-white font-bold ml-2">Confirm &amp; Continue</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            {/* Cancel */}
+            <TouchableOpacity
+              className="py-3 items-center"
+              onPress={() => {
+                if (!studentNumberSaving) {
+                  setShowStudentNumberModal(false);
+                  pendingUploadFileRef.current = null;
+                }
+              }}
+              disabled={studentNumberSaving}
+            >
+              <Text className="text-gray-400 text-sm">Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
     <Modal
       visible={reportModal}

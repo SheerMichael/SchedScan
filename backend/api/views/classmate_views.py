@@ -11,13 +11,12 @@ Endpoints:
 
 import logging
 
-from django.db.models import F
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from ..models import ClassEnrollment, User
+from ..models import ClassEnrollment, Course, User
 from ..serializers import ClassmateSerializer, FacultyRosterStudentSerializer
 
 logger = logging.getLogger(__name__)
@@ -118,7 +117,6 @@ class StudentClassmateListView(APIView):
         )
 
         # Enrich with subject name from the faculty's courses
-        from ..models import Course
         subject_name = ''
         course = Course.objects.filter(
             user=my_enrollment.faculty,
@@ -208,7 +206,6 @@ class FacultyClassRosterView(APIView):
             pending_students, many=True, context={'request': request}
         )
 
-        from ..models import Course
         subject_name = ''
         course = Course.objects.filter(
             user=request.user, subject_code=subject_code

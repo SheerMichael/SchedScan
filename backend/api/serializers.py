@@ -127,18 +127,11 @@ class RegisterSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         """
         Validate that password and password2 match if password2 is provided.
-        Validate that student accounts provide a student number.
+        Student number is NOT required at registration — it is collected lazily
+        before the first student COR upload via PATCH /api/auth/student-number/.
         """
         if 'password2' in attrs and attrs.get('password') != attrs.get('password2'):
             raise serializers.ValidationError({"password": "Password fields didn't match."})
-        
-        # Require student_number for student accounts
-        user_type = attrs.get('user_type', 'student')
-        student_number = attrs.get('student_number')
-        if user_type == 'student' and not student_number:
-            raise serializers.ValidationError(
-                {"student_number": "Student number is required for student accounts."}
-            )
 
         return attrs
 
@@ -803,7 +796,6 @@ class PendingEnrollmentSerializer(serializers.ModelSerializer):
 
     def get_subject_name(self, obj):
         """Try to find the subject name from the faculty's courses."""
-        from .models import Course
         course = Course.objects.filter(
             user=obj.faculty,
             subject_code=obj.subject_code,

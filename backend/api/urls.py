@@ -18,6 +18,7 @@ urlpatterns = [
     # Account management
     path('auth/change-password/', views.ChangePasswordView.as_view(), name='change_password'),
     path('auth/delete-account/', views.DeleteAccountView.as_view(), name='delete_account'),
+    path('auth/student-number/', views.SetStudentNumberView.as_view(), name='set_student_number'),
     
     # Password reset
     path('auth/password-reset/request/', views.PasswordResetRequestView.as_view(), name='password_reset_request'),

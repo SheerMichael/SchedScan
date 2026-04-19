@@ -12,6 +12,7 @@ from .auth_views import (
     LoginView,
     LogoutView,
     UserProfileView,
+    SetStudentNumberView,
 )
 
 # Upload / Course views
