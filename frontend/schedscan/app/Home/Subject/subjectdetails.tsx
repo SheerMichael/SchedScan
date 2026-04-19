@@ -884,45 +884,56 @@ export default function SubjectDetails() {
   // Render
   // ============================================
   const fabTaskLabel = shouldUseFacultyTaskFlow ? addTaskLabel : 'Add Task';
-  const fabButtonColor = shouldUseFacultyTaskFlow ? '#F97316' : '#2563EB';
+  const fabButtonColor = '#111827';
   const shouldShowFab = !shouldUseFacultyTaskFlow && !showTaskComposer && !showFacultyTaskComposer && !showNoteComposer;
+  const displayTitle = title || 'Untitled Subject';
 
   return (
     <>
-      <View className='pl-8 pt-2'>
-        <TouchableOpacity onPress={handleBack}>
-          <LeftPointingArrow size={30} color="#000000" />
+      <View className='px-5 pt-3 pb-2 bg-gray-50'>
+        <TouchableOpacity
+          onPress={handleBack}
+          className="w-10 h-10 rounded-full bg-white border border-gray-200 items-center justify-center"
+        >
+          <LeftPointingArrow size={24} color="#111827" />
         </TouchableOpacity>
       </View>
 
-      <ScrollView className="flex-1 p-4" onScrollBeginDrag={() => setIsFabMenuOpen(false)}>
-        {/* Subject Title Box */}
-        <View className="w-full bg-primary-500 p-4 rounded-xl mb-4">
-          <Text className="text-white/75 mb-2">Class Title</Text>
-          <View className="bg-gray-200/65 p-4 rounded-xl">
-            <Text className="text-xl font-bold text-white">{title}</Text>
-          </View>
-        </View>
+      <ScrollView className="flex-1 bg-gray-50" onScrollBeginDrag={() => setIsFabMenuOpen(false)}>
+        <View className="px-5 pb-24">
+          {/* Subject Overview */}
+          <View className="w-full bg-white p-4 rounded-2xl mb-4 border border-gray-200">
+            <View className="flex-row items-start justify-between">
+              <View className="flex-1 pr-3">
+                <Text className="text-[11px] uppercase tracking-wider text-gray-500 mb-1">Subject</Text>
+                <Text className="text-[22px] font-semibold text-gray-900">{displayTitle}</Text>
+              </View>
+              {isClassItem && (
+                <View className="bg-gray-100 px-3 py-1.5 rounded-full">
+                  <Text className="text-xs font-semibold text-gray-700">{day || 'N/A'}</Text>
+                </View>
+              )}
+            </View>
 
-        {/* Schedule Details */}
-        <View className="bg-gray-100 p-4 rounded-xl mb-6">
-          <Text className="text-lg font-semibold text-gray-800 mb-3">Schedule Details</Text>
+            <View className="border-t border-gray-100 mt-4 pt-3">
+              <Text className="text-sm font-semibold text-gray-800 mb-2">Schedule</Text>
 
-          <View className="flex-row items-center mb-2">
-            <Text className="text-gray-500 w-20">Time:</Text>
-            <Text className="text-gray-700 font-medium">{time || "N/A"}</Text>
-          </View>
+              <View className="flex-row items-center mb-2.5">
+                <Text className="text-gray-500 w-20">Time</Text>
+                <Text className="text-gray-800 font-medium">{time || 'N/A'}</Text>
+              </View>
 
-          <View className="flex-row items-center mb-2">
-            <Text className="text-gray-500 w-20">Day:</Text>
-            <Text className="text-gray-700 font-medium">{day || "N/A"}</Text>
-          </View>
+              <View className="flex-row items-center mb-2.5">
+                <Text className="text-gray-500 w-20">Day</Text>
+                <Text className="text-gray-800 font-medium">{day || 'N/A'}</Text>
+              </View>
 
-          <View className="flex-row items-center">
-            <Text className="text-gray-500 w-20">Location:</Text>
-            <Text className="text-gray-700 font-medium">{location || "N/A"}</Text>
+              <View className="flex-row items-center">
+                <Text className="text-gray-500 w-20">Location</Text>
+                <Text className="text-gray-800 font-medium">{location || 'N/A'}</Text>
+              </View>
+            </View>
           </View>
-        </View>
 
         {/* ============================================ */}
         {/* FACULTY VIEW: Class Code + Faculty Tasks     */}
@@ -1066,7 +1077,12 @@ export default function SubjectDetails() {
             {/* Faculty Tasks Section */}
             <View className="mb-6">
               <View className="flex-row justify-between items-center mb-3">
-                <Text className="text-xl font-bold text-orange-600">Faculty Tasks</Text>
+                <Text className="text-lg font-semibold text-gray-900">Faculty Tasks</Text>
+                {studentFacultyTasks.length > 0 && (
+                  <View className="bg-gray-100 rounded-full px-2 py-0.5">
+                    <Text className="text-gray-600 text-xs font-semibold">{studentFacultyTasks.length}</Text>
+                  </View>
+                )}
                 {isFacultyLoading && <ActivityIndicator size="small" color="#f97316" />}
               </View>
 
@@ -1078,7 +1094,7 @@ export default function SubjectDetails() {
                 studentFacultyTasks.map((task) => (
                   <View
                     key={`ft-${task.id}`}
-                    className={`bg-orange-50 p-3 rounded-lg mb-2 border border-orange-200 flex-row items-center ${task.is_completed ? 'opacity-60' : ''
+                    className={`bg-white p-3.5 rounded-xl mb-2.5 border border-gray-200 flex-row items-center ${task.is_completed ? 'opacity-60' : ''
                       }`}
                   >
                     <ExpoCheckbox
@@ -1103,7 +1119,7 @@ export default function SubjectDetails() {
                       >
                         {task.text}
                       </Text>
-                      <Text className="text-orange-500 text-xs mt-0.5">
+                      <Text className="text-gray-500 text-xs mt-0.5">
                         By {task.faculty_name}
                         {task.due_date && ` • Due ${new Date(task.due_date).toLocaleDateString()}`}
                       </Text>
@@ -1148,7 +1164,7 @@ export default function SubjectDetails() {
                 ))
               ) : canShowJoinClassCode ? (
                 /* Join Class Code — opens the verification modal */
-                <View className="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                <View className="bg-white p-4 rounded-xl border border-gray-200">
                   <Text className="text-gray-600 text-sm mb-3">
                     Enter a class code from your instructor to see their tasks and join the class.
                   </Text>
@@ -1160,13 +1176,15 @@ export default function SubjectDetails() {
                   </TouchableOpacity>
                 </View>
               ) : (
-                <Text className="text-gray-500 text-sm">No faculty tasks assigned yet.</Text>
+                <View className="bg-white border border-dashed border-gray-300 rounded-xl p-4">
+                  <Text className="text-gray-500 text-sm">No faculty tasks assigned yet.</Text>
+                </View>
               )}
             </View>
 
             <View className="mb-6">
               <View className="flex-row items-center justify-between mb-3">
-                <Text className="text-base font-bold text-gray-900">Faculty Notes</Text>
+                <Text className="text-lg font-semibold text-gray-900">Faculty Notes</Text>
                 <View className="bg-gray-100 rounded-full px-2 py-0.5">
                   <Text className="text-gray-600 text-xs font-semibold">{sortedFacultyPublishedNotes.length}</Text>
                 </View>
@@ -1199,7 +1217,7 @@ export default function SubjectDetails() {
 
             {/* Personal Tasks Section */}
             <View className="flex-row justify-between items-center mb-3">
-              <Text className="text-xl font-bold">My Tasks</Text>
+              <Text className="text-lg font-semibold text-gray-900">My Tasks</Text>
               {isLoading && <ActivityIndicator size="small" color="#DC2626" />}
             </View>
 
@@ -1258,7 +1276,7 @@ export default function SubjectDetails() {
             {/* Only show header for non-student (students already have it above) */}
             {!isStudent && (
               <View className="flex-row justify-between items-center mb-3">
-                <Text className="text-xl font-bold">Tasks</Text>
+                <Text className="text-lg font-semibold text-gray-900">Tasks</Text>
                 {isLoading && <ActivityIndicator size="small" color="#DC2626" />}
               </View>
             )}
@@ -1274,7 +1292,7 @@ export default function SubjectDetails() {
               tasks.map((task) => (
                 <View
                   key={task.id}
-                  className={`bg-white p-3 rounded-lg mb-2 shadow flex-row items-center ${task.is_completed ? 'opacity-60' : ''
+                  className={`bg-white p-3.5 rounded-xl mb-2.5 border border-gray-200 flex-row items-center ${task.is_completed ? 'opacity-60' : ''
                     }`}
                 >
                   <ExpoCheckbox
@@ -1323,7 +1341,7 @@ export default function SubjectDetails() {
         {/* ============================================ */}
         <View className="mb-8">
           <View className="flex-row justify-between items-center mb-3">
-            <Text className={`text-xl font-bold ${shouldUseFacultyTaskFlow ? 'text-gray-900' : 'text-sky-800'}`}>
+            <Text className="text-lg font-semibold text-gray-900">
               {shouldUseFacultyTaskFlow ? 'Class Notes' : 'Quick Notes'}
             </Text>
             {(isLoading || isFacultyLoading) && (
@@ -1342,26 +1360,26 @@ export default function SubjectDetails() {
             sortedNotes.map((note) => (
               <View
                 key={`note-${note.id}`}
-                className={`bg-white p-3 rounded-xl mb-2 ${shouldUseFacultyTaskFlow ? 'border border-gray-200' : 'border border-sky-100'}`}
+                className="bg-white p-3.5 rounded-xl mb-2.5 border border-gray-200"
               >
                 <View className="flex-row items-start justify-between">
                   <View className="flex-1 mr-3">
                     <View className="flex-row items-center mb-1.5">
                       {note.is_pinned && (
-                        <View className={`${shouldUseFacultyTaskFlow ? 'bg-orange-50' : 'bg-sky-100'} px-2 py-0.5 rounded-full mr-2`}>
-                          <Text className={`text-[10px] font-semibold uppercase ${shouldUseFacultyTaskFlow ? 'text-orange-700' : 'text-sky-700'}`}>
+                        <View className="bg-gray-100 px-2 py-0.5 rounded-full mr-2">
+                          <Text className="text-[10px] font-semibold uppercase text-gray-700">
                             Favorite
                           </Text>
                         </View>
                       )}
-                      <Text className={`text-[11px] ${shouldUseFacultyTaskFlow ? 'text-gray-500' : 'text-sky-700'}`}>
+                      <Text className="text-[11px] text-gray-500">
                         {inlineEditingNoteId === note.id ? 'Editing... auto-saves when you tap away' : 'Tap to edit inline'}
                       </Text>
                     </View>
 
                     {inlineEditingNoteId === note.id ? (
                       <>
-                        <View className="bg-sky-50 border border-sky-200 rounded-xl p-2.5 mb-2">
+                        <View className="bg-gray-50 border border-gray-200 rounded-xl p-2.5 mb-2">
                           <TextInput
                             value={inlineNoteText}
                             onChangeText={setInlineNoteText}
@@ -1380,7 +1398,7 @@ export default function SubjectDetails() {
                               handleSaveInlineEdit(note);
                             }}
                             disabled={isSavingInlineNote || !inlineNoteText.trim()}
-                            className={`px-3 py-2 rounded-lg mr-2 ${isSavingInlineNote || !inlineNoteText.trim() ? 'bg-gray-300' : 'bg-sky-700'}`}
+                            className={`px-3 py-2 rounded-lg mr-2 ${isSavingInlineNote || !inlineNoteText.trim() ? 'bg-gray-300' : 'bg-gray-900'}`}
                           >
                             <Text className="text-white text-xs font-semibold">Save</Text>
                           </TouchableOpacity>
@@ -1399,7 +1417,7 @@ export default function SubjectDetails() {
                     ) : (
                       <TouchableOpacity activeOpacity={0.7} onPress={() => handleStartInlineEdit(note)}>
                         <Text className="text-gray-800 leading-5">{note.text}</Text>
-                        <Text className={`text-[11px] mt-2 ${shouldUseFacultyTaskFlow ? 'text-gray-500' : 'text-sky-700'}`}>
+                        <Text className="text-[11px] mt-2 text-gray-500">
                           Updated {new Date(note.updated_at).toLocaleString()}
                         </Text>
                       </TouchableOpacity>
@@ -1409,9 +1427,9 @@ export default function SubjectDetails() {
                     <TouchableOpacity
                       onPress={() => handleTogglePinNote(note)}
                       disabled={inlineEditingNoteId === note.id && isSavingInlineNote}
-                      className={`p-2 rounded-full mb-1 ${(note.is_pinned ? 'bg-sky-50' : '')} ${inlineEditingNoteId === note.id && isSavingInlineNote ? 'opacity-50' : ''}`}
+                      className={`p-2 rounded-full mb-1 ${(note.is_pinned ? 'bg-gray-100' : '')} ${inlineEditingNoteId === note.id && isSavingInlineNote ? 'opacity-50' : ''}`}
                     >
-                      <FavoriteIcon size={18} color="#0284C7" active={note.is_pinned} />
+                      <FavoriteIcon size={18} color="#374151" active={note.is_pinned} />
                     </TouchableOpacity>
                     <TouchableOpacity onPress={() => handleDeleteNote(note)} className="p-2" disabled={inlineEditingNoteId === note.id && isSavingInlineNote}>
                       <TrashIcon size={18} color="#9CA3AF" />
@@ -1424,6 +1442,8 @@ export default function SubjectDetails() {
 
         </View>
 
+        </View>
+
       </ScrollView>
 
       {shouldShowFab && (
@@ -1432,7 +1452,7 @@ export default function SubjectDetails() {
             <TouchableOpacity
               activeOpacity={1}
               onPress={() => setIsFabMenuOpen(false)}
-              className="absolute inset-0 bg-black/10"
+              className="absolute inset-0 bg-black/20"
             />
           )}
 
@@ -1441,7 +1461,7 @@ export default function SubjectDetails() {
               <View className="mb-3 items-end">
                 <TouchableOpacity
                   onPress={openTaskComposerFromFab}
-                  className="bg-white border border-gray-200 rounded-full px-4 py-2.5 mb-2"
+                  className="bg-white border border-gray-300 rounded-full px-4 py-2.5 mb-2"
                   style={{
                     shadowColor: '#000',
                     shadowOffset: { width: 0, height: 2 },
@@ -1455,7 +1475,7 @@ export default function SubjectDetails() {
 
                 <TouchableOpacity
                   onPress={openNoteComposerFromFab}
-                  className="bg-white border border-gray-200 rounded-full px-4 py-2.5"
+                  className="bg-white border border-gray-300 rounded-full px-4 py-2.5"
                   style={{
                     shadowColor: '#000',
                     shadowOffset: { width: 0, height: 2 },
@@ -1471,7 +1491,7 @@ export default function SubjectDetails() {
 
             <TouchableOpacity
               onPress={() => setIsFabMenuOpen((prev) => !prev)}
-              className="w-14 h-14 rounded-full items-center justify-center"
+              className="w-12 h-12 rounded-full items-center justify-center"
               style={{
                 backgroundColor: fabButtonColor,
                 shadowColor: '#000',

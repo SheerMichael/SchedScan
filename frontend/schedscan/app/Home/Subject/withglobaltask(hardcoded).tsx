@@ -1,4 +1,4 @@
-import { View, Text, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Alert } from "react-native";
+import { View, Text, ScrollView, TextInput, TouchableOpacity, Alert } from "react-native";
 import Checkbox from "expo-checkbox";
 import { useState, useEffect } from "react";
 import Svg, { Path } from 'react-native-svg';
@@ -109,106 +109,122 @@ export default function SubjectDetails() {
 
   return (
     <>
-      <View className='pl-8 pt-2 flex-row justify-between items-center pr-8'>
-        <TouchableOpacity onPress={() => router.back()}>
-          <LeftPointingArrow size={30} color="#000000" />
+      <View className='px-5 pt-3 pb-2 bg-gray-50 flex-row justify-between items-center'>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          className="w-10 h-10 rounded-full bg-white border border-gray-200 items-center justify-center"
+        >
+          <LeftPointingArrow size={24} color="#111827" />
         </TouchableOpacity>
         <TouchableOpacity onPress={() => setIsFaculty(!isFaculty)}>
-            <View className={`px-3 py-1 rounded-full ${isFaculty ? 'bg-purple-500' : 'bg-blue-500'}`}>
-                <Text className="text-white text-[10px] font-bold">{isFaculty ? "FACULTY" : "STUDENT"}</Text>
+            <View className={`px-3 py-1 rounded-full border ${isFaculty ? 'bg-gray-900 border-gray-900' : 'bg-white border-gray-300'}`}>
+                <Text className={`text-[10px] font-bold ${isFaculty ? 'text-white' : 'text-gray-700'}`}>{isFaculty ? "FACULTY" : "STUDENT"}</Text>
             </View>
         </TouchableOpacity>
       </View>
 
-      <ScrollView className="flex-1 p-4">
-        <View className="w-full bg-primary-500 p-4 rounded-xl mb-4">
-          <Text className="text-white/75 mb-2">Class Title</Text>
-          <View className="bg-gray-200/65 p-4 rounded-xl">
-            <Text className="text-xl font-bold text-white">{subjectTitle}</Text>
-          </View>
-        </View>
-
-        <View className="bg-gray-100 p-4 rounded-xl mb-6">
-          <Text className="text-lg font-semibold text-gray-800 mb-3">Schedule Details</Text>
-          <View className="flex-row items-center mb-2">
-            <Text className="text-gray-500 w-20">Time:</Text>
-            <Text className="text-gray-700 font-medium">{time || "N/A"}</Text>
-          </View>
-          <View className="flex-row items-center mb-2">
-            <Text className="text-gray-500 w-20">Day:</Text>
-            <Text className="text-gray-700 font-medium">{day || "N/A"}</Text>
-          </View>
-          <View className="flex-row items-center">
-            <Text className="text-gray-500 w-20">Location:</Text>
-            <Text className="text-gray-700 font-medium">{location || "N/A"}</Text>
-          </View>
-        </View>
-
-        <Text className="text-xl font-bold mb-3">Tasks</Text>
-
-        {tasks.map((task) => (
-          <View 
-            key={task.id} 
-            className={`p-3 rounded-lg mb-2 shadow flex-row items-center ${
-              task.is_global ? 'bg-purple-50 border border-purple-100' : 'bg-white'
-            } ${task.is_completed ? 'opacity-60' : ''}`}
-          >
-            <Checkbox
-              value={task.is_completed}
-              onValueChange={() => handleToggleComplete(task.id)}
-              color={task.is_global ? "#6B46C1" : "#DC2626"}
-            />
-            <View className="flex-1 ml-3">
-              {task.is_global && <Text className="text-[10px] font-bold text-purple-600">CLASS ANNOUNCEMENT</Text>}
-              <Text className={`font-semibold ${task.is_completed ? 'text-gray-400 line-through' : 'text-black'}`}>
-                  {task.text}
-              </Text>
-            </View>
-            <TouchableOpacity onPress={() => handleDeleteTask(task)} className="p-2">
-              <TrashIcon size={20} color="#9CA3AF" />
-            </TouchableOpacity>
-          </View>
-        ))}
-
-        {/* Add New Task Section */}
-        <View className="mt-6 mb-8">
-          <View className="flex-row justify-between items-end mb-2">
-            <Text className="font-bold text-lg">Add New Task</Text>
-            
-            {/* FACULTY TOGGLE TRIGGER */}
-            {isFaculty && (
-              <View className="flex-row bg-gray-200 p-1 rounded-lg">
-                <TouchableOpacity 
-                  onPress={() => setTaskType('self')}
-                  className={`px-3 py-1 rounded-md ${taskType === 'self' ? 'bg-white shadow-sm' : ''}`}
-                >
-                  <Text className={`text-[10px] font-bold ${taskType === 'self' ? 'text-blue-600' : 'text-gray-500'}`}>Self</Text>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  onPress={() => setTaskType('announcement')}
-                  className={`px-3 py-1 rounded-md ${taskType === 'announcement' ? 'bg-purple-600' : ''}`}
-                >
-                  <Text className={`text-[10px] font-bold ${taskType === 'announcement' ? 'text-white' : 'text-gray-500'}`}>Class</Text>
-                </TouchableOpacity>
+      <ScrollView className="flex-1 bg-gray-50">
+        <View className="px-5 pb-10">
+          <View className="w-full bg-white p-4 rounded-2xl mb-4 border border-gray-200">
+            <View className="flex-row items-start justify-between">
+              <View className="flex-1 pr-3">
+                <Text className="text-[11px] uppercase tracking-wider text-gray-500 mb-1">Subject</Text>
+                <Text className="text-[22px] font-semibold text-gray-900">{subjectTitle || 'Untitled Subject'}</Text>
               </View>
-            )}
+              <View className="bg-gray-100 px-3 py-1.5 rounded-full">
+                <Text className="text-xs font-semibold text-gray-700">{day || 'N/A'}</Text>
+              </View>
+            </View>
+
+            <View className="border-t border-gray-100 mt-4 pt-3">
+              <Text className="text-sm font-semibold text-gray-800 mb-2">Schedule</Text>
+              <View className="flex-row items-center mb-2.5">
+                <Text className="text-gray-500 w-20">Time</Text>
+                <Text className="text-gray-800 font-medium">{time || "N/A"}</Text>
+              </View>
+              <View className="flex-row items-center mb-2.5">
+                <Text className="text-gray-500 w-20">Day</Text>
+                <Text className="text-gray-800 font-medium">{day || "N/A"}</Text>
+              </View>
+              <View className="flex-row items-center">
+                <Text className="text-gray-500 w-20">Location</Text>
+                <Text className="text-gray-800 font-medium">{location || "N/A"}</Text>
+              </View>
+            </View>
           </View>
 
-          <View className="bg-white p-3 rounded-xl shadow flex-row items-center border border-gray-100">
-            <TextInput
-              value={newTaskText}
-              onChangeText={setNewTaskText}
-              placeholder={taskType === 'announcement' ? "Post announcement..." : "Enter self task..."}
-              className="flex-1 text-base"
-              onSubmitEditing={handleAddTask}
-            />
-            <TouchableOpacity
-              onPress={handleAddTask}
-              disabled={!newTaskText.trim()}
-              className={`px-4 py-2 rounded-xl ml-2 ${!newTaskText.trim() ? 'bg-gray-300' : (taskType === 'announcement' ? 'bg-purple-600' : 'bg-primary-600')}`}
+          <Text className="text-lg font-semibold text-gray-900 mb-3">Tasks</Text>
+
+          {tasks.length === 0 && (
+            <View className="bg-white border border-dashed border-gray-300 rounded-xl p-4 mb-3">
+              <Text className="text-gray-500 text-sm">No tasks yet.</Text>
+            </View>
+          )}
+
+          {tasks.map((task) => (
+            <View
+              key={task.id}
+              className={`p-3.5 rounded-xl mb-2.5 border flex-row items-center ${
+                task.is_global ? 'bg-gray-50 border-gray-300' : 'bg-white border-gray-200'
+              } ${task.is_completed ? 'opacity-60' : ''}`}
             >
-              <Text className="text-white font-bold">{taskType === 'announcement' ? "Post" : "Add"}</Text>
-            </TouchableOpacity>
+              <Checkbox
+                value={task.is_completed}
+                onValueChange={() => handleToggleComplete(task.id)}
+                color={task.is_global ? "#4B5563" : "#111827"}
+              />
+              <View className="flex-1 ml-3">
+                {task.is_global && <Text className="text-[10px] font-bold text-gray-600 uppercase">Shared</Text>}
+                <Text className={`font-semibold ${task.is_completed ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
+                    {task.text}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => handleDeleteTask(task)} className="p-2">
+                <TrashIcon size={18} color="#9CA3AF" />
+              </TouchableOpacity>
+            </View>
+          ))}
+
+          {/* Add New Task Section */}
+          <View className="mt-6 mb-8">
+            <View className="flex-row justify-between items-end mb-2">
+              <Text className="font-semibold text-base text-gray-900">Add Task</Text>
+            
+              {/* FACULTY TOGGLE TRIGGER */}
+              {isFaculty && (
+                <View className="flex-row bg-gray-100 p-1 rounded-lg border border-gray-200">
+                  <TouchableOpacity
+                    onPress={() => setTaskType('self')}
+                    className={`px-3 py-1 rounded-md ${taskType === 'self' ? 'bg-white' : ''}`}
+                  >
+                    <Text className={`text-[10px] font-bold ${taskType === 'self' ? 'text-gray-900' : 'text-gray-500'}`}>Self</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setTaskType('announcement')}
+                    className={`px-3 py-1 rounded-md ${taskType === 'announcement' ? 'bg-gray-900' : ''}`}
+                  >
+                    <Text className={`text-[10px] font-bold ${taskType === 'announcement' ? 'text-white' : 'text-gray-500'}`}>Class</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+
+            <View className="bg-white p-3 rounded-xl flex-row items-center border border-gray-200">
+              <TextInput
+                value={newTaskText}
+                onChangeText={setNewTaskText}
+                placeholder={taskType === 'announcement' ? "Post class task..." : "Enter a task..."}
+                className="flex-1 text-base text-gray-900"
+                onSubmitEditing={handleAddTask}
+              />
+              <TouchableOpacity
+                onPress={handleAddTask}
+                disabled={!newTaskText.trim()}
+                className={`px-4 py-2 rounded-xl ml-2 ${!newTaskText.trim() ? 'bg-gray-300' : 'bg-gray-900'}`}
+              >
+                <Text className="text-white font-bold">{taskType === 'announcement' ? "Post" : "Add"}</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </ScrollView>
