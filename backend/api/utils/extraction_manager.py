@@ -910,6 +910,28 @@ def run_extraction_job(job_id) -> None:
                 _send_extraction_job_notification(job, success=False)
                 return
 
+            # Keep faculty/student auto-links in sync before exposing terminal
+            # status, so polling clients can reliably fetch pending enrollments.
+            try:
+                sync_auto_enrollments_for_user(job.user)
+            except Exception:
+                logger.exception(
+                    "run_extraction_job: auto-link sync failed for user %s (job=%s)",
+                    job.user.id,
+                    job_id,
+                )
+
+            # Keep faculty verification queue state in sync after faculty uploads.
+            if job.upload_type == 'faculty':
+                try:
+                    _handle_faculty_upload_verification(job)
+                except Exception:
+                    logger.exception(
+                        "run_extraction_job: faculty verification sync failed for user %s (job=%s)",
+                        job.user.id,
+                        job_id,
+                    )
+
             job.status = 'done'
             job.extraction_method = job_method
             job.courses = courses_data
@@ -926,20 +948,6 @@ def run_extraction_job(job_id) -> None:
                 "run_extraction_job: job %s → done (%d courses written, confidence=%.2f, method=%s)",
                 job_id, written_count, result.get('confidence', 0.0), job_method,
             )
-
-            # Keep faculty/student auto-links in sync after async schedule persistence.
-            try:
-                sync_auto_enrollments_for_user(job.user)
-            except Exception:
-                logger.exception(
-                    "run_extraction_job: auto-link sync failed for user %s (job=%s)",
-                    job.user.id,
-                    job_id,
-                )
-
-            # Keep faculty verification queue state in sync after faculty uploads.
-            if job.upload_type == 'faculty':
-                _handle_faculty_upload_verification(job)
 
             # ── Telemetry ────────────────────────────────────────────────────
             _write_extraction_log_for_job(job, result, success=True)

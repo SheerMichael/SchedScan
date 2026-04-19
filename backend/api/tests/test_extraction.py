@@ -1380,6 +1380,77 @@ class AsyncExtractionJobTestCase(TestCase):
 
     @patch('api.utils.extraction_manager._send_extraction_job_notification')
     @patch('api.utils.extraction_manager._write_extraction_log_for_job')
+    @patch('api.utils.extraction_manager.sync_auto_enrollments_for_user')
+    @patch('api.utils.extraction_manager.ExtractionManager')
+    def test_run_extraction_job_marks_done_after_auto_link_sync(
+        self,
+        mock_manager_class,
+        mock_sync,
+        mock_log,
+        mock_notify,
+    ):
+        """Job should become done only after auto-link sync is attempted."""
+        import tempfile
+        import os
+        from api.models import ExtractionJob
+        from api.utils.extraction_manager import run_extraction_job
+
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as f:
+            f.write(b'fake pdf')
+            temp_path = f.name
+
+        job = ExtractionJob.objects.create(
+            user=self.user,
+            upload_type='student',
+            file_name='sync-ordering.pdf',
+            status='pending',
+            _temp_file_path=temp_path,
+        )
+
+        mock_manager = Mock()
+        mock_manager.extract_schedule.return_value = {
+            'courses': [
+                {
+                    'subject_code': 'BSCS101',
+                    'subject_name': 'Programming',
+                    'start_time': '08:00AM',
+                    'end_time': '10:00AM',
+                    'day': 'M',
+                    'location': 'LR1',
+                }
+            ],
+            'extraction_method': 'pdf_text',
+            'confidence': 0.95,
+            'processing_time': 0.3,
+            'attempts': ['pdf_text'],
+            'student_number': '2022-09999',
+            'failure_category': 'none',
+            'validator_errors': [],
+            'score_breakdown': {},
+            'accepted': True,
+        }
+        mock_manager_class.return_value = mock_manager
+
+        statuses_seen_during_sync = []
+
+        def _capture_status_during_sync(_user):
+            statuses_seen_during_sync.append(
+                ExtractionJob.objects.get(pk=job.pk).status
+            )
+            return {'created': 0, 'removed': 0, 'desired': 0}
+
+        mock_sync.side_effect = _capture_status_during_sync
+
+        run_extraction_job(job.job_id)
+
+        job.refresh_from_db()
+        self.assertEqual(statuses_seen_during_sync, ['processing'])
+        self.assertEqual(job.status, 'done')
+        mock_notify.assert_called_once_with(job, success=True)
+        self.assertFalse(os.path.exists(temp_path))
+
+    @patch('api.utils.extraction_manager._send_extraction_job_notification')
+    @patch('api.utils.extraction_manager._write_extraction_log_for_job')
     @patch('api.utils.extraction_manager.ExtractionManager')
     def test_run_extraction_job_triggers_schedule_based_auto_linking(self, mock_manager_class, mock_log, mock_notify):
         """Async extraction should auto-link student to faculty when schedule slots align."""

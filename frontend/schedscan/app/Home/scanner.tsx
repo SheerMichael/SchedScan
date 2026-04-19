@@ -304,11 +304,23 @@ export default function Scanner() {
     setBackgroundJobId('');
 
     // For student uploads, check if the backend found any faculty matches.
-    // Show the FacultyMatchModal so the student can join those classes.
+    // Retry briefly to avoid missing matches if job completion and enrollment
+    // sync commit land very close together.
     if (uploadType === 'student') {
       try {
-        const pending = await pendingEnrollmentService.getPendingEnrollments();
-        if (pending.count > 0) {
+        let pendingCount = 0;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const pending = await pendingEnrollmentService.getPendingEnrollments();
+          pendingCount = pending.count || 0;
+          if (pendingCount > 0) {
+            break;
+          }
+          if (attempt < 2) {
+            await new Promise((resolve) => setTimeout(resolve, 700));
+          }
+        }
+
+        if (pendingCount > 0) {
           setShowFacultyMatchModal(true);
           // Show schedules alert AFTER they dismiss the match modal
           return;
