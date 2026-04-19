@@ -379,9 +379,9 @@ def _notify_pending_enrollments(enrollments: List) -> None:
                 faculty_name = f"{faculty['first_name']} {faculty['last_name']}".strip() or "Your faculty"
                 subject_code = enrollment.subject_code
 
-                title = "Faculty Match Found 🏫"
+                title = "Class Match Found 🏫"
                 body = (
-                    f"{faculty_name} teaches {subject_code}. "
+                    f"Class match: {faculty_name} teaches {subject_code}. "
                     f"Tap to join their class."
                 )
                 data_payload = {

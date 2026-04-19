@@ -1,19 +1,21 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, RefreshControl, Alert } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { router } from "expo-router";
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import NotificationItem from "../../components/notifitem";
+import FacultyMatchModal from '../../components/FacultyMatchModal';
 import { usePushNotification } from "../../usePushNotification";
 import { useFocusEffect } from '@react-navigation/native';
 import notificationService, { NotificationItem as NotifType } from '../../services/notificationService';
+import { pendingEnrollmentService } from '../../services/pendingEnrollmentService';
 
 type FilterMode = 'all' | 'unread';
 
 const getCategoryLabel = (notificationType: NotifType['notification_type']): string => {
     if (notificationType === 'class_reminder') return 'Class Reminder';
     if (notificationType === 'faculty_task') return 'Faculty Task';
-    if (notificationType === 'faculty_match') return 'Faculty Match';
+    if (notificationType === 'faculty_match') return 'Class Match';
     if (notificationType === 'faculty_remark') return 'Faculty Remark';
     if (notificationType === 'faculty_verification') return 'Account Verification';
     return 'Notification';
@@ -26,6 +28,7 @@ const NotificationScreen = () => {
     const [unreadCount, setUnreadCount] = useState(0);
     const [isClearingAll, setIsClearingAll] = useState(false);
     const [activeFilter, setActiveFilter] = useState<FilterMode>('all');
+    const [showClassMatchModal, setShowClassMatchModal] = useState(false);
 
     const { notification } = usePushNotification();
 
@@ -96,6 +99,51 @@ const NotificationScreen = () => {
             await notificationService.markNotificationRead(id);
         } catch (error) {
             console.error('Failed to mark notification as read:', error);
+        }
+    };
+
+    const handleNotificationPress = async (item: NotifType & { isDismissed?: boolean }) => {
+        if (!item.is_read) {
+            setNotifications(prev =>
+                prev.map(notif =>
+                    notif.id === item.id
+                        ? { ...notif, is_read: true }
+                        : notif
+                )
+            );
+            setUnreadCount(prev => Math.max(0, prev - 1));
+            try {
+                await notificationService.markNotificationRead(item.id);
+            } catch (error) {
+                console.error('Failed to mark notification as read from tap:', error);
+            }
+        }
+
+        const payloadType = String(item?.data?.type || '').toLowerCase();
+        const isClassMatchNotification = (
+            item.notification_type === 'faculty_match'
+            || payloadType === 'faculty_match'
+            || payloadType === 'class_match'
+        );
+
+        if (!isClassMatchNotification) {
+            return;
+        }
+
+        try {
+            const pending = await pendingEnrollmentService.getPendingEnrollments();
+            if ((pending?.count || 0) > 0) {
+                setShowClassMatchModal(true);
+                return;
+            }
+
+            Alert.alert(
+                'Class Match',
+                'No pending class matches right now. You may have already accepted or dismissed them.'
+            );
+        } catch (error) {
+            console.error('Failed to load pending class matches from notification tap:', error);
+            Alert.alert('Unable to open class matches', 'Please try again in a moment.');
         }
     };
 
@@ -206,6 +254,7 @@ const NotificationScreen = () => {
                             isRead={item.is_read}
                             notificationType={item.notification_type}
                             onDelete={() => handleDismissNotification(item.id)}
+                            onPress={() => handleNotificationPress(item)}
                         />
                     ))}
                     <View className="h-6" />
@@ -220,6 +269,22 @@ const NotificationScreen = () => {
                     </Text>
                 </View>
             }
+
+            <FacultyMatchModal
+                visible={showClassMatchModal}
+                onClose={() => {
+                    setShowClassMatchModal(false);
+                    fetchNotifications(false);
+                }}
+                onAccepted={(count) => {
+                    setShowClassMatchModal(false);
+                    fetchNotifications(false);
+                    Alert.alert(
+                        'Class Match Accepted',
+                        `You joined ${count} class${count !== 1 ? 'es' : ''}.`
+                    );
+                }}
+            />
         </GestureHandlerRootView>
     );
 };

@@ -229,7 +229,7 @@ export default function FacultyMatchModal({
                 <GraduationCap size={20} color="#4F46E5" />
               </View>
               <View className="flex-1">
-                <Text className="text-gray-900 font-bold text-lg">Faculty Matches Found</Text>
+                <Text className="text-gray-900 font-bold text-lg">Class Matches Found</Text>
                 <Text className="text-gray-500 text-xs mt-0.5">
                   {isLoading
                     ? 'Loading...'
@@ -250,7 +250,7 @@ export default function FacultyMatchModal({
           {isLoading ? (
             <View className="py-16 items-center">
               <ActivityIndicator size="large" color="#4F46E5" />
-              <Text className="text-gray-400 text-sm mt-3">Checking for faculty matches…</Text>
+              <Text className="text-gray-400 text-sm mt-3">Checking for class matches…</Text>
             </View>
           ) : enrollments.length === 0 ? (
             <View className="py-16 items-center px-8">
@@ -262,7 +262,7 @@ export default function FacultyMatchModal({
           ) : (
             <>
               <Text className="text-gray-500 text-xs px-5 mb-3">
-                Your uploaded schedule matched the following faculty classes.
+                Your uploaded schedule matched the following classes.
                 Join to connect with your instructor and see your classmates.
               </Text>
 

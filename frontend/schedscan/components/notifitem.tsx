@@ -15,6 +15,7 @@ type Props = {
   isRead: boolean;
   notificationType: 'class_reminder' | 'faculty_task' | 'faculty_match' | 'faculty_remark' | 'faculty_verification' | 'general';
   onDelete: () => void;
+  onPress?: () => void;
 };
 
 const EMOJI_REGEX = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu;
@@ -33,7 +34,7 @@ const getAccentColor = (notificationType: Props['notificationType']): string => 
 const getTypeInitials = (notificationType: Props['notificationType']): string => {
   if (notificationType === 'class_reminder') return 'CR';
   if (notificationType === 'faculty_task') return 'FT';
-  if (notificationType === 'faculty_match') return 'FM';
+  if (notificationType === 'faculty_match') return 'CM';
   if (notificationType === 'faculty_remark') return 'FR';
   if (notificationType === 'faculty_verification') return 'FV';
   return 'NT';
@@ -47,6 +48,7 @@ export default function NotificationItem({
   isRead,
   notificationType,
   onDelete,
+  onPress,
 }: Props) {
   const translateX = useSharedValue(0);
   const opacity = useSharedValue(1);
@@ -106,37 +108,39 @@ export default function NotificationItem({
               backgroundColor: isRead ? '#FFFFFF' : '#FFF7ED',
             }}
           >
-            <View className="flex-row items-start p-4">
-              <View
-                className="h-10 w-10 items-center justify-center rounded-full"
-                style={{ backgroundColor: `${accentColor}22` }}
-              >
-                <Text className="text-xs font-bold" style={{ color: accentColor }}>{getTypeInitials(notificationType)}</Text>
-              </View>
-
-              <View className="ml-3 flex-1">
-                <View className="flex-row items-start justify-between">
-                  <Text className="mr-2 flex-1 text-lg font-bold text-slate-900" numberOfLines={1}>
-                    {cleanText(title)}
-                  </Text>
-                  <Text className="text-xs text-slate-500">{date}</Text>
+            <TouchableOpacity activeOpacity={0.92} onPress={onPress} disabled={!onPress}>
+              <View className="flex-row items-start p-4">
+                <View
+                  className="h-10 w-10 items-center justify-center rounded-full"
+                  style={{ backgroundColor: `${accentColor}22` }}
+                >
+                  <Text className="text-xs font-bold" style={{ color: accentColor }}>{getTypeInitials(notificationType)}</Text>
                 </View>
 
-                <Text className="mt-0.5 text-xs font-semibold uppercase tracking-wide" style={{ color: accentColor }}>
-                  {category}
-                </Text>
-
-                <Text className="mt-2 text-base leading-5 text-slate-700" numberOfLines={2}>
-                  {cleanText(message)}
-                </Text>
-
-                {!isRead && (
-                  <View className="mt-3 self-start rounded-full bg-orange-100 px-2.5 py-1">
-                    <Text className="text-xs font-semibold text-orange-700">Unread</Text>
+                <View className="ml-3 flex-1">
+                  <View className="flex-row items-start justify-between">
+                    <Text className="mr-2 flex-1 text-lg font-bold text-slate-900" numberOfLines={1}>
+                      {cleanText(title)}
+                    </Text>
+                    <Text className="text-xs text-slate-500">{date}</Text>
                   </View>
-                )}
+
+                  <Text className="mt-0.5 text-xs font-semibold uppercase tracking-wide" style={{ color: accentColor }}>
+                    {category}
+                  </Text>
+
+                  <Text className="mt-2 text-base leading-5 text-slate-700" numberOfLines={2}>
+                    {cleanText(message)}
+                  </Text>
+
+                  {!isRead && (
+                    <View className="mt-3 self-start rounded-full bg-orange-100 px-2.5 py-1">
+                      <Text className="text-xs font-semibold text-orange-700">Unread</Text>
+                    </View>
+                  )}
+                </View>
               </View>
-            </View>
+            </TouchableOpacity>
           </Animated.View>
         </GestureDetector>
       </View>
