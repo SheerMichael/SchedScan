@@ -135,15 +135,30 @@ const ParentHomePage = () => {
     setSearchQuery("");
     setSearchResults([]);
 
+    const localPendingRequests = myLinkRequests.filter((req) => req.status === 'pending').length;
+
     try {
       const gate = await paymentService.checkCanAddChild();
-      if (gate.needs_payment) {
+      const totalAllowed = 1 + gate.paid_slots;
+      const reservedSlots = children.length + localPendingRequests;
+      const needsPayment = gate.needs_payment || reservedSlots >= totalAllowed;
+
+      if (needsPayment) {
         setShowPaymentModal(true);
         return;
       }
     } catch (error) {
-      // Non-blocking fallback: the request endpoint still enforces payment server-side.
-      console.log('Unable to pre-check payment gate, continuing to search flow.');
+      // Conservative fallback to avoid bypass when eligibility cannot be verified.
+      if ((children.length + localPendingRequests) >= 1) {
+        setShowPaymentModal(true);
+        return;
+      }
+
+      Alert.alert(
+        "Unable to Verify Payment",
+        "We could not verify your payment status right now. Please try again in a moment."
+      );
+      return;
     }
 
     setShowLinkModal(true);
@@ -226,6 +241,30 @@ const ParentHomePage = () => {
     try {
       setIsSendingRequest(true);
       setRequestError("");
+
+      // Preflight check before sending request to avoid stale-state bypasses.
+      try {
+        const gate = await paymentService.checkCanAddChild();
+        const localPendingRequests = myLinkRequests.filter((req) => req.status === 'pending').length;
+        const totalAllowed = 1 + gate.paid_slots;
+        const reservedSlots = children.length + localPendingRequests;
+        const needsPayment = gate.needs_payment || reservedSlots >= totalAllowed;
+
+        if (needsPayment) {
+          setShowLinkModal(false);
+          setShowPaymentModal(true);
+          return;
+        }
+      } catch (error) {
+        if ((children.length + myLinkRequests.filter((req) => req.status === 'pending').length) >= 1) {
+          setShowLinkModal(false);
+          setShowPaymentModal(true);
+          return;
+        }
+
+        setRequestError("Unable to verify payment status. Please try again.");
+        return;
+      }
 
       const result = await parentService.requestChildLink(child.id);
 
