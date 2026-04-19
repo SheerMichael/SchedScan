@@ -15,6 +15,12 @@ export interface CreateNoteData {
   text: string;
 }
 
+export interface FacultyPublishedNote extends Note {
+  faculty_name?: string;
+  faculty_email?: string;
+  faculty_profile_picture?: string | null;
+}
+
 export interface UpdateNoteData {
   text?: string;
   is_pinned?: boolean;
@@ -53,6 +59,18 @@ export const noteService = {
         console.error('Error reading notes cache:', cacheError);
         return [];
       }
+    }
+  },
+
+  getFacultyNotes: async (subjectCode: string): Promise<FacultyPublishedNote[]> => {
+    try {
+      const response = await api.get('/student/faculty-notes/', {
+        params: { subject_code: subjectCode },
+      });
+      return Array.isArray(response.data) ? response.data : (response.data?.results ?? []);
+    } catch (error: any) {
+      console.error('Error fetching faculty notes:', error.message);
+      return [];
     }
   },
 

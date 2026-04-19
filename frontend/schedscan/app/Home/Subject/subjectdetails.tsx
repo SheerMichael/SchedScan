@@ -2,12 +2,12 @@ import { View, Text, ScrollView, TextInput, TouchableOpacity, ActivityIndicator,
 import * as Clipboard from 'expo-clipboard';
 import ExpoCheckbox from "expo-checkbox";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import DateTimePicker, { DateTimePickerAndroid, DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import Svg, { Path } from 'react-native-svg';
 import { useLocalSearchParams, router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { taskService, Task, TaskUrgency } from "../../../services/taskService";
-import { noteService, Note } from "../../../services/noteService";
+import { noteService, Note, FacultyPublishedNote } from "../../../services/noteService";
 import { useAuth } from "../../../context/AuthContext";
 import {
   facultyTaskService,
@@ -126,6 +126,7 @@ export default function SubjectDetails() {
   // ============================================
   const [studentRemarks, setStudentRemarks] = useState<FacultyRemark[]>([]);
   const [viewingStudentRemark, setViewingStudentRemark] = useState<FacultyRemark | null>(null);
+  const [facultyPublishedNotes, setFacultyPublishedNotes] = useState<FacultyPublishedNote[]>([]);
 
   // ============================================
   // File Download
@@ -152,20 +153,26 @@ export default function SubjectDetails() {
         ]);
         setFacultyTasks(tasksData);
         setNotes(notesData);
+        setFacultyPublishedNotes([]);
         if (codes.length > 0) setClassCode(codes[0]);
       } else if (isStudent) {
         // Student: load personal tasks + faculty tasks + enrollment status + remarks
-        const [personalTasks, fTasks, enrollments, remarksData, notesData] = await Promise.all([
+        const [personalTasks, fTasks, enrollments, remarksData, notesData, publishedFacultyNotes] = await Promise.all([
           taskService.getTasks(subjectCode),
           studentEnrollmentService.getFacultyTasks(subjectCode).catch(() => []),
           studentEnrollmentService.getEnrollments().catch(() => []),
           studentRemarkService.getRemarks(subjectCode).catch(() => []),
           notesPromise,
+          noteService.getFacultyNotes(subjectCode).catch((error) => {
+            console.error('Error loading faculty notes:', error);
+            return [] as FacultyPublishedNote[];
+          }),
         ]);
         setTasks(personalTasks);
         setStudentFacultyTasks(fTasks);
         setStudentRemarks(remarksData);
         setNotes(notesData);
+        setFacultyPublishedNotes(publishedFacultyNotes);
         // Check enrollment using actual enrollments, not task count
         const enrolled = enrollments.some(
           (e) => e.subject_code === subjectCode && e.status === 'active'
@@ -179,6 +186,7 @@ export default function SubjectDetails() {
         ]);
         setTasks(personalTasks);
         setNotes(notesData);
+        setFacultyPublishedNotes([]);
       }
     } catch (error) {
       console.error('Error loading data:', error);
@@ -710,15 +718,33 @@ export default function SubjectDetails() {
   };
 
   const openTaskDuePicker = (mode: 'date' | 'time') => {
+    if (Platform.OS === 'android') {
+      const baseDate = newTaskDueDate ? new Date(newTaskDueDate) : new Date();
+      DateTimePickerAndroid.open({
+        value: baseDate,
+        mode,
+        is24Hour: false,
+        display: 'default',
+        onChange: (event, selectedDate) => {
+          if (!selectedDate || event.type !== 'set') return;
+          const nextDate = newTaskDueDate ? new Date(newTaskDueDate) : new Date();
+          if (mode === 'date') {
+            nextDate.setFullYear(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
+          } else {
+            nextDate.setHours(selectedDate.getHours(), selectedDate.getMinutes(), 0, 0);
+          }
+          setNewTaskDueDate(toDueDateISOString(nextDate));
+          setNewTaskDuePreset(null);
+        },
+      });
+      return;
+    }
+
     setTaskDuePickerMode(mode);
     setShowTaskDuePicker(true);
   };
 
   const handleTaskDuePickerChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
-    if (Platform.OS === 'android') {
-      setShowTaskDuePicker(false);
-    }
-
     if (!selectedDate || event.type === 'dismissed') {
       return;
     }
@@ -742,15 +768,33 @@ export default function SubjectDetails() {
   };
 
   const openFacultyTaskDuePicker = (mode: 'date' | 'time') => {
+    if (Platform.OS === 'android') {
+      const baseDate = newFacultyTaskDueDate ? new Date(newFacultyTaskDueDate) : new Date();
+      DateTimePickerAndroid.open({
+        value: baseDate,
+        mode,
+        is24Hour: false,
+        display: 'default',
+        onChange: (event, selectedDate) => {
+          if (!selectedDate || event.type !== 'set') return;
+          const nextDate = newFacultyTaskDueDate ? new Date(newFacultyTaskDueDate) : new Date();
+          if (mode === 'date') {
+            nextDate.setFullYear(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
+          } else {
+            nextDate.setHours(selectedDate.getHours(), selectedDate.getMinutes(), 0, 0);
+          }
+          setNewFacultyTaskDueDate(toDueDateISOString(nextDate));
+          setNewFacultyTaskDuePreset(null);
+        },
+      });
+      return;
+    }
+
     setFacultyTaskDuePickerMode(mode);
     setShowFacultyTaskDuePicker(true);
   };
 
   const handleFacultyTaskDuePickerChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
-    if (Platform.OS === 'android') {
-      setShowFacultyTaskDuePicker(false);
-    }
-
     if (!selectedDate || event.type === 'dismissed') {
       return;
     }
@@ -813,6 +857,17 @@ export default function SubjectDetails() {
     [notes]
   );
 
+  const sortedFacultyPublishedNotes = useMemo(
+    () =>
+      [...facultyPublishedNotes].sort((a, b) => {
+        if (a.is_pinned !== b.is_pinned) {
+          return a.is_pinned ? -1 : 1;
+        }
+        return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+      }),
+    [facultyPublishedNotes]
+  );
+
   const facultyComposerPanelStyle = {
     opacity: facultyComposerAnimation,
     transform: [
@@ -830,7 +885,7 @@ export default function SubjectDetails() {
   // ============================================
   const fabTaskLabel = shouldUseFacultyTaskFlow ? addTaskLabel : 'Add Task';
   const fabButtonColor = shouldUseFacultyTaskFlow ? '#F97316' : '#2563EB';
-  const shouldShowFab = !showTaskComposer && !showFacultyTaskComposer && !showNoteComposer;
+  const shouldShowFab = !shouldUseFacultyTaskFlow && !showTaskComposer && !showFacultyTaskComposer && !showNoteComposer;
 
   return (
     <>
@@ -875,7 +930,7 @@ export default function SubjectDetails() {
         {shouldUseFacultyTaskFlow && (
           <>
             {/* Class Code Section — only for faculty-extracted subjects */}
-            {isFacultyCourse && <View className="bg-orange-50 p-4 rounded-xl mb-4 border border-orange-200">
+            {isFacultyCourse && <View className="bg-white p-4 rounded-2xl mb-5 border border-orange-100">
               <Text className="text-lg font-bold text-orange-800 mb-2">Class Code</Text>
               {!isFacultyVerified && (
                 <View className="bg-red-100 border border-red-200 rounded-lg p-3 mb-3">
@@ -927,9 +982,24 @@ export default function SubjectDetails() {
               </Text>
             </View>}
 
+            <View className="flex-row mb-5">
+              <TouchableOpacity
+                onPress={() => setShowFacultyTaskComposer(true)}
+                className="flex-1 bg-orange-500 rounded-xl py-3.5 px-3 mr-2 items-center"
+              >
+                <Text className="text-white font-bold text-sm">New Class Task</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={openCreateNoteComposer}
+                className="flex-1 bg-white border border-gray-300 rounded-xl py-3.5 px-3 ml-2 items-center"
+              >
+                <Text className="text-gray-800 font-semibold text-sm">New Note</Text>
+              </TouchableOpacity>
+            </View>
+
             {/* Faculty Tasks List */}
-            <View className="flex-row justify-between items-center mb-3">
-              <Text className="text-xl font-bold">{taskLabelPlural}</Text>
+            <View className="flex-row justify-between items-center mb-4">
+              <Text className="text-xl font-bold text-gray-900">{taskLabelPlural}</Text>
               {isFacultyLoading && <ActivityIndicator size="small" color="#f97316" />}
             </View>
 
@@ -945,7 +1015,7 @@ export default function SubjectDetails() {
                 <TouchableOpacity
                   key={task.id}
                   onPress={() => handleViewStats(task)}
-                  className="bg-white p-3 rounded-lg mb-2 shadow"
+                  className="bg-white p-4 rounded-2xl mb-3 border border-gray-200"
                 >
                   <View className="flex-row items-center justify-between">
                     <View className="flex-1 mr-3">
@@ -1094,6 +1164,39 @@ export default function SubjectDetails() {
               )}
             </View>
 
+            <View className="mb-6">
+              <View className="flex-row items-center justify-between mb-3">
+                <Text className="text-base font-bold text-gray-900">Faculty Notes</Text>
+                <View className="bg-gray-100 rounded-full px-2 py-0.5">
+                  <Text className="text-gray-600 text-xs font-semibold">{sortedFacultyPublishedNotes.length}</Text>
+                </View>
+              </View>
+              {sortedFacultyPublishedNotes.length === 0 ? (
+                <View className="bg-white border border-gray-200 rounded-xl p-3">
+                  <Text className="text-gray-500 text-sm">No faculty notes published for this class yet.</Text>
+                </View>
+              ) : (
+                sortedFacultyPublishedNotes.map((note) => (
+                  <View key={`faculty-note-${note.id}`} className="bg-white border border-gray-200 rounded-xl p-3 mb-2">
+                    <View className="flex-row items-center mb-1.5">
+                      {note.is_pinned && (
+                        <View className="bg-orange-50 px-2 py-0.5 rounded-full mr-2">
+                          <Text className="text-[10px] font-semibold uppercase text-orange-700">Pinned</Text>
+                        </View>
+                      )}
+                      <Text className="text-[11px] text-gray-500 flex-1" numberOfLines={1}>
+                        {note.faculty_name || 'Faculty'}
+                      </Text>
+                      <Text className="text-[11px] text-gray-400">
+                        {new Date(note.updated_at).toLocaleDateString()}
+                      </Text>
+                    </View>
+                    <Text className="text-sm text-gray-800 leading-5">{note.text}</Text>
+                  </View>
+                ))
+              )}
+            </View>
+
             {/* Personal Tasks Section */}
             <View className="flex-row justify-between items-center mb-3">
               <Text className="text-xl font-bold">My Tasks</Text>
@@ -1220,29 +1323,38 @@ export default function SubjectDetails() {
         {/* ============================================ */}
         <View className="mb-8">
           <View className="flex-row justify-between items-center mb-3">
-            <Text className="text-xl font-bold text-sky-800">Quick Notes</Text>
-            {(isLoading || isFacultyLoading) && <ActivityIndicator size="small" color="#0284C7" />}
+            <Text className={`text-xl font-bold ${shouldUseFacultyTaskFlow ? 'text-gray-900' : 'text-sky-800'}`}>
+              {shouldUseFacultyTaskFlow ? 'Class Notes' : 'Quick Notes'}
+            </Text>
+            {(isLoading || isFacultyLoading) && (
+              <ActivityIndicator size="small" color={shouldUseFacultyTaskFlow ? '#F97316' : '#0284C7'} />
+            )}
           </View>
 
           {isLoading || isFacultyLoading ? (
             <View className="py-4 items-center">
-              <ActivityIndicator size="small" color="#0284C7" />
+              <ActivityIndicator size="small" color={shouldUseFacultyTaskFlow ? '#F97316' : '#0284C7'} />
               <Text className="text-gray-500 mt-2">Loading notes...</Text>
             </View>
           ) : sortedNotes.length === 0 ? (
             <Text className="text-gray-500 mb-4">No quick notes yet. Tap + to add one.</Text>
           ) : (
             sortedNotes.map((note) => (
-              <View key={`note-${note.id}`} className="bg-white border border-sky-100 p-3 rounded-xl mb-2">
+              <View
+                key={`note-${note.id}`}
+                className={`bg-white p-3 rounded-xl mb-2 ${shouldUseFacultyTaskFlow ? 'border border-gray-200' : 'border border-sky-100'}`}
+              >
                 <View className="flex-row items-start justify-between">
                   <View className="flex-1 mr-3">
                     <View className="flex-row items-center mb-1.5">
                       {note.is_pinned && (
-                        <View className="bg-sky-100 px-2 py-0.5 rounded-full mr-2">
-                          <Text className="text-[10px] font-semibold text-sky-700 uppercase">Favorite</Text>
+                        <View className={`${shouldUseFacultyTaskFlow ? 'bg-orange-50' : 'bg-sky-100'} px-2 py-0.5 rounded-full mr-2`}>
+                          <Text className={`text-[10px] font-semibold uppercase ${shouldUseFacultyTaskFlow ? 'text-orange-700' : 'text-sky-700'}`}>
+                            Favorite
+                          </Text>
                         </View>
                       )}
-                      <Text className="text-[11px] text-sky-700">
+                      <Text className={`text-[11px] ${shouldUseFacultyTaskFlow ? 'text-gray-500' : 'text-sky-700'}`}>
                         {inlineEditingNoteId === note.id ? 'Editing... auto-saves when you tap away' : 'Tap to edit inline'}
                       </Text>
                     </View>
@@ -1287,7 +1399,7 @@ export default function SubjectDetails() {
                     ) : (
                       <TouchableOpacity activeOpacity={0.7} onPress={() => handleStartInlineEdit(note)}>
                         <Text className="text-gray-800 leading-5">{note.text}</Text>
-                        <Text className="text-[11px] text-sky-700 mt-2">
+                        <Text className={`text-[11px] mt-2 ${shouldUseFacultyTaskFlow ? 'text-gray-500' : 'text-sky-700'}`}>
                           Updated {new Date(note.updated_at).toLocaleString()}
                         </Text>
                       </TouchableOpacity>

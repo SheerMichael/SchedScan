@@ -56,6 +56,7 @@ from .task_views import (
 from .note_views import (
     NoteListCreateView,
     NoteDetailView,
+    FacultyPublishedNoteListView,
 )
 
 # Account management views

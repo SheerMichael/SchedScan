@@ -518,6 +518,31 @@ class NoteSerializer(serializers.ModelSerializer):
         return Note.objects.create(user=user, **validated_data)
 
 
+class FacultyPublishedNoteSerializer(serializers.ModelSerializer):
+    """
+    Read-only serializer for faculty-authored notes shown to enrolled students.
+    """
+
+    faculty_name = serializers.CharField(source='user.get_full_name', read_only=True)
+    faculty_email = serializers.EmailField(source='user.email', read_only=True)
+    faculty_profile_picture = serializers.ImageField(source='user.profile_picture', read_only=True)
+
+    class Meta:
+        model = Note
+        fields = [
+            'id',
+            'subject_code',
+            'text',
+            'is_pinned',
+            'created_at',
+            'updated_at',
+            'faculty_name',
+            'faculty_email',
+            'faculty_profile_picture',
+        ]
+        read_only_fields = fields
+
+
 class PushTokenSerializer(serializers.Serializer):
     """
     Serializer for registering Expo push notification tokens.
