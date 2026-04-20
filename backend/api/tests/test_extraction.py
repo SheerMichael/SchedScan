@@ -676,7 +676,7 @@ class ExtractionViewIntegrationTestCase(TestCase):
         mock_manager.extract_student_number_for_ownership_gate.return_value = {
             'student_number': '2022-01191',
             'semester': '',
-            'school_year': 'A.Y. 2020/21',
+            'school_year': '2020-2021',
             'extraction_method': 'llm_vision_metadata_gate',
             'confidence': 1.0,
             'processing_time': 0.3,
@@ -767,7 +767,7 @@ class ExtractionViewIntegrationTestCase(TestCase):
         mock_parse_document_metadata.return_value = (
             {
                 'semester': '',
-                'school_year': 'S.Y. 2020-2021',
+                'school_year': '2020-2021',
             },
             {},
         )
