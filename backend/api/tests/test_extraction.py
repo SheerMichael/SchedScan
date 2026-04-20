@@ -669,6 +669,45 @@ class ExtractionViewIntegrationTestCase(TestCase):
         self.assertEqual(response.data.get('status'), 'processing')
         mock_submit_job.assert_called_once()
 
+    @patch('api.views.upload_views.ExtractionManager')
+    def test_student_upload_old_school_year_without_semester_requires_confirmation(self, mock_manager_class):
+        """Old school-year metadata should trigger confirmation even when semester is missing."""
+        mock_manager = Mock()
+        mock_manager.extract_student_number_for_ownership_gate.return_value = {
+            'student_number': '2022-01191',
+            'semester': '',
+            'school_year': '2020-2021',
+            'extraction_method': 'llm_vision_metadata_gate',
+            'confidence': 1.0,
+            'processing_time': 0.3,
+            'attempts': ['llm_vision_metadata_gate'],
+            'failure_category': 'none',
+            'validator_errors': [],
+            'score_breakdown': {},
+            'llm_failure_reason': '',
+        }
+        mock_manager_class.return_value = mock_manager
+
+        pdf_file = SimpleUploadedFile(
+            'old_sy_only_cor.pdf',
+            b'fake pdf content',
+            content_type='application/pdf'
+        )
+
+        with patch('api.views.upload_views._submit_extraction_job') as mock_submit_job:
+            response = self.client.post(
+                '/api/upload-cor/student/',
+                {'file': pdf_file},
+                format='multipart'
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data.get('code'), 'OLD_SCHEDULE_CONFIRM_REQUIRED')
+        self.assertTrue(response.data.get('confirmation_required', False))
+        self.assertEqual(response.data.get('detected_semester'), '')
+        self.assertEqual(response.data.get('detected_school_year'), '2020-2021')
+        mock_submit_job.assert_not_called()
+
     @patch('api.views.upload_views.parse_document_metadata_with_llm_vision')
     def test_faculty_upload_old_term_requires_confirmation(self, mock_parse_document_metadata):
         """Old faculty term metadata should also require explicit confirmation before queueing."""
@@ -721,6 +760,37 @@ class ExtractionViewIntegrationTestCase(TestCase):
         self.assertEqual(response.data.get('status'), 'processing')
         self.assertEqual(mock_parse_document_metadata.call_count, 0)
         mock_submit_job.assert_called_once()
+
+    @patch('api.views.upload_views.parse_document_metadata_with_llm_vision')
+    def test_faculty_upload_old_school_year_without_semester_requires_confirmation(self, mock_parse_document_metadata):
+        """Old school-year metadata should trigger confirmation for faculty uploads even without semester."""
+        mock_parse_document_metadata.return_value = (
+            {
+                'semester': '',
+                'school_year': '2020-2021',
+            },
+            {},
+        )
+
+        pdf_file = SimpleUploadedFile(
+            'old_sy_only_faculty_cor.pdf',
+            b'fake pdf content',
+            content_type='application/pdf'
+        )
+
+        with patch('api.views.upload_views._submit_extraction_job') as mock_submit_job:
+            response = self.client.post(
+                '/api/upload-cor/faculty/',
+                {'file': pdf_file},
+                format='multipart'
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data.get('code'), 'OLD_SCHEDULE_CONFIRM_REQUIRED')
+        self.assertTrue(response.data.get('confirmation_required', False))
+        self.assertEqual(response.data.get('detected_semester'), '')
+        self.assertEqual(response.data.get('detected_school_year'), '2020-2021')
+        mock_submit_job.assert_not_called()
 
 
 class PerformanceTestCase(TestCase):

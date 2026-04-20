@@ -101,9 +101,8 @@ def _current_academic_term(now=None) -> dict:
 
 
 def _is_old_schedule_term(semester: str, school_year: str, now=None) -> bool:
-    normalized_semester = _normalize_semester(semester)
     school_year_start = _parse_school_year_start(school_year)
-    if not normalized_semester or school_year_start is None:
+    if school_year_start is None:
         return False
 
     current_term = _current_academic_term(now=now)
@@ -111,6 +110,10 @@ def _is_old_schedule_term(semester: str, school_year: str, now=None) -> bool:
     if school_year_start < current_start:
         return True
     if school_year_start > current_start:
+        return False
+
+    normalized_semester = _normalize_semester(semester)
+    if not normalized_semester:
         return False
 
     current_order = _TERM_ORDER.get(current_term['semester'], 0)
@@ -391,13 +394,15 @@ class BaseCORUploadView(APIView):
     def _build_old_schedule_confirmation_payload(self, semester: str, school_year: str):
         normalized_semester = _normalize_semester(semester)
         normalized_school_year = _normalize_school_year(school_year)
-        if not normalized_semester or not normalized_school_year:
+        if not normalized_school_year:
             return None
 
         if not _is_old_schedule_term(normalized_semester, normalized_school_year):
             return None
 
         current_term = _current_academic_term()
+        detected_term_label = " ".join(part for part in [normalized_semester, normalized_school_year] if part) or normalized_school_year
+        current_term_label = " ".join(part for part in [current_term['semester'], current_term['school_year']] if part)
         return {
             'error': (
                 'This document appears to be from an older academic term. '
@@ -407,9 +412,9 @@ class BaseCORUploadView(APIView):
             'confirmation_required': True,
             'retryable': True,
             'message': (
-                f"Detected {normalized_semester} {normalized_school_year}, "
+                f"Detected {detected_term_label}, "
                 f"which is older than the current term "
-                f"{current_term['semester']} {current_term['school_year']}. "
+                f"{current_term_label}. "
                 'Continue only if you intentionally want to upload an old schedule.'
             ),
             'detected_semester': normalized_semester,
