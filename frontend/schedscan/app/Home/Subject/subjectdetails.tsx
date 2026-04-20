@@ -20,6 +20,10 @@ import {
   studentRemarkService,
   FacultyRemark,
 } from "../../../services/remarkService";
+import {
+  classmateService,
+  Classmate,
+} from "../../../services/classmateService";
 import JoinClassModal from "../../../components/JoinClassModal";
 import { useFileDownload } from "../../../hooks/useFileDownload";
 import { cancelTaskDueReminders, scheduleTaskDueRemindersForTask } from "../../../services/taskReminderService";
@@ -120,6 +124,9 @@ export default function SubjectDetails() {
   const [isEnrolled, setIsEnrolled] = useState(false);
   const [showJoinClassModal, setShowJoinClassModal] = useState(false);
   const canShowJoinClassCode = isStudent && isClassItem && !isEnrolled && !isFacultyCourse;
+  const [classmates, setClassmates] = useState<Classmate[]>([]);
+  const [classmateFacultyName, setClassmateFacultyName] = useState('');
+  const [isClassmatesLoading, setIsClassmatesLoading] = useState(false);
 
   // ============================================
   // Student Remarks State (Student only)
@@ -133,10 +140,22 @@ export default function SubjectDetails() {
   // ============================================
   const { downloadingTaskId, downloadProgress, downloadStatus, downloadFile: handleDownloadFile } = useFileDownload();
 
+  const fetchClassmatesSafely = useCallback(async (code: string) => {
+    try {
+      return await classmateService.getClassmates(code);
+    } catch (error: any) {
+      if (error?.response?.status !== 404) {
+        console.error('Error loading classmates:', error);
+      }
+      return null;
+    }
+  }, []);
+
   const loadAllData = useCallback(async () => {
     if (!subjectCode) return;
     setIsLoading(true);
     setIsFacultyLoading(true);
+    setIsClassmatesLoading(isStudent && isClassItem);
 
     try {
       const notesPromise = noteService.getNotes(subjectCode, user?.id).catch((error) => {
@@ -154,10 +173,16 @@ export default function SubjectDetails() {
         setFacultyTasks(tasksData);
         setNotes(notesData);
         setFacultyPublishedNotes([]);
+        setClassmates([]);
+        setClassmateFacultyName('');
         if (codes.length > 0) setClassCode(codes[0]);
       } else if (isStudent) {
+        const classmatesPromise = isClassItem
+          ? fetchClassmatesSafely(subjectCode)
+          : Promise.resolve(null);
+
         // Student: load personal tasks + faculty tasks + enrollment status + remarks
-        const [personalTasks, fTasks, enrollments, remarksData, notesData, publishedFacultyNotes] = await Promise.all([
+        const [personalTasks, fTasks, enrollments, remarksData, notesData, publishedFacultyNotes, classmatesData] = await Promise.all([
           taskService.getTasks(subjectCode),
           studentEnrollmentService.getFacultyTasks(subjectCode).catch(() => []),
           studentEnrollmentService.getEnrollments().catch(() => []),
@@ -167,12 +192,15 @@ export default function SubjectDetails() {
             console.error('Error loading faculty notes:', error);
             return [] as FacultyPublishedNote[];
           }),
+          classmatesPromise,
         ]);
         setTasks(personalTasks);
         setStudentFacultyTasks(fTasks);
         setStudentRemarks(remarksData);
         setNotes(notesData);
         setFacultyPublishedNotes(publishedFacultyNotes);
+        setClassmates(classmatesData?.classmates ?? []);
+        setClassmateFacultyName(classmatesData?.faculty_name ?? '');
         // Check enrollment using actual enrollments, not task count
         const enrolled = enrollments.some(
           (e) => e.subject_code === subjectCode && e.status === 'active'
@@ -187,14 +215,17 @@ export default function SubjectDetails() {
         setTasks(personalTasks);
         setNotes(notesData);
         setFacultyPublishedNotes([]);
+        setClassmates([]);
+        setClassmateFacultyName('');
       }
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
       setIsLoading(false);
       setIsFacultyLoading(false);
+      setIsClassmatesLoading(false);
     }
-  }, [subjectCode, shouldUseFacultyTaskFlow, isStudent, user?.id]);
+  }, [subjectCode, shouldUseFacultyTaskFlow, isStudent, isClassItem, user?.id, fetchClassmatesSafely]);
 
   // ============================================
   // Load Data
@@ -554,10 +585,18 @@ export default function SubjectDetails() {
     setIsEnrolled(true);
     // Reload faculty tasks after enrollment
     try {
-      const fTasks = await studentEnrollmentService.getFacultyTasks(subjectCode);
+      setIsClassmatesLoading(true);
+      const [fTasks, classmatesData] = await Promise.all([
+        studentEnrollmentService.getFacultyTasks(enrolledSubjectCode),
+        fetchClassmatesSafely(enrolledSubjectCode),
+      ]);
       setStudentFacultyTasks(fTasks);
+      setClassmates(classmatesData?.classmates ?? []);
+      setClassmateFacultyName(classmatesData?.faculty_name ?? '');
     } catch (e) {
       console.error('Error reloading faculty tasks after enrollment:', e);
+    } finally {
+      setIsClassmatesLoading(false);
     }
   };
 
@@ -866,6 +905,24 @@ export default function SubjectDetails() {
         return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
       }),
     [facultyPublishedNotes]
+  );
+
+  const getClassmateDisplayName = (classmate: Classmate) => {
+    const fallback = `${classmate.first_name || ''} ${classmate.last_name || ''}`.trim();
+    return (classmate.full_name || fallback || 'Unknown classmate').trim();
+  };
+
+  const getClassmateInitials = (classmate: Classmate) => {
+    const name = getClassmateDisplayName(classmate);
+    const parts = name.split(' ').filter(Boolean);
+    if (parts.length === 0) return '?';
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  };
+
+  const sortedClassmates = useMemo(
+    () => [...classmates].sort((a, b) => getClassmateDisplayName(a).localeCompare(getClassmateDisplayName(b))),
+    [classmates]
   );
 
   const facultyComposerPanelStyle = {
@@ -1181,6 +1238,65 @@ export default function SubjectDetails() {
                 </View>
               )}
             </View>
+
+            {/* Classmates Section */}
+            {isClassItem && (
+              <View className="mb-6">
+                <View className="flex-row items-center justify-between mb-3">
+                  <Text className="text-lg font-semibold text-gray-900">Classmates</Text>
+                  {isClassmatesLoading ? (
+                    <ActivityIndicator size="small" color="#0284C7" />
+                  ) : (
+                    <View className="bg-gray-100 rounded-full px-2 py-0.5">
+                      <Text className="text-gray-600 text-xs font-semibold">{classmates.length}</Text>
+                    </View>
+                  )}
+                </View>
+
+                {!isEnrolled ? (
+                  <View className="bg-white border border-dashed border-gray-300 rounded-xl p-4">
+                    <Text className="text-gray-500 text-sm">Join this class first to view classmates.</Text>
+                  </View>
+                ) : isClassmatesLoading ? (
+                  <View className="bg-white border border-gray-200 rounded-xl p-4 items-center">
+                    <ActivityIndicator size="small" color="#0284C7" />
+                    <Text className="text-gray-500 text-sm mt-2">Loading classmates...</Text>
+                  </View>
+                ) : classmates.length === 0 ? (
+                  <View className="bg-white border border-dashed border-gray-300 rounded-xl p-4">
+                    <Text className="text-gray-500 text-sm">No classmates found yet for this class.</Text>
+                  </View>
+                ) : (
+                  <View className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                    {classmateFacultyName ? (
+                      <View className="px-3.5 py-3 border-b border-gray-100">
+                        <Text className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Faculty</Text>
+                        <Text className="text-sm font-medium text-gray-800">{classmateFacultyName}</Text>
+                      </View>
+                    ) : null}
+
+                    {sortedClassmates.map((classmate, index) => (
+                      <View
+                        key={`classmate-${classmate.id}`}
+                        className={`px-3.5 py-3 flex-row items-center ${index < sortedClassmates.length - 1 ? 'border-b border-gray-100' : ''}`}
+                      >
+                        <View className="w-9 h-9 rounded-full bg-gray-100 items-center justify-center mr-3">
+                          <Text className="text-xs font-bold text-gray-700">{getClassmateInitials(classmate)}</Text>
+                        </View>
+                        <View className="flex-1">
+                          <Text className="text-sm font-semibold text-gray-900">{getClassmateDisplayName(classmate)}</Text>
+                          {classmate.enrollment_type && (
+                            <Text className="text-xs text-gray-500 mt-0.5">
+                              Joined via {classmate.enrollment_type === 'auto' ? 'auto-match' : 'class code'}
+                            </Text>
+                          )}
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            )}
 
             <View className="mb-6">
               <View className="flex-row items-center justify-between mb-3">
