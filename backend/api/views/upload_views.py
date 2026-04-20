@@ -26,6 +26,7 @@ User = get_user_model()
 logger = logging.getLogger(__name__)
 
 _SCHOOL_YEAR_PATTERN = re.compile(r'^\s*(\d{4})\s*-\s*(\d{4})\s*$')
+_SCHOOL_YEAR_FUZZY_PATTERN = re.compile(r'(\d{4})\s*[-/]\s*(\d{4}|\d{2})')
 _TERM_ORDER = {
     '1ST': 1,
     '2ND': 2,
@@ -58,11 +59,30 @@ def _normalize_semester(value: str) -> str:
 
 
 def _normalize_school_year(value: str) -> str:
-    match = _SCHOOL_YEAR_PATTERN.match(str(value or ''))
+    raw = str(value or '').strip()
+    if not raw:
+        return ''
+
+    # Accept common OCR/LLM variants like "A.Y. 2024/2025", "2024-25",
+    # and Unicode dash characters while normalizing to YYYY-YYYY.
+    normalized = re.sub(r'[‐‑‒–—―]', '-', raw)
+    normalized = normalized.replace('/', '-')
+
+    match = _SCHOOL_YEAR_PATTERN.match(normalized)
+    if not match:
+        match = _SCHOOL_YEAR_FUZZY_PATTERN.search(normalized)
     if not match:
         return ''
+
     start = int(match.group(1))
-    end = int(match.group(2))
+    end_raw = match.group(2)
+    if len(end_raw) == 2:
+        end = (start // 100) * 100 + int(end_raw)
+        if end < start:
+            end += 100
+    else:
+        end = int(end_raw)
+
     if end != start + 1:
         return ''
     return f"{start}-{end}"
