@@ -27,6 +27,7 @@ from ..serializers import (
     FacultyTaskSerializer, FacultyTaskWithStatsSerializer,
     FacultyTaskStudentSerializer, UserSerializer,
 )
+from ..permissions import IsVerifiedFaculty
 from ..utils.enrollment_auto_link import sync_auto_enrollments_for_user
 from ..utils.timetable_generator import generate_and_save_timetable
 
@@ -69,21 +70,10 @@ class ClassCodeView(APIView):
     GET /api/faculty/class-code/?subject_code=CS101
     → Lists active class codes (optionally filtered by subject_code).
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerifiedFaculty]
 
     def post(self, request):
         user = request.user
-        if user.user_type != 'faculty':
-            return Response(
-                {"error": "Only faculty can generate class codes."},
-                status=status.HTTP_403_FORBIDDEN
-            )
-
-        if not user.is_verified:
-            return Response(
-                {"error": "Your faculty account is pending admin verification. Class code generation is disabled until verification is approved."},
-                status=status.HTTP_403_FORBIDDEN
-            )
 
         subject_code = str(request.data.get('subject_code', '')).strip()
         normalized_subject_code = _normalize_subject_code(subject_code)
@@ -139,11 +129,6 @@ class ClassCodeView(APIView):
 
     def get(self, request):
         user = request.user
-        if user.user_type != 'faculty':
-            return Response(
-                {"error": "Only faculty can view class codes."},
-                status=status.HTTP_403_FORBIDDEN
-            )
 
         codes_qs = ClassCode.objects.filter(faculty=user, is_active=True)
         subject_code = str(request.query_params.get('subject_code', '')).strip()
@@ -451,15 +436,10 @@ class FacultyEnrolledStudentsView(APIView):
 
     GET /api/faculty/enrolled-students/?subject_code=CS101
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerifiedFaculty]
 
     def get(self, request):
         user = request.user
-        if user.user_type != 'faculty':
-            return Response(
-                {"error": "Only faculty can view enrolled students."},
-                status=status.HTTP_403_FORBIDDEN
-            )
 
         subject_code = request.query_params.get('subject_code')
         if not subject_code:
@@ -495,16 +475,11 @@ class FacultyTaskListCreateView(APIView):
     Body: {"subject_code": "CS101", "text": "Submit lab report", "due_date": null}
     Supports multipart/form-data for file uploads.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerifiedFaculty]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get(self, request):
         user = request.user
-        if user.user_type != 'faculty':
-            return Response(
-                {"error": "Only faculty can manage faculty tasks."},
-                status=status.HTTP_403_FORBIDDEN
-            )
 
         tasks = FacultyTask.objects.filter(faculty=user).prefetch_related('completions', 'files')
         subject_code = request.query_params.get('subject_code')
@@ -527,11 +502,6 @@ class FacultyTaskListCreateView(APIView):
 
     def post(self, request):
         user = request.user
-        if user.user_type != 'faculty':
-            return Response(
-                {"error": "Only faculty can create faculty tasks."},
-                status=status.HTTP_403_FORBIDDEN
-            )
 
         # Validate that the faculty actually teaches this subject
         subject_code = request.data.get('subject_code')
@@ -638,15 +608,10 @@ class FacultyTaskDetailView(APIView):
 
     DELETE /api/faculty/tasks/<id>/
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerifiedFaculty]
 
     def patch(self, request, pk):
         user = request.user
-        if user.user_type != 'faculty':
-            return Response(
-                {"error": "Only faculty can modify faculty tasks."},
-                status=status.HTTP_403_FORBIDDEN
-            )
 
         try:
             task = FacultyTask.objects.get(pk=pk, faculty=user)
@@ -665,11 +630,6 @@ class FacultyTaskDetailView(APIView):
 
     def delete(self, request, pk):
         user = request.user
-        if user.user_type != 'faculty':
-            return Response(
-                {"error": "Only faculty can delete faculty tasks."},
-                status=status.HTTP_403_FORBIDDEN
-            )
 
         try:
             task = FacultyTask.objects.get(pk=pk, faculty=user)
@@ -704,15 +664,10 @@ class FacultyTaskStatsView(APIView):
     GET /api/faculty/tasks/<id>/stats/
     Returns: completion count, enrolled count, and list of students with status.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerifiedFaculty]
 
     def get(self, request, pk):
         user = request.user
-        if user.user_type != 'faculty':
-            return Response(
-                {"error": "Only faculty can view task stats."},
-                status=status.HTTP_403_FORBIDDEN
-            )
 
         try:
             task = FacultyTask.objects.get(pk=pk, faculty=user)
@@ -1204,15 +1159,10 @@ class FacultyRemoveStudentView(APIView):
     Body: {"enrollment_id": 5}
       or: {"student_email": "student@test.com", "subject_code": "CS101"}
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerifiedFaculty]
 
     def post(self, request):
         user = request.user
-        if user.user_type != 'faculty':
-            return Response(
-                {"error": "Only faculty can remove students."},
-                status=status.HTTP_403_FORBIDDEN
-            )
 
         enrollment_id = request.data.get('enrollment_id')
         if enrollment_id:

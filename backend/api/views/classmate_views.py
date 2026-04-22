@@ -17,6 +17,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from ..models import ClassEnrollment, Course, User
+from ..permissions import IsVerifiedFaculty
 from ..serializers import ClassmateSerializer, FacultyRosterStudentSerializer
 
 logger = logging.getLogger(__name__)
@@ -157,15 +158,9 @@ class FacultyClassRosterView(APIView):
             "pending_students": [ ... ]
         }
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerifiedFaculty]
 
     def get(self, request):
-        if request.user.user_type != 'faculty':
-            return Response(
-                {"error": "Only faculty accounts can view the class roster."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
         subject_code = request.query_params.get('subject_code', '').strip()
         if not subject_code:
             return Response(

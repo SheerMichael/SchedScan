@@ -20,6 +20,7 @@ from api.models import (
     ParentChildLink,
     Course,
 )
+from api.permissions import IsVerifiedFaculty
 from api.serializers import FacultyRemarkSerializer
 from api.utils.notification_service import notify_remark
 
@@ -57,7 +58,7 @@ class FacultyRemarkListCreateView(APIView):
     POST - Create a new remark for a student in a subject the faculty teaches.
            Body: { student_id, subject_code, text }
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerifiedFaculty]
 
     def get_throttles(self):
         """Apply rate-limiting only to POST (creation)."""
@@ -67,8 +68,6 @@ class FacultyRemarkListCreateView(APIView):
 
     def get(self, request):
         user = request.user
-        if user.user_type != 'faculty':
-            return Response({'error': 'Only faculty can access this.'}, status=status.HTTP_403_FORBIDDEN)
 
         qs = FacultyRemark.objects.filter(faculty=user).select_related('student', 'faculty')
 
@@ -87,8 +86,6 @@ class FacultyRemarkListCreateView(APIView):
 
     def post(self, request):
         user = request.user
-        if user.user_type != 'faculty':
-            return Response({'error': 'Only faculty can create remarks.'}, status=status.HTTP_403_FORBIDDEN)
 
         # --- Input validation ---
         student_id = request.data.get('student_id')
@@ -169,12 +166,10 @@ class FacultyRemarkDetailView(APIView):
     PATCH  - Edit a remark's text  { text }
     DELETE - Remove a remark
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerifiedFaculty]
 
     def patch(self, request, pk):
         user = request.user
-        if user.user_type != 'faculty':
-            return Response({'error': 'Only faculty can edit remarks.'}, status=status.HTTP_403_FORBIDDEN)
 
         try:
             remark = FacultyRemark.objects.get(pk=pk, faculty=user)
@@ -197,8 +192,6 @@ class FacultyRemarkDetailView(APIView):
 
     def delete(self, request, pk):
         user = request.user
-        if user.user_type != 'faculty':
-            return Response({'error': 'Only faculty can delete remarks.'}, status=status.HTTP_403_FORBIDDEN)
 
         try:
             remark = FacultyRemark.objects.get(pk=pk, faculty=user)

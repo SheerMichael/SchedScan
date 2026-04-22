@@ -35,7 +35,7 @@ class RemarkTestMixin:
     def _create_users(self):
         self.faculty = User.objects.create_user(
             email='faculty@test.com', password='testpass123',
-            first_name='Dr.', last_name='Smith', user_type='faculty',
+            first_name='Dr.', last_name='Smith', user_type='faculty', is_verified=True,
         )
         self.student = User.objects.create_user(
             email='student@test.com', password='testpass123',
@@ -47,7 +47,7 @@ class RemarkTestMixin:
         )
         self.other_faculty = User.objects.create_user(
             email='other_faculty@test.com', password='testpass123',
-            first_name='Prof.', last_name='Jones', user_type='faculty',
+            first_name='Prof.', last_name='Jones', user_type='faculty', is_verified=True,
         )
 
     def _create_enrollment(self, faculty=None, student=None, subject='CS101'):

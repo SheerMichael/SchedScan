@@ -90,6 +90,7 @@ function RemarkCard({ remark, onPress }: { remark: FacultyRemark; onPress: () =>
 export default function FacultyRemarksScreen() {
   const { user } = useAuth();
   const { subjectCode } = useLocalSearchParams<{ subjectCode: string }>();
+  const isVerifiedFaculty = user?.user_type === 'faculty' && user?.is_verified === true;
 
   // State
   const [students, setStudents] = useState<{ student_id: number; student_name: string; student_email: string }[]>([]);
@@ -108,10 +109,10 @@ export default function FacultyRemarksScreen() {
   const [editText, setEditText] = useState('');
 
   useEffect(() => {
-    if (user?.user_type === 'faculty') {
+    if (isVerifiedFaculty) {
       loadData();
     }
-  }, [subjectCode, user?.user_type]);
+  }, [subjectCode, isVerifiedFaculty]);
 
   const loadData = useCallback(async () => {
     if (!subjectCode) return;
@@ -196,11 +197,11 @@ export default function FacultyRemarksScreen() {
     : remarks;
 
   // Guard: only faculty should access this screen
-  if (user?.user_type !== 'faculty') {
+  if (!isVerifiedFaculty) {
     return (
       <View className="flex-1 justify-center items-center bg-white px-6">
         <Text className="text-lg font-bold text-gray-800 mb-2">Access Denied</Text>
-        <Text className="text-gray-500 text-center mb-4">Only faculty can access student remarks.</Text>
+        <Text className="text-gray-500 text-center mb-4">Only verified faculty can access student remarks.</Text>
         <TouchableOpacity onPress={() => router.back()} className="bg-orange-500 px-6 py-3 rounded-xl">
           <Text className="text-white font-bold">Go Back</Text>
         </TouchableOpacity>

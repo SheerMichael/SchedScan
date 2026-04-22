@@ -82,7 +82,8 @@ class AdminFacultyVerificationFlowTests(TestCase):
             format="json",
         )
         self.assertEqual(denied_response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertIn("pending admin verification", denied_response.data.get("error", ""))
+        denied_message = str(denied_response.data.get("detail", denied_response.data.get("error", "")))
+        self.assertIn("pending admin verification", denied_message)
 
         verify_response = self.admin_client.patch(
             f"/api/admin/users/{self.faculty.id}/",
@@ -232,3 +233,52 @@ class AdminPendingFacultyVerificationQueueTests(TestCase):
         pending_response = self.client.get("/api/admin/pending-verifications/")
         result_ids = {entry["id"] for entry in pending_response.data["results"]}
         self.assertNotIn(self.pending_student.id, result_ids)
+
+
+class VerifiedFacultyPermissionRegressionTests(TestCase):
+    def setUp(self):
+        self.verified_client = APIClient()
+        self.unverified_client = APIClient()
+
+        self.verified_faculty = User.objects.create_user(
+            email="verified_faculty@test.com",
+            password="testpass123",
+            first_name="Verified",
+            last_name="Faculty",
+            user_type="faculty",
+            is_verified=True,
+        )
+        self.unverified_faculty = User.objects.create_user(
+            email="unverified_faculty@test.com",
+            password="testpass123",
+            first_name="Unverified",
+            last_name="Faculty",
+            user_type="faculty",
+            is_verified=False,
+        )
+
+        self.verified_client.force_authenticate(user=self.verified_faculty)
+        self.unverified_client.force_authenticate(user=self.unverified_faculty)
+
+    def test_unverified_faculty_blocked_from_task_management(self):
+        response = self.unverified_client.get("/api/faculty/tasks/")
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn("pending admin verification", str(response.data.get("detail", "")))
+
+    def test_unverified_faculty_blocked_from_class_roster(self):
+        response = self.unverified_client.get("/api/faculty/class-roster/?subject_code=CS101")
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn("pending admin verification", str(response.data.get("detail", "")))
+
+    def test_unverified_faculty_blocked_from_faculty_remarks(self):
+        response = self.unverified_client.get("/api/faculty/remarks/")
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn("pending admin verification", str(response.data.get("detail", "")))
+
+    def test_verified_faculty_reaches_faculty_endpoints(self):
+        response = self.verified_client.get("/api/faculty/tasks/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)

@@ -89,7 +89,9 @@ export default function FacultyDashboard() {
     getClassCodes,
     invalidateFacultyDataCache,
   } = useAuth();
-  const isFacultyVerified = user?.is_verified !== false;
+  const isFacultyVerified = user?.is_verified === true;
+  const verificationLockMessage =
+    "Your faculty account is pending admin verification. This faculty feature is disabled until verification is approved.";
 
   // ---- State ----
   const [isLoading, setIsLoading] = useState(true);
@@ -258,8 +260,12 @@ export default function FacultyDashboard() {
         const variantCodes = Array.from(new Set(subject.subject_codes)).filter(Boolean);
 
         const [tasksResponses, studentsResponses, notesResponses] = await Promise.all([
-          Promise.all(variantCodes.map((code) => facultyTaskService.getFacultyTasks(code))),
-          Promise.all(variantCodes.map((code) => facultyTaskService.getEnrolledStudents(code))),
+          isFacultyVerified
+            ? Promise.all(variantCodes.map((code) => facultyTaskService.getFacultyTasks(code)))
+            : Promise.resolve([]),
+          isFacultyVerified
+            ? Promise.all(variantCodes.map((code) => facultyTaskService.getEnrolledStudents(code)))
+            : Promise.resolve([]),
           Promise.all(variantCodes.map((code) => noteService.getNotes(code, user?.id))),
         ]);
 
@@ -284,7 +290,7 @@ export default function FacultyDashboard() {
         setIsNotesLoading(false);
       }
     },
-    [user?.id]
+    [isFacultyVerified, user?.id]
   );
 
   const onRefresh = useCallback(async () => {
@@ -314,7 +320,7 @@ export default function FacultyDashboard() {
     if (!isFacultyVerified) {
       Alert.alert(
         "Verification Required",
-        "Your faculty account is pending admin verification. Class code generation is disabled until verification is approved."
+        verificationLockMessage
       );
       return;
     }
@@ -341,6 +347,11 @@ export default function FacultyDashboard() {
 
   // ---- Task actions ----
   const handleAddTask = async () => {
+    if (!isFacultyVerified) {
+      Alert.alert("Verification Required", verificationLockMessage);
+      return;
+    }
+
     if (!newTaskText.trim() || !selectedSubject) return;
 
     if (requiresDueDate(newTaskUrgency) && !newTaskDueDate) {
@@ -424,6 +435,11 @@ export default function FacultyDashboard() {
   };
 
   const handleDeleteTask = (task: FacultyTaskWithStats) => {
+    if (!isFacultyVerified) {
+      Alert.alert("Verification Required", verificationLockMessage);
+      return;
+    }
+
     Alert.alert("Delete Task", `Delete "${task.text}"?`, [
       { text: "Cancel", style: "cancel" },
       {
@@ -560,6 +576,11 @@ export default function FacultyDashboard() {
   };
 
   const handleViewStats = async (task: FacultyTaskWithStats) => {
+    if (!isFacultyVerified) {
+      Alert.alert("Verification Required", verificationLockMessage);
+      return;
+    }
+
     try {
       setIsLoadingStats(true);
       const stats = await facultyTaskService.getTaskStats(task.id);
@@ -573,6 +594,11 @@ export default function FacultyDashboard() {
 
   // ---- Student actions ----
   const handleRemoveStudent = (enrollment: ClassEnrollment) => {
+    if (!isFacultyVerified) {
+      Alert.alert("Verification Required", verificationLockMessage);
+      return;
+    }
+
     Alert.alert(
       "Remove Student",
       `Remove ${enrollment.student_name} from this class?`,
@@ -741,7 +767,7 @@ export default function FacultyDashboard() {
             {!isFacultyVerified && (
               <View className="mt-3 bg-red-500/80 rounded-lg px-3 py-2">
                 <Text className="text-white text-xs font-semibold">
-                  Pending Verification: Class code generation is disabled until an admin verifies your faculty account.
+                  Pending Verification: Faculty tools are disabled until an admin verifies your account.
                 </Text>
               </View>
             )}
@@ -1239,37 +1265,40 @@ export default function FacultyDashboard() {
           {/* ---- Student Remarks Button ---- */}
           <TouchableOpacity
             onPress={() =>
-              router.push({
-                pathname: "/Home/Subject/remarks" as any,
-                params: { subjectCode },
-              })
+              isFacultyVerified
+                ? router.push({
+                  pathname: "/Home/Subject/remarks" as any,
+                  params: { subjectCode },
+                })
+                : Alert.alert("Verification Required", verificationLockMessage)
             }
-            className="bg-orange-50 border border-orange-200 p-4 rounded-xl mt-4 mb-4 flex-row items-center justify-between"
+            className={`border p-4 rounded-xl mt-4 mb-4 flex-row items-center justify-between ${isFacultyVerified ? 'bg-orange-50 border-orange-200' : 'bg-gray-100 border-gray-300'
+              }`}
             activeOpacity={0.7}
           >
             <View className="flex-row items-center">
-              <View className="w-10 h-10 rounded-full bg-orange-100 items-center justify-center mr-3">
+              <View className={`w-10 h-10 rounded-full items-center justify-center mr-3 ${isFacultyVerified ? 'bg-orange-100' : 'bg-gray-200'}`}>
                 <Svg
                   width={20}
                   height={20}
                   viewBox="0 0 24 24"
                   fill="none"
-                  stroke="#f97316"
+                  stroke={isFacultyVerified ? '#f97316' : '#6b7280'}
                   strokeWidth="2"
                 >
                   <Path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
                 </Svg>
               </View>
               <View>
-                <Text className="font-bold text-orange-800">
+                <Text className={`font-bold ${isFacultyVerified ? 'text-orange-800' : 'text-gray-600'}`}>
                   Student Remarks
                 </Text>
-                <Text className="text-orange-600 text-xs">
-                  Leave performance comments
+                <Text className={`text-xs ${isFacultyVerified ? 'text-orange-600' : 'text-gray-500'}`}>
+                  {isFacultyVerified ? 'Leave performance comments' : 'Verification required'}
                 </Text>
               </View>
             </View>
-            <ChevronRight size={20} color="#f97316" />
+            <ChevronRight size={20} color={isFacultyVerified ? '#f97316' : '#6b7280'} />
           </TouchableOpacity>
         </View>
 
@@ -1445,8 +1474,8 @@ export default function FacultyDashboard() {
 
               <TouchableOpacity
                 onPress={handleAddTask}
-                disabled={isAddingTask || !newTaskText.trim()}
-                className={`py-4 rounded-2xl items-center ${isAddingTask || !newTaskText.trim() ? "bg-gray-300" : "bg-orange-500"}`}
+                disabled={isAddingTask || !newTaskText.trim() || !isFacultyVerified}
+                className={`py-4 rounded-2xl items-center ${isAddingTask || !newTaskText.trim() || !isFacultyVerified ? "bg-gray-300" : "bg-orange-500"}`}
               >
                 {isAddingTask ? (
                   <ActivityIndicator size="small" color="#fff" />

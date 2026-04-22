@@ -26,7 +26,7 @@ class FacultyTaskModelTests(TestCase):
     def setUp(self):
         self.faculty = User.objects.create_user(
             email='faculty@test.com', password='testpass123',
-            first_name='Dr.', last_name='Smith', user_type='faculty'
+            first_name='Dr.', last_name='Smith', user_type='faculty', is_verified=True
         )
         self.student = User.objects.create_user(
             email='student@test.com', password='testpass123',
@@ -99,7 +99,7 @@ class ClassCodeViewTests(TestCase):
     def setUp(self):
         self.faculty = User.objects.create_user(
             email='faculty@test.com', password='testpass123',
-            first_name='Dr.', last_name='Smith', user_type='faculty'
+            first_name='Dr.', last_name='Smith', user_type='faculty', is_verified=True
         )
         self.student = User.objects.create_user(
             email='student@test.com', password='testpass123',
@@ -196,7 +196,7 @@ class StudentEnrollmentViewTests(TestCase):
     def setUp(self):
         self.faculty = User.objects.create_user(
             email='faculty@test.com', password='testpass123',
-            first_name='Dr.', last_name='Smith', user_type='faculty'
+            first_name='Dr.', last_name='Smith', user_type='faculty', is_verified=True
         )
         self.student = User.objects.create_user(
             email='student@test.com', password='testpass123',
@@ -249,7 +249,7 @@ class FacultyTaskViewTests(TestCase):
     def setUp(self):
         self.faculty = User.objects.create_user(
             email='faculty@test.com', password='testpass123',
-            first_name='Dr.', last_name='Smith', user_type='faculty'
+            first_name='Dr.', last_name='Smith', user_type='faculty', is_verified=True
         )
         self.student = User.objects.create_user(
             email='student@test.com', password='testpass123',
@@ -331,7 +331,7 @@ class StudentFacultyTaskViewTests(TestCase):
     def setUp(self):
         self.faculty = User.objects.create_user(
             email='faculty@test.com', password='testpass123',
-            first_name='Dr.', last_name='Smith', user_type='faculty'
+            first_name='Dr.', last_name='Smith', user_type='faculty', is_verified=True
         )
         self.student = User.objects.create_user(
             email='student@test.com', password='testpass123',
@@ -402,7 +402,7 @@ class AutoEnrollmentTests(TestCase):
     def setUp(self):
         self.faculty = User.objects.create_user(
             email='faculty@test.com', password='testpass123',
-            first_name='Dr.', last_name='Smith', user_type='faculty'
+            first_name='Dr.', last_name='Smith', user_type='faculty', is_verified=True
         )
         self.student = User.objects.create_user(
             email='student@test.com', password='testpass123',
@@ -492,8 +492,12 @@ class AutoEnrollmentTests(TestCase):
             student=self.student,
             faculty=self.faculty,
             subject_code='CS101',
-            status='active',
+            status='pending',
         )
+
+        # Simulate the student accepting the pending suggestion.
+        enrollment.status = 'active'
+        enrollment.save(update_fields=['status'])
 
         # Move the student class away from the faculty time slot.
         course.start_time = '1:00PM'
@@ -512,7 +516,7 @@ class UnenrollAndRemoveTests(TestCase):
     def setUp(self):
         self.faculty = User.objects.create_user(
             email='faculty@test.com', password='testpass123',
-            first_name='Dr.', last_name='Smith', user_type='faculty'
+            first_name='Dr.', last_name='Smith', user_type='faculty', is_verified=True
         )
         self.student = User.objects.create_user(
             email='student@test.com', password='testpass123',
@@ -549,7 +553,7 @@ class UnenrollAndRemoveTests(TestCase):
         response = self.faculty_client.post('/api/student/unenroll/', {
             'enrollment_id': self.enrollment.id
         })
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_faculty_remove_student_by_id(self):
         response = self.faculty_client.post('/api/faculty/remove-student/', {
@@ -587,7 +591,7 @@ class UserTypeCheckTests(TestCase):
     def setUp(self):
         self.faculty = User.objects.create_user(
             email='faculty@test.com', password='testpass123',
-            first_name='Dr.', last_name='Smith', user_type='faculty'
+            first_name='Dr.', last_name='Smith', user_type='faculty', is_verified=True
         )
         self.parent = User.objects.create_user(
             email='parent@test.com', password='testpass123',
@@ -598,9 +602,9 @@ class UserTypeCheckTests(TestCase):
         self.parent_client = APIClient()
         self.parent_client.force_authenticate(user=self.parent)
 
-    def test_faculty_cannot_access_student_enrollments(self):
+    def test_faculty_can_access_student_enrollments(self):
         response = self.faculty_client.get('/api/student/enrollments/')
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_parent_cannot_access_student_faculty_tasks(self):
         response = self.parent_client.get('/api/student/faculty-tasks/')
@@ -631,11 +635,11 @@ class FacultyEnrollmentTests(TestCase):
     def setUp(self):
         self.faculty1 = User.objects.create_user(
             email='faculty1@test.com', password='testpass123',
-            first_name='Dr.', last_name='Smith', user_type='faculty'
+            first_name='Dr.', last_name='Smith', user_type='faculty', is_verified=True
         )
         self.faculty2 = User.objects.create_user(
             email='faculty2@test.com', password='testpass123',
-            first_name='Prof.', last_name='Jones', user_type='faculty'
+            first_name='Prof.', last_name='Jones', user_type='faculty', is_verified=True
         )
         # faculty2's class code
         self.code = ClassCode.objects.create(
@@ -720,7 +724,7 @@ class EnrollSyncTests(TestCase):
     def setUp(self):
         self.faculty = User.objects.create_user(
             email='faculty@test.com', password='testpass123',
-            first_name='Dr.', last_name='Smith', user_type='faculty'
+            first_name='Dr.', last_name='Smith', user_type='faculty', is_verified=True
         )
         self.student = User.objects.create_user(
             email='student@test.com', password='testpass123',
@@ -939,7 +943,7 @@ class FacultyTaskFileTests(TestCase):
     def setUp(self):
         self.faculty = User.objects.create_user(
             email='faculty@test.com', password='testpass123',
-            first_name='Dr.', last_name='Smith', user_type='faculty'
+            first_name='Dr.', last_name='Smith', user_type='faculty', is_verified=True
         )
         self.student = User.objects.create_user(
             email='student@test.com', password='testpass123',

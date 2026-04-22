@@ -398,6 +398,11 @@ const SchedulesScreen = () => {
     return { facultyCount, studentCount, total: facultyCount + studentCount };
   };
 
+  const hasFacultySchedule = allSchedules.some(schedule => schedule.uploadType === 'faculty');
+  const isVerifiedFaculty = user?.user_type === 'faculty' && user?.is_verified;
+  const isFacultyPendingVerification = hasFacultySchedule && !isVerifiedFaculty;
+  const showFacultyFolder = hasFacultySchedule || isVerifiedFaculty;
+
   return (
     <>
       <View className="w-full h-14 bg-white border-b-2 border-gray-200 justify-between items-center flex-row">
@@ -414,17 +419,21 @@ const SchedulesScreen = () => {
       </View>
 
       <ScrollView>
-        <View className='flex items-center justify-center mt-8 pt-4'>
-          <TouchableOpacity className='flex-row justify-between items-center bg-orange-500 w-11/12 rounded-xl h-20' onPress={() => router.push('/Home/Schedules/faculty')}>
-            <View className='flex-row justify-evenly items-center ml-4'>
-              <FolderClosed size={40} color="#ffffff" fill="#ffffff" stroke="#c2410c" />
-              <Text className='text-white text-2xl font-semibold ml-2'>Faculty</Text>
-            </View>
-            <View className='flex mr-4'>
-              <ChevronRight size={34} color="#ffffff" />
-            </View>
-          </TouchableOpacity>
-        </View>
+        {showFacultyFolder && (
+          <View className='flex items-center justify-center mt-8 pt-4'>
+            <TouchableOpacity className='flex-row justify-between items-center bg-orange-500 w-11/12 rounded-xl h-20' onPress={() => router.push('/Home/Schedules/faculty')}>
+              <View className='flex-row justify-evenly items-center ml-4'>
+                <FolderClosed size={40} color="#ffffff" fill="#ffffff" stroke="#c2410c" />
+                <Text className='text-white text-2xl font-semibold ml-2'>
+                  {isFacultyPendingVerification ? 'Faculty (Pending)' : 'Faculty'}
+                </Text>
+              </View>
+              <View className='flex mr-4'>
+                <ChevronRight size={34} color="#ffffff" />
+              </View>
+            </TouchableOpacity>
+          </View>
+        )}
 
         <View className='flex items-center justify-center pt-4'>
           <TouchableOpacity className='flex-row justify-between items-center bg-primary-900 w-11/12 rounded-xl h-20' onPress={() => router.push('/Home/Schedules/student')}>

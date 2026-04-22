@@ -17,3 +17,32 @@ class IsAdminUser(BasePermission):
             and request.user.is_authenticated
             and request.user.is_staff
         )
+
+
+class IsVerifiedFaculty(BasePermission):
+    """
+    Grants access only to authenticated faculty users who are admin-verified.
+    """
+    message = (
+        "Your faculty account is pending admin verification. "
+        "This faculty feature is disabled until verification is approved."
+    )
+
+    def has_permission(self, request, view):
+        user = request.user
+
+        if not user or not user.is_authenticated:
+            return False
+
+        if user.user_type != 'faculty':
+            self.message = "Only faculty accounts can access this endpoint."
+            return False
+
+        if not user.is_verified:
+            self.message = (
+                "Your faculty account is pending admin verification. "
+                "This faculty feature is disabled until verification is approved."
+            )
+            return False
+
+        return True

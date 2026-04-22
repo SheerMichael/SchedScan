@@ -360,7 +360,7 @@ const UserProfile = () => {
                                             <Text className={`text-xs font-semibold ${user?.is_verified ? 'text-emerald-700' : 'text-amber-700'}`}>
                                                 {user?.is_verified
                                                     ? 'Faculty Account Verified'
-                                                    : 'Faculty Account Pending Verification (admin approval required for class code generation)'}
+                                                    : 'Faculty Account Pending Verification (admin approval required for faculty dashboard tools)'}
                                             </Text>
                                         </View>
                                     </View>
