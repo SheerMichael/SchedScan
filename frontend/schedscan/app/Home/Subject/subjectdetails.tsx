@@ -694,6 +694,22 @@ export default function SubjectDetails() {
     critical: '#DC2626',
   };
 
+  const urgencyChipPalette: Record<TaskUrgency, { border: string; bg: string; text: string }> = {
+    low: { border: '#9CA3AF', bg: '#F3F4F6', text: '#374151' },
+    medium: { border: '#2563EB', bg: '#DBEAFE', text: '#1D4ED8' },
+    high: { border: '#D97706', bg: '#FEF3C7', text: '#92400E' },
+    critical: { border: '#DC2626', bg: '#FEE2E2', text: '#B91C1C' },
+  };
+
+  const getUrgencyChipContainerStyle = (urgency: TaskUrgency, selected: boolean) => ({
+    borderColor: selected ? urgencyChipPalette[urgency].border : '#D1D5DB',
+    backgroundColor: selected ? urgencyChipPalette[urgency].bg : '#FFFFFF',
+  });
+
+  const getUrgencyChipTextColor = (urgency: TaskUrgency, selected: boolean) => (
+    selected ? urgencyChipPalette[urgency].text : '#374151'
+  );
+
   const applyTaskDuePreset = (preset: { key: DueDatePresetKey; date: Date }) => {
     setNewTaskDueDate(toDueDateISOString(preset.date));
     setNewTaskDuePreset(preset.key);
@@ -1239,65 +1255,6 @@ export default function SubjectDetails() {
               )}
             </View>
 
-            {/* Classmates Section */}
-            {isClassItem && (
-              <View className="mb-6">
-                <View className="flex-row items-center justify-between mb-3">
-                  <Text className="text-lg font-semibold text-gray-900">Classmates</Text>
-                  {isClassmatesLoading ? (
-                    <ActivityIndicator size="small" color="#0284C7" />
-                  ) : (
-                    <View className="bg-gray-100 rounded-full px-2 py-0.5">
-                      <Text className="text-gray-600 text-xs font-semibold">{classmates.length}</Text>
-                    </View>
-                  )}
-                </View>
-
-                {!isEnrolled ? (
-                  <View className="bg-white border border-dashed border-gray-300 rounded-xl p-4">
-                    <Text className="text-gray-500 text-sm">Join this class first to view classmates.</Text>
-                  </View>
-                ) : isClassmatesLoading ? (
-                  <View className="bg-white border border-gray-200 rounded-xl p-4 items-center">
-                    <ActivityIndicator size="small" color="#0284C7" />
-                    <Text className="text-gray-500 text-sm mt-2">Loading classmates...</Text>
-                  </View>
-                ) : classmates.length === 0 ? (
-                  <View className="bg-white border border-dashed border-gray-300 rounded-xl p-4">
-                    <Text className="text-gray-500 text-sm">No classmates found yet for this class.</Text>
-                  </View>
-                ) : (
-                  <View className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-                    {classmateFacultyName ? (
-                      <View className="px-3.5 py-3 border-b border-gray-100">
-                        <Text className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Faculty</Text>
-                        <Text className="text-sm font-medium text-gray-800">{classmateFacultyName}</Text>
-                      </View>
-                    ) : null}
-
-                    {sortedClassmates.map((classmate, index) => (
-                      <View
-                        key={`classmate-${classmate.id}`}
-                        className={`px-3.5 py-3 flex-row items-center ${index < sortedClassmates.length - 1 ? 'border-b border-gray-100' : ''}`}
-                      >
-                        <View className="w-9 h-9 rounded-full bg-gray-100 items-center justify-center mr-3">
-                          <Text className="text-xs font-bold text-gray-700">{getClassmateInitials(classmate)}</Text>
-                        </View>
-                        <View className="flex-1">
-                          <Text className="text-sm font-semibold text-gray-900">{getClassmateDisplayName(classmate)}</Text>
-                          {classmate.enrollment_type && (
-                            <Text className="text-xs text-gray-500 mt-0.5">
-                              Joined via {classmate.enrollment_type === 'auto' ? 'auto-match' : 'class code'}
-                            </Text>
-                          )}
-                        </View>
-                      </View>
-                    ))}
-                  </View>
-                )}
-              </View>
-            )}
-
             <View className="mb-6">
               <View className="flex-row items-center justify-between mb-3">
                 <Text className="text-lg font-semibold text-gray-900">Faculty Notes</Text>
@@ -1558,6 +1515,65 @@ export default function SubjectDetails() {
 
         </View>
 
+        {/* Classmates Section (lower priority placement) */}
+        {isStudent && isClassItem && (
+          <View className="mb-6">
+            <View className="flex-row items-center justify-between mb-3">
+              <Text className="text-lg font-semibold text-gray-900">Classmates</Text>
+              {isClassmatesLoading ? (
+                <ActivityIndicator size="small" color="#0284C7" />
+              ) : (
+                <View className="bg-gray-100 rounded-full px-2 py-0.5">
+                  <Text className="text-gray-600 text-xs font-semibold">{classmates.length}</Text>
+                </View>
+              )}
+            </View>
+
+            {!isEnrolled ? (
+              <View className="bg-white border border-dashed border-gray-300 rounded-xl p-4">
+                <Text className="text-gray-500 text-sm">Join this class first to view classmates.</Text>
+              </View>
+            ) : isClassmatesLoading ? (
+              <View className="bg-white border border-gray-200 rounded-xl p-4 items-center">
+                <ActivityIndicator size="small" color="#0284C7" />
+                <Text className="text-gray-500 text-sm mt-2">Loading classmates...</Text>
+              </View>
+            ) : classmates.length === 0 ? (
+              <View className="bg-white border border-dashed border-gray-300 rounded-xl p-4">
+                <Text className="text-gray-500 text-sm">No classmates found yet for this class.</Text>
+              </View>
+            ) : (
+              <View className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                {classmateFacultyName ? (
+                  <View className="px-3.5 py-3 border-b border-gray-100">
+                    <Text className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Faculty</Text>
+                    <Text className="text-sm font-medium text-gray-800">{classmateFacultyName}</Text>
+                  </View>
+                ) : null}
+
+                {sortedClassmates.map((classmate, index) => (
+                  <View
+                    key={`classmate-${classmate.id}`}
+                    className={`px-3.5 py-3 flex-row items-center ${index < sortedClassmates.length - 1 ? 'border-b border-gray-100' : ''}`}
+                  >
+                    <View className="w-9 h-9 rounded-full bg-gray-100 items-center justify-center mr-3">
+                      <Text className="text-xs font-bold text-gray-700">{getClassmateInitials(classmate)}</Text>
+                    </View>
+                    <View className="flex-1">
+                      <Text className="text-sm font-semibold text-gray-900">{getClassmateDisplayName(classmate)}</Text>
+                      {classmate.enrollment_type && (
+                        <Text className="text-xs text-gray-500 mt-0.5">
+                          Joined via {classmate.enrollment_type === 'auto' ? 'auto-match' : 'class code'}
+                        </Text>
+                      )}
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
+
         </View>
 
       </ScrollView>
@@ -1681,10 +1697,11 @@ export default function SubjectDetails() {
                     <TouchableOpacity
                       key={`modal-${urgency}`}
                       onPress={() => handleTaskUrgencyChange(urgency)}
-                      className={`mr-2 mb-2 px-3.5 py-2 rounded-full border flex-row items-center ${selected ? 'border-primary-600 bg-primary-600' : 'border-gray-300 bg-white'}`}
+                      className="mr-2 mb-2 px-3.5 py-2 rounded-full border flex-row items-center"
+                      style={getUrgencyChipContainerStyle(urgency, selected)}
                     >
                       <View className="w-2 h-2 rounded-full mr-2" style={{ backgroundColor: urgencyPalette[urgency] }} />
-                      <Text className={`text-xs font-semibold uppercase ${selected ? 'text-white' : 'text-gray-700'}`}>
+                      <Text className="text-xs font-semibold uppercase" style={{ color: getUrgencyChipTextColor(urgency, selected) }}>
                         {urgency}
                       </Text>
                     </TouchableOpacity>
@@ -1698,18 +1715,20 @@ export default function SubjectDetails() {
                   <TouchableOpacity
                     key={`modal-personal-due-${preset.key}`}
                     onPress={() => applyTaskDuePreset(preset)}
-                    className={`mr-2 mb-2 px-3 py-2 rounded-full border ${newTaskDuePreset === preset.key ? 'border-primary-600 bg-primary-600' : 'border-gray-300 bg-white'}`}
+                    className="mr-2 mb-2 px-3 py-2 rounded-full border"
+                    style={getUrgencyChipContainerStyle(newTaskUrgency, newTaskDuePreset === preset.key)}
                   >
-                    <Text className={`text-xs font-semibold ${newTaskDuePreset === preset.key ? 'text-white' : 'text-gray-700'}`}>
+                    <Text className="text-xs font-semibold" style={{ color: getUrgencyChipTextColor(newTaskUrgency, newTaskDuePreset === preset.key) }}>
                       {preset.label}
                     </Text>
                   </TouchableOpacity>
                 ))}
                 <TouchableOpacity
                   onPress={clearTaskDueDate}
-                  className={`mr-2 mb-2 px-3 py-2 rounded-full border ${!newTaskDueDate ? 'border-primary-600 bg-primary-600' : 'border-gray-300 bg-white'}`}
+                  className="mr-2 mb-2 px-3 py-2 rounded-full border"
+                  style={getUrgencyChipContainerStyle(newTaskUrgency, !newTaskDueDate)}
                 >
-                  <Text className={`text-xs font-semibold ${!newTaskDueDate ? 'text-white' : 'text-gray-700'}`}>No Due Date</Text>
+                  <Text className="text-xs font-semibold" style={{ color: getUrgencyChipTextColor(newTaskUrgency, !newTaskDueDate) }}>No Due Date</Text>
                 </TouchableOpacity>
               </View>
 
@@ -1891,10 +1910,11 @@ export default function SubjectDetails() {
                     <TouchableOpacity
                       key={`modal-faculty-${urgency}`}
                       onPress={() => handleFacultyUrgencyChange(urgency)}
-                      className={`mr-2 mb-2 px-3.5 py-2 rounded-full border flex-row items-center ${selected ? 'border-orange-500 bg-orange-500' : 'border-gray-300 bg-white'}`}
+                      className="mr-2 mb-2 px-3.5 py-2 rounded-full border flex-row items-center"
+                      style={getUrgencyChipContainerStyle(urgency, selected)}
                     >
                       <View className="w-2 h-2 rounded-full mr-2" style={{ backgroundColor: urgencyPalette[urgency] }} />
-                      <Text className={`text-xs font-semibold uppercase ${selected ? 'text-white' : 'text-gray-700'}`}>
+                      <Text className="text-xs font-semibold uppercase" style={{ color: getUrgencyChipTextColor(urgency, selected) }}>
                         {urgency}
                       </Text>
                     </TouchableOpacity>
@@ -1908,18 +1928,20 @@ export default function SubjectDetails() {
                   <TouchableOpacity
                     key={`modal-faculty-due-${preset.key}`}
                     onPress={() => applyFacultyDuePreset(preset)}
-                    className={`mr-2 mb-2 px-3 py-2 rounded-full border ${newFacultyTaskDuePreset === preset.key ? 'border-orange-500 bg-orange-500' : 'border-gray-300 bg-white'}`}
+                    className="mr-2 mb-2 px-3 py-2 rounded-full border"
+                    style={getUrgencyChipContainerStyle(newFacultyTaskUrgency, newFacultyTaskDuePreset === preset.key)}
                   >
-                    <Text className={`text-xs font-semibold ${newFacultyTaskDuePreset === preset.key ? 'text-white' : 'text-gray-700'}`}>
+                    <Text className="text-xs font-semibold" style={{ color: getUrgencyChipTextColor(newFacultyTaskUrgency, newFacultyTaskDuePreset === preset.key) }}>
                       {preset.label}
                     </Text>
                   </TouchableOpacity>
                 ))}
                 <TouchableOpacity
                   onPress={clearFacultyDueDate}
-                  className={`mr-2 mb-2 px-3 py-2 rounded-full border ${!newFacultyTaskDueDate ? 'border-orange-500 bg-orange-500' : 'border-gray-300 bg-white'}`}
+                  className="mr-2 mb-2 px-3 py-2 rounded-full border"
+                  style={getUrgencyChipContainerStyle(newFacultyTaskUrgency, !newFacultyTaskDueDate)}
                 >
-                  <Text className={`text-xs font-semibold ${!newFacultyTaskDueDate ? 'text-white' : 'text-gray-700'}`}>No Due Date</Text>
+                  <Text className="text-xs font-semibold" style={{ color: getUrgencyChipTextColor(newFacultyTaskUrgency, !newFacultyTaskDueDate) }}>No Due Date</Text>
                 </TouchableOpacity>
               </View>
 
