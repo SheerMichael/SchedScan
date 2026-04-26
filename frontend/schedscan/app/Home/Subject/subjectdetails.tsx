@@ -1,4 +1,4 @@
-import { View, Text, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Alert, Modal, KeyboardAvoidingView, Platform, Animated, Easing } from "react-native";
+import { View, Text, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Alert, Modal, KeyboardAvoidingView, Platform, Animated, Easing, PanResponder } from "react-native";
 import * as Clipboard from 'expo-clipboard';
 import ExpoCheckbox from "expo-checkbox";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
@@ -111,6 +111,46 @@ export default function SubjectDetails() {
   const taskComposerAnimation = useRef(new Animated.Value(0)).current;
   const noteComposerAnimation = useRef(new Animated.Value(0)).current;
   const facultyComposerAnimation = useRef(new Animated.Value(0)).current;
+
+  // Refs used by PanResponders so they always read the latest value without
+  // needing to be recreated on every render.
+  const closeTaskComposerRef = useRef<() => void>(() => {});
+  const closeNoteComposerRef = useRef<() => void>(() => {});
+  const closeFacultyTaskComposerRef = useRef<() => void>(() => {});
+  const isAddingTaskRef = useRef(false);
+  const isAddingNoteRef = useRef(false);
+  const isAddingFacultyTaskRef = useRef(false);
+
+  // PanResponders for swipe-to-dismiss — created once, read latest values via refs.
+  const taskSheetPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gs) => Math.abs(gs.dy) > 5,
+      onPanResponderRelease: (_, gs) => {
+        if (gs.dy > 60 && !isAddingTaskRef.current) closeTaskComposerRef.current();
+      },
+    })
+  ).current;
+
+  const noteSheetPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gs) => Math.abs(gs.dy) > 5,
+      onPanResponderRelease: (_, gs) => {
+        if (gs.dy > 60 && !isAddingNoteRef.current) closeNoteComposerRef.current();
+      },
+    })
+  ).current;
+
+  const facultySheetPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gs) => Math.abs(gs.dy) > 5,
+      onPanResponderRelease: (_, gs) => {
+        if (gs.dy > 60 && !isAddingFacultyTaskRef.current) closeFacultyTaskComposerRef.current();
+      },
+    })
+  ).current;
 
   // ============================================
   // Class Code State (Faculty only)
@@ -822,6 +862,12 @@ export default function SubjectDetails() {
     setShowFacultyTaskComposer(false);
   };
 
+  // Sync close-handler refs so the stable PanResponders always invoke the
+  // latest version of each close function (functions are redefined each render).
+  closeTaskComposerRef.current = closeTaskComposer;
+  closeNoteComposerRef.current = closeNoteComposer;
+  closeFacultyTaskComposerRef.current = closeFacultyTaskComposer;
+
   const openFacultyTaskDuePicker = (mode: 'date' | 'time') => {
     if (Platform.OS === 'android') {
       const baseDate = newFacultyTaskDueDate ? new Date(newFacultyTaskDueDate) : new Date();
@@ -952,6 +998,11 @@ export default function SubjectDetails() {
       },
     ],
   };
+
+  // Sync mutable refs so PanResponders always see the latest values.
+  isAddingTaskRef.current = isAddingTask;
+  isAddingNoteRef.current = isAddingNote;
+  isAddingFacultyTaskRef.current = isAddingFacultyTask;
 
   // ============================================
   // Render
@@ -1652,11 +1703,18 @@ export default function SubjectDetails() {
         onRequestClose={closeTaskComposer}
       >
         <KeyboardAvoidingView
-          className="flex-1 bg-black/45 justify-end"
+          className="flex-1 justify-end"
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
+          {/* Backdrop — tap to dismiss */}
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={closeTaskComposer}
+            className="absolute inset-0 bg-black/45"
+          />
           <Animated.View className="bg-white rounded-t-3xl max-h-[92%]" style={taskComposerPanelStyle}>
-            <View className="items-center pt-3 pb-2">
+            {/* Drag handle — swipe down to dismiss */}
+            <View className="items-center pt-3 pb-2" {...taskSheetPanResponder.panHandlers}>
               <View className="w-12 h-1 bg-gray-300 rounded-full" />
             </View>
 
@@ -1805,11 +1863,18 @@ export default function SubjectDetails() {
         onRequestClose={closeNoteComposer}
       >
         <KeyboardAvoidingView
-          className="flex-1 bg-black/45 justify-end"
+          className="flex-1 justify-end"
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
+          {/* Backdrop — tap to dismiss */}
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={closeNoteComposer}
+            className="absolute inset-0 bg-black/45"
+          />
           <Animated.View className="bg-white rounded-t-3xl max-h-[86%]" style={noteComposerPanelStyle}>
-            <View className="items-center pt-3 pb-2">
+            {/* Drag handle — swipe down to dismiss */}
+            <View className="items-center pt-3 pb-2" {...noteSheetPanResponder.panHandlers}>
               <View className="w-12 h-1 bg-gray-300 rounded-full" />
             </View>
 
@@ -1865,11 +1930,18 @@ export default function SubjectDetails() {
         onRequestClose={closeFacultyTaskComposer}
       >
         <KeyboardAvoidingView
-          className="flex-1 bg-black/45 justify-end"
+          className="flex-1 justify-end"
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
+          {/* Backdrop — tap to dismiss */}
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={closeFacultyTaskComposer}
+            className="absolute inset-0 bg-black/45"
+          />
           <Animated.View className="bg-white rounded-t-3xl max-h-[92%]" style={facultyComposerPanelStyle}>
-            <View className="items-center pt-3 pb-2">
+            {/* Drag handle — swipe down to dismiss */}
+            <View className="items-center pt-3 pb-2" {...facultySheetPanResponder.panHandlers}>
               <View className="w-12 h-1 bg-gray-300 rounded-full" />
             </View>
 

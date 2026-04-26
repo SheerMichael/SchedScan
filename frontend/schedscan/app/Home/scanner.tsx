@@ -20,6 +20,7 @@ import { scheduleStorageService } from '../../services/scheduleStorageService';
 import { useAuth } from '../../context/AuthContext';
 import FacultyModeModal from '../../components/FacultyModeModal';
 import FacultyMatchModal from '../../components/FacultyMatchModal';
+import ExtractionPreviewModal from '../../components/ExtractionPreviewModal';
 import { pendingEnrollmentService } from '../../services/pendingEnrollmentService';
 import { detectSemesterFromDate } from '../../utils/semesterUtils';
 import api from '../../services/api';
@@ -117,6 +118,11 @@ export default function Scanner() {
 
   // Faculty match modal — shown after student extraction when pending enrollments exist
   const [showFacultyMatchModal, setShowFacultyMatchModal] = useState(false);
+
+  // Extraction preview modal — shown right after extraction succeeds so user can verify
+  const [showExtractionPreviewModal, setShowExtractionPreviewModal] = useState(false);
+  // Tracks which upload type triggered the current preview (needed by confirm handler)
+  const previewUploadTypeRef = useRef<'student' | 'faculty'>('student');
 
   // Student number modal — shown before first student COR upload when number is not on profile
   const [showStudentNumberModal, setShowStudentNumberModal] = useState(false);
@@ -303,51 +309,10 @@ export default function Scanner() {
     setShowBehindScenesModal(false);
     setBackgroundJobId('');
 
-    // For student uploads, check if the backend found any faculty matches.
-    // Retry briefly to avoid missing matches if job completion and enrollment
-    // sync commit land very close together.
-    if (uploadType === 'student') {
-      try {
-        let pendingCount = 0;
-        for (let attempt = 0; attempt < 3; attempt += 1) {
-          const pending = await pendingEnrollmentService.getPendingEnrollments();
-          pendingCount = pending.count || 0;
-          if (pendingCount > 0) {
-            break;
-          }
-          if (attempt < 2) {
-            await new Promise((resolve) => setTimeout(resolve, 700));
-          }
-        }
-
-        if (pendingCount > 0) {
-          setShowFacultyMatchModal(true);
-          // Show schedules alert AFTER they dismiss the match modal
-          return;
-        }
-      } catch {
-        // Silently ignore — don't block the success flow
-      }
-    }
-
-    Alert.alert(
-      'Schedule Saved',
-      'Extraction completed and your schedule has been saved automatically. You can review it in Schedules.',
-      [
-        {
-          text: 'View Schedules',
-          onPress: () => {
-            resetScanner();
-            router.push('/Home/schedules');
-          },
-        },
-        {
-          text: 'Stay Here',
-          style: 'cancel',
-        },
-      ]
-    );
-  }, [clearPersistedBackgroundJobState, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Show preview so the user can verify before saving.
+    previewUploadTypeRef.current = uploadType;
+    setShowExtractionPreviewModal(true);
+  }, [clearPersistedBackgroundJobState, user?.id]);
 
   const showExtractionFailure = useCallback((input: ExtractionFailureInput) => {
     const failure = buildFailureDescriptor(input);
@@ -1198,6 +1163,59 @@ export default function Scanner() {
   const canRetryExtraction = Boolean(selectedFile && selectedRole && failureRetryable);
   const isOwnershipMismatchFailure = uploadFailureCategory === 'ownership_mismatch';
 
+  // ─── Extraction preview handlers ────────────────────────────────────────
+
+  /**
+   * User confirmed the preview looks correct. Now check for faculty matches
+   * (student uploads) before proceeding to the save-title modal.
+   */
+  const handlePreviewConfirm = useCallback(async () => {
+    setShowExtractionPreviewModal(false);
+
+    const uploadType = previewUploadTypeRef.current;
+
+    if (uploadType === 'student') {
+      try {
+        let pendingCount = 0;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const pending = await pendingEnrollmentService.getPendingEnrollments();
+          pendingCount = pending.count || 0;
+          if (pendingCount > 0) break;
+          if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 700));
+        }
+        if (pendingCount > 0) {
+          setShowFacultyMatchModal(true);
+          return;
+        }
+      } catch {
+        // Silently ignore — don't block the success flow
+      }
+    }
+
+    setShowTitleModal(true);
+  }, []);
+
+  /** User wants to re-upload the same file. */
+  const handlePreviewRetry = useCallback(() => {
+    setShowExtractionPreviewModal(false);
+    setUploadedCourses([]);
+    setUploadedSemester('');
+    setUploadedSchoolYear('');
+    if (selectedFile && selectedRole) {
+      uploadFile(selectedFile, selectedRole, { isRetry: true }).catch((err) => {
+        console.error('Preview retry upload failed:', err);
+      });
+    } else {
+      Alert.alert('Retry Unavailable', 'No file found to retry. Please pick a new file.');
+    }
+  }, [selectedFile, selectedRole]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** User dismissed the preview without saving. */
+  const handlePreviewDiscard = useCallback(() => {
+    setShowExtractionPreviewModal(false);
+    resetScanner();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const LeftPointingArrow = ({ size = 24, color = '#ffffff' }) => (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
       <Path d="M19 12H6M12 5l-7 7 7 7" />
@@ -1711,6 +1729,22 @@ export default function Scanner() {
         </View>
       </Modal>
 
+      {/* Extraction Preview Modal \u2014 shown after successful scan for user to verify */}
+      <ExtractionPreviewModal
+        visible={showExtractionPreviewModal}
+        courses={uploadedCourses}
+        semester={uploadedSemester}
+        schoolYear={uploadedSchoolYear}
+        uploadType={previewUploadTypeRef.current}
+        onConfirm={() => {
+          handlePreviewConfirm().catch((err) => {
+            console.error('Preview confirm failed:', err);
+          });
+        }}
+        onRetry={handlePreviewRetry}
+        onDiscard={handlePreviewDiscard}
+      />
+
       {/* Faculty Mode Unlock Modal */}
       <FacultyModeModal
         visible={showFacultyModeModal}
@@ -1723,37 +1757,13 @@ export default function Scanner() {
         visible={showFacultyMatchModal}
         onClose={() => {
           setShowFacultyMatchModal(false);
-          Alert.alert(
-            'Schedule Saved',
-            'Your schedule has been saved. You can join faculty classes later from your profile.',
-            [
-              {
-                text: 'View Schedules',
-                onPress: () => {
-                  resetScanner();
-                  router.push('/Home/schedules');
-                },
-              },
-              { text: 'OK', style: 'cancel' },
-            ]
-          );
+          // User skipped matching — proceed to save title modal
+          setShowTitleModal(true);
         }}
-        onAccepted={(count) => {
+        onAccepted={(_count) => {
           setShowFacultyMatchModal(false);
-          Alert.alert(
-            '🎉 Joined!',
-            `You've joined ${count} class${count !== 1 ? 'es' : ''}. Your schedule has been saved.`,
-            [
-              {
-                text: 'View Schedules',
-                onPress: () => {
-                  resetScanner();
-                  router.push('/Home/schedules');
-                },
-              },
-              { text: 'OK', style: 'cancel' },
-            ]
-          );
+          // Matches accepted — proceed to save title modal
+          setShowTitleModal(true);
         }}
       />
 
