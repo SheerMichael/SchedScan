@@ -1318,7 +1318,7 @@ export default function FacultyDashboard() {
         }}
       >
         <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
           className="flex-1 bg-black/35 justify-end"
         >
           <View className="bg-white rounded-t-3xl px-5 pt-3 pb-6 max-h-[88%]">

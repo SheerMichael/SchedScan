@@ -53,7 +53,8 @@ export default function SubjectDetails() {
     sourceType,      // 'student' | 'faculty' | 'merged' — schedule source type
   } = useLocalSearchParams();
 
-  const subjectCode = Array.isArray(title) ? title[0] : title || '';
+  const rawTitle = Array.isArray(title) ? title[0] : title || '';
+  const subjectCode = String(rawTitle || '').trim();
   const normalizedPriorityLevel = (Array.isArray(priorityLevel) ? priorityLevel[0] : priorityLevel || '').toLowerCase();
   const normalizedSourceType = (Array.isArray(sourceType) ? sourceType[0] : sourceType || '').toLowerCase();
   const isClassItem = normalizedPriorityLevel !== 'holiday' && normalizedPriorityLevel !== 'event';
@@ -1010,7 +1011,7 @@ export default function SubjectDetails() {
   const fabTaskLabel = shouldUseFacultyTaskFlow ? addTaskLabel : 'Add Task';
   const fabButtonColor = '#111827';
   const shouldShowFab = !shouldUseFacultyTaskFlow && !showTaskComposer && !showFacultyTaskComposer && !showNoteComposer;
-  const displayTitle = title || 'Untitled Subject';
+  const displayTitle = rawTitle || 'Untitled Subject';
 
   return (
     <>
@@ -1704,7 +1705,7 @@ export default function SubjectDetails() {
       >
         <KeyboardAvoidingView
           className="flex-1 justify-end"
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
           {/* Backdrop — tap to dismiss */}
           <TouchableOpacity
@@ -1864,7 +1865,7 @@ export default function SubjectDetails() {
       >
         <KeyboardAvoidingView
           className="flex-1 justify-end"
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
           {/* Backdrop — tap to dismiss */}
           <TouchableOpacity
@@ -1931,7 +1932,7 @@ export default function SubjectDetails() {
       >
         <KeyboardAvoidingView
           className="flex-1 justify-end"
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
           {/* Backdrop — tap to dismiss */}
           <TouchableOpacity

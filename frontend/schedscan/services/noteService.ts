@@ -37,23 +37,30 @@ const toScopeToken = (scope: NoteCacheScope): string => {
   return String(scope);
 };
 
+const normalizeSubjectCode = (subjectCode: string): string => String(subjectCode || '').trim();
+
 const getCacheKey = (subjectCode: string, scope?: NoteCacheScope): string => {
-  return `${NOTES_CACHE_KEY}${toScopeToken(scope)}_${subjectCode}`;
+  const normalizedSubjectCode = normalizeSubjectCode(subjectCode);
+  return `${NOTES_CACHE_KEY}${toScopeToken(scope)}_${normalizedSubjectCode}`;
 };
 
 export const noteService = {
   getNotes: async (subjectCode: string, scope?: NoteCacheScope): Promise<Note[]> => {
+    const normalizedSubjectCode = normalizeSubjectCode(subjectCode);
+    if (!normalizedSubjectCode) {
+      return [];
+    }
     try {
       const response = await api.get('/notes/', {
-        params: { subject_code: subjectCode },
+        params: { subject_code: normalizedSubjectCode },
       });
       const notes: Note[] = response.data;
-      await AsyncStorage.setItem(getCacheKey(subjectCode, scope), JSON.stringify(notes));
+      await AsyncStorage.setItem(getCacheKey(normalizedSubjectCode, scope), JSON.stringify(notes));
       return notes;
     } catch (error: any) {
       console.error('Error fetching notes from API:', error.message);
       try {
-        const cached = await AsyncStorage.getItem(getCacheKey(subjectCode, scope));
+        const cached = await AsyncStorage.getItem(getCacheKey(normalizedSubjectCode, scope));
         return cached ? JSON.parse(cached) : [];
       } catch (cacheError) {
         console.error('Error reading notes cache:', cacheError);
@@ -63,9 +70,13 @@ export const noteService = {
   },
 
   getFacultyNotes: async (subjectCode: string): Promise<FacultyPublishedNote[]> => {
+    const normalizedSubjectCode = normalizeSubjectCode(subjectCode);
+    if (!normalizedSubjectCode) {
+      return [];
+    }
     try {
       const response = await api.get('/student/faculty-notes/', {
-        params: { subject_code: subjectCode },
+        params: { subject_code: normalizedSubjectCode },
       });
       return Array.isArray(response.data) ? response.data : (response.data?.results ?? []);
     } catch (error: any) {
@@ -75,9 +86,16 @@ export const noteService = {
   },
 
   createNote: async (data: CreateNoteData, scope?: NoteCacheScope): Promise<Note> => {
-    const response = await api.post('/notes/', data);
+    const normalizedSubjectCode = normalizeSubjectCode(data.subject_code);
+    if (!normalizedSubjectCode) {
+      throw new Error('Subject code is required to create a note.');
+    }
+    const response = await api.post('/notes/', {
+      ...data,
+      subject_code: normalizedSubjectCode,
+    });
     const newNote: Note = response.data;
-    await noteService.addToCache(data.subject_code, newNote, scope);
+    await noteService.addToCache(normalizedSubjectCode, newNote, scope);
     return newNote;
   },
 
@@ -89,12 +107,14 @@ export const noteService = {
   ): Promise<Note> => {
     const response = await api.patch(`/notes/${noteId}/`, data);
     const updatedNote: Note = response.data;
-    await noteService.updateInCache(subjectCode, updatedNote, scope);
+    const normalizedSubjectCode = normalizeSubjectCode(subjectCode);
+    await noteService.updateInCache(normalizedSubjectCode, updatedNote, scope);
     return updatedNote;
   },
 
   deleteNote: async (noteId: number, subjectCode: string, scope?: NoteCacheScope): Promise<void> => {
-    await noteService.removeFromCache(subjectCode, noteId, scope);
+    const normalizedSubjectCode = normalizeSubjectCode(subjectCode);
+    await noteService.removeFromCache(normalizedSubjectCode, noteId, scope);
     await api.delete(`/notes/${noteId}/`);
   },
 
