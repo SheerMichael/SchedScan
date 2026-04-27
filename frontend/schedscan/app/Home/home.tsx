@@ -1046,6 +1046,8 @@ export default function SchedScanApp() {
                 const facultyNoteTotal = facultyNoteCounts[item.title]?.total ?? 0;
                 const shouldShowFacultyNoteBanner =
                   user?.user_type === 'student' && item.priority_level === 'Class' && facultyNoteTotal > 0;
+                const showTaskBanner = taskCounts[item.title]?.total > 0;
+                const showFacultyTaskBanner = facultyTaskCounts[item.title]?.total > 0;
                 return (
                 <TouchableOpacity
                   key={`${item.title}-${index}`}
@@ -1072,7 +1074,7 @@ export default function SchedScanApp() {
                   style={{ borderLeftWidth: 4, borderLeftColor: courseColor }}
                 >
                   <View className="flex-row justify-between items-start">
-                    <View className="flex-1">
+                    <View className="flex-1 pr-2">
                       <View className="flex-row items-center">
                         <Text className="font-bold text-base text-black">{item.title}</Text>
                         {/* Show badge for merged schedules (source_type) or non-merged schedules (uploadType) — only for Class items */}
@@ -1094,43 +1096,43 @@ export default function SchedScanApp() {
                       </View>
                       <Text className="text-sm text-gray-600">{item.time}</Text>
                       <Text className="text-sm text-gray-600">{item.location}</Text>
+                    </View>
+                    <View className="items-end">
                       {shouldShowFacultyNoteBanner && (
-                        <View className="mt-2 self-start flex-row items-center bg-sky-50 border border-sky-200 rounded-full px-2.5 py-1">
-                          <Text className="text-[11px] font-semibold text-sky-800">
-                            {facultyNoteTotal === 1 ? 'Faculty note' : 'Faculty notes'}
-                          </Text>
+                        <View className="flex-row items-center bg-sky-50 border border-sky-200 rounded-full px-2.5 py-1">
+                          <Text className="text-[11px] font-semibold text-sky-800">📋</Text>
                           <View className="ml-1.5 bg-white border border-sky-200 rounded-full px-1.5">
                             <Text className="text-[10px] font-bold text-sky-700">{facultyNoteTotal}</Text>
                           </View>
                         </View>
                       )}
-                    </View>
-                    {taskCounts[item.title]?.total > 0 && (
-                      <View className="flex-row items-center bg-amber-100 px-2 py-1 rounded-full">
-                        <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2">
-                          <Path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                          <Path d="M9 12l2 2 4-4" />
-                        </Svg>
-                        <Text className="text-xs font-semibold text-amber-700 ml-1">
-                          {taskCounts[item.title]?.incomplete > 0
-                            ? `${taskCounts[item.title].incomplete}`
-                            : '✓'}
-                        </Text>
-                      </View>
-                    )}
-                    {/* Faculty Mode Active for students */}
-                    {facultyTaskCounts[item.title]?.total > 0 && (
-                      <View className="flex-row items-center bg-orange-50 border border-orange-200 rounded-full px-2.5 py-1 ml-2">
-                        <Text className="text-[11px] font-semibold text-orange-800">Faculty tasks</Text>
-                        <View className="ml-1.5 bg-white border border-orange-200 rounded-full px-1.5">
-                          <Text className="text-[10px] font-bold text-orange-700">
-                            {facultyTaskCounts[item.title]?.incomplete > 0
-                              ? `${facultyTaskCounts[item.title].incomplete}`
+                      {showTaskBanner && (
+                        <View className={`flex-row items-center bg-amber-100 px-2 py-1 rounded-full ${shouldShowFacultyNoteBanner ? 'mt-2' : ''}`}>
+                          <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2">
+                            <Path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                            <Path d="M9 12l2 2 4-4" />
+                          </Svg>
+                          <Text className="text-xs font-semibold text-amber-700 ml-1">
+                            {taskCounts[item.title]?.incomplete > 0
+                              ? `${taskCounts[item.title].incomplete}`
                               : '✓'}
                           </Text>
                         </View>
-                      </View>
-                    )}
+                      )}
+                      {/* Faculty Mode Active for students */}
+                      {showFacultyTaskBanner && (
+                        <View className={`flex-row items-center bg-orange-50 border border-orange-200 rounded-full px-2.5 py-1 ${shouldShowFacultyNoteBanner || showTaskBanner ? 'mt-2' : ''}`}>
+                          <Text className="text-[11px] font-semibold text-orange-800">📋</Text>
+                          <View className="ml-1.5 bg-white border border-orange-200 rounded-full px-1.5">
+                            <Text className="text-[10px] font-bold text-orange-700">
+                              {facultyTaskCounts[item.title]?.incomplete > 0
+                                ? `${facultyTaskCounts[item.title].incomplete}`
+                                : '✓'}
+                            </Text>
+                          </View>
+                        </View>
+                      )}
+                    </View>
                   </View>
                 </TouchableOpacity>
                 );
@@ -1170,24 +1172,24 @@ export default function SchedScanApp() {
                         className="bg-amber-50 p-3 mb-2 rounded-xl border border-amber-200"
                         style={{ borderLeftWidth: 4, borderLeftColor: courseColor }}
                       >
-                        <View className="flex-row justify-between items-center">
-                          <View className="flex-1">
+                        <View className="flex-row justify-between items-start">
+                          <View className="flex-1 pr-2">
                             <Text className="font-bold text-sm text-amber-900">{item.title}</Text>
                             <Text className="text-xs text-amber-700">{item.time}</Text>
                             {item.location ? <Text className="text-xs text-amber-600">{item.location}</Text> : null}
+                          </View>
+                          <View className="items-end">
                             {shouldShowFacultyNoteBanner && (
-                              <View className="mt-2 self-start flex-row items-center bg-sky-50 border border-sky-200 rounded-full px-2.5 py-1">
-                                <Text className="text-[11px] font-semibold text-sky-800">
-                                  {facultyNoteTotal === 1 ? 'Faculty note' : 'Faculty notes'}
-                                </Text>
+                              <View className="flex-row items-center bg-sky-50 border border-sky-200 rounded-full px-2.5 py-1">
+                                <Text className="text-[11px] font-semibold text-sky-800">📋</Text>
                                 <View className="ml-1.5 bg-white border border-sky-200 rounded-full px-1.5">
                                   <Text className="text-[10px] font-bold text-sky-700">{facultyNoteTotal}</Text>
                                 </View>
                               </View>
                             )}
-                          </View>
-                          <View className="bg-amber-200 px-2 py-0.5 rounded-full">
-                            <Text className="text-xs font-medium text-amber-800">No day</Text>
+                            <View className={`bg-amber-200 px-2 py-0.5 rounded-full ${shouldShowFacultyNoteBanner ? 'mt-2' : ''}`}>
+                              <Text className="text-xs font-medium text-amber-800">No day</Text>
+                            </View>
                           </View>
                         </View>
                       </TouchableOpacity>
