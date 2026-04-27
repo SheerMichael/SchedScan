@@ -102,6 +102,7 @@ urlpatterns = [
     path('student/faculty-tasks/counts/', views.StudentFacultyTaskCountsView.as_view(), name='student_faculty_task_counts'),
     path('student/faculty-tasks/<int:pk>/complete/', views.StudentFacultyTaskCompleteView.as_view(), name='student_faculty_task_complete'),
     path('student/faculty-notes/', views.FacultyPublishedNoteListView.as_view(), name='student_faculty_notes'),
+    path('student/faculty-notes/counts/', views.StudentFacultyNoteCountsView.as_view(), name='student_faculty_note_counts'),
 
     # Pending enrollment consent (auto-detected faculty matches)
     path('student/pending-enrollments/', views.PendingEnrollmentListView.as_view(), name='pending_enrollments'),

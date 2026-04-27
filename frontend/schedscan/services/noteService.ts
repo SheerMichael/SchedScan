@@ -85,6 +85,21 @@ export const noteService = {
     }
   },
 
+  getFacultyNoteCounts: async (
+    subjectCodes: string[]
+  ): Promise<Record<string, { total: number }>> => {
+    const normalizedCodes = Array.from(
+      new Set(subjectCodes.map((code) => normalizeSubjectCode(code)).filter(Boolean))
+    );
+    if (normalizedCodes.length === 0) {
+      return {};
+    }
+    const response = await api.post('/student/faculty-notes/counts/', {
+      subject_codes: normalizedCodes,
+    });
+    return response.data;
+  },
+
   createNote: async (data: CreateNoteData, scope?: NoteCacheScope): Promise<Note> => {
     const normalizedSubjectCode = normalizeSubjectCode(data.subject_code);
     if (!normalizedSubjectCode) {

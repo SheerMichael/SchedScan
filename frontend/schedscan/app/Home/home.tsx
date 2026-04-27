@@ -7,6 +7,7 @@ import { Course, courseService } from '../../services/courseService';
 import { SavedSchedule } from '../../services/scheduleStorageService';
 import { taskService, Task } from '../../services/taskService';
 import { studentEnrollmentService } from '../../services/facultyTaskService';
+import { noteService } from '../../services/noteService';
 import { useFocusEffect } from '@react-navigation/native';
 import FacultyModeModal from '../../components/FacultyModeModal';
 import JoinClassModal from '../../components/JoinClassModal';
@@ -138,6 +139,7 @@ export default function SchedScanApp() {
   const [daySchedule, setDaySchedule] = useState<ScheduleItem[]>([]);
   const [taskCounts, setTaskCounts] = useState<Record<string, { total: number; incomplete: number }>>({});
   const [facultyTaskCounts, setFacultyTaskCounts] = useState<Record<string, { total: number; incomplete: number }>>({});
+  const [facultyNoteCounts, setFacultyNoteCounts] = useState<Record<string, { total: number }>>({});
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
   const [failedExtractionCount, setFailedExtractionCount] = useState(0);
   const [urgentTask, setUrgentTask] = useState<Task | null>(null);
@@ -384,21 +386,37 @@ export default function SchedScanApp() {
 
           // Load faculty task counts for students
           if (user?.user_type === 'student') {
-            try {
-              const fCounts = await studentEnrollmentService.getFacultyTaskCounts(subjectCodes);
-              setFacultyTaskCounts(fCounts);
-            } catch (e: any) {
-              // Silently ignore if endpoint is not available (e.g., not deployed yet)
-              if (e?.response?.status !== 404) {
-                console.log('Faculty task counts not available:', e);
-              }
+            const [facultyTaskResult, facultyNoteResult] = await Promise.allSettled([
+              studentEnrollmentService.getFacultyTaskCounts(subjectCodes),
+              noteService.getFacultyNoteCounts(subjectCodes),
+            ]);
+
+            if (facultyTaskResult.status === 'fulfilled') {
+              setFacultyTaskCounts(facultyTaskResult.value);
+            } else if (facultyTaskResult.reason?.response?.status !== 404) {
+              console.log('Faculty task counts not available:', facultyTaskResult.reason);
             }
+
+            if (facultyNoteResult.status === 'fulfilled') {
+              setFacultyNoteCounts(facultyNoteResult.value);
+            } else if (facultyNoteResult.reason?.response?.status !== 404) {
+              console.log('Faculty note counts not available:', facultyNoteResult.reason);
+            }
+          } else {
+            setFacultyTaskCounts({});
+            setFacultyNoteCounts({});
           }
+        } else {
+          setTaskCounts({});
+          setFacultyTaskCounts({});
+          setFacultyNoteCounts({});
         }
       } else {
         setCourses([]);
         setDaySchedule([]);
         setTaskCounts({});
+        setFacultyTaskCounts({});
+        setFacultyNoteCounts({});
         resyncTaskDueReminders([]).catch(err =>
           console.warn('Failed to clear local task reminders:', err)
         );
@@ -1025,6 +1043,9 @@ export default function SchedScanApp() {
             <>
               {daySchedule.filter(item => item.priority_level !== 'Unscheduled').map((item, index) => {
                 const courseColor = getCourseColor(item);
+                const facultyNoteTotal = facultyNoteCounts[item.title]?.total ?? 0;
+                const shouldShowFacultyNoteBanner =
+                  user?.user_type === 'student' && item.priority_level === 'Class' && facultyNoteTotal > 0;
                 return (
                 <TouchableOpacity
                   key={`${item.title}-${index}`}
@@ -1073,6 +1094,15 @@ export default function SchedScanApp() {
                       </View>
                       <Text className="text-sm text-gray-600">{item.time}</Text>
                       <Text className="text-sm text-gray-600">{item.location}</Text>
+                      {shouldShowFacultyNoteBanner && (
+                        <View className="mt-2 self-start flex-row items-center bg-sky-50 border border-sky-200 rounded-full px-2 py-1">
+                          <View className="w-1.5 h-1.5 rounded-full bg-sky-500 mr-1.5" />
+                          <Text className="text-xs font-semibold text-sky-700">
+                            {facultyNoteTotal === 1 ? 'Faculty note' : 'Faculty notes'}
+                          </Text>
+                          <Text className="text-xs font-semibold text-sky-700 ml-1">{facultyNoteTotal}</Text>
+                        </View>
+                      )}
                     </View>
                     {taskCounts[item.title]?.total > 0 && (
                       <View className="flex-row items-center bg-amber-100 px-2 py-1 rounded-full">
@@ -1112,6 +1142,9 @@ export default function SchedScanApp() {
                   </View>
                   {daySchedule.filter(item => item.priority_level === 'Unscheduled').map((item, index) => {
                     const courseColor = getCourseColor(item);
+                    const facultyNoteTotal = facultyNoteCounts[item.title]?.total ?? 0;
+                    const shouldShowFacultyNoteBanner =
+                      user?.user_type === 'student' && facultyNoteTotal > 0;
                     return (
                       <TouchableOpacity
                         key={`unsched-${item.title}-${index}`}
@@ -1139,6 +1172,15 @@ export default function SchedScanApp() {
                             <Text className="font-bold text-sm text-amber-900">{item.title}</Text>
                             <Text className="text-xs text-amber-700">{item.time}</Text>
                             {item.location ? <Text className="text-xs text-amber-600">{item.location}</Text> : null}
+                            {shouldShowFacultyNoteBanner && (
+                              <View className="mt-2 self-start flex-row items-center bg-sky-50 border border-sky-200 rounded-full px-2 py-1">
+                                <View className="w-1.5 h-1.5 rounded-full bg-sky-500 mr-1.5" />
+                                <Text className="text-xs font-semibold text-sky-700">
+                                  {facultyNoteTotal === 1 ? 'Faculty note' : 'Faculty notes'}
+                                </Text>
+                                <Text className="text-xs font-semibold text-sky-700 ml-1">{facultyNoteTotal}</Text>
+                              </View>
+                            )}
                           </View>
                           <View className="bg-amber-200 px-2 py-0.5 rounded-full">
                             <Text className="text-xs font-medium text-amber-800">No day</Text>
