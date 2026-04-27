@@ -1095,12 +1095,18 @@ export default function SchedScanApp() {
                       <Text className="text-sm text-gray-600">{item.time}</Text>
                       <Text className="text-sm text-gray-600">{item.location}</Text>
                       {shouldShowFacultyNoteBanner && (
-                        <View className="mt-2 self-start flex-row items-center bg-sky-50 border border-sky-200 rounded-full px-2 py-1">
-                          <View className="w-1.5 h-1.5 rounded-full bg-sky-500 mr-1.5" />
-                          <Text className="text-xs font-semibold text-sky-700">
+                        <View className="mt-2 self-start flex-row items-center bg-sky-50 border border-sky-200 rounded-full px-2.5 py-1">
+                          <Svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="#0284C7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <Path d="M7 2h7l5 5v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" />
+                            <Path d="M8 11h8" />
+                            <Path d="M8 15h5" />
+                          </Svg>
+                          <Text className="text-[11px] font-semibold text-sky-800 ml-1.5">
                             {facultyNoteTotal === 1 ? 'Faculty note' : 'Faculty notes'}
                           </Text>
-                          <Text className="text-xs font-semibold text-sky-700 ml-1">{facultyNoteTotal}</Text>
+                          <View className="ml-1.5 bg-white border border-sky-200 rounded-full px-1.5">
+                            <Text className="text-[10px] font-bold text-sky-700">{facultyNoteTotal}</Text>
+                          </View>
                         </View>
                       )}
                     </View>
@@ -1119,13 +1125,23 @@ export default function SchedScanApp() {
                     )}
                     {/* Faculty Mode Active for students */}
                     {facultyTaskCounts[item.title]?.total > 0 && (
-                      <View className="flex-row items-center bg-orange-100 px-2 py-1 rounded-full ml-1">
-                        <Text className="text-xs">Faculty</Text>
-                        <Text className="text-xs font-semibold text-orange-700 ml-1">
-                          {facultyTaskCounts[item.title]?.incomplete > 0
-                            ? `${facultyTaskCounts[item.title].incomplete}`
-                            : '✓'}
-                        </Text>
+                      <View className="flex-row items-center bg-orange-50 border border-orange-200 rounded-full px-2.5 py-1 ml-2">
+                        <Svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="#C2410C" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <Path d="M9 6h11" />
+                          <Path d="M9 12h11" />
+                          <Path d="M9 18h11" />
+                          <Path d="M4 6h.01" />
+                          <Path d="M4 12h.01" />
+                          <Path d="M4 18h.01" />
+                        </Svg>
+                        <Text className="text-[11px] font-semibold text-orange-800 ml-1.5">Faculty tasks</Text>
+                        <View className="ml-1.5 bg-white border border-orange-200 rounded-full px-1.5">
+                          <Text className="text-[10px] font-bold text-orange-700">
+                            {facultyTaskCounts[item.title]?.incomplete > 0
+                              ? `${facultyTaskCounts[item.title].incomplete}`
+                              : '✓'}
+                          </Text>
+                        </View>
                       </View>
                     )}
                   </View>
@@ -1173,12 +1189,18 @@ export default function SchedScanApp() {
                             <Text className="text-xs text-amber-700">{item.time}</Text>
                             {item.location ? <Text className="text-xs text-amber-600">{item.location}</Text> : null}
                             {shouldShowFacultyNoteBanner && (
-                              <View className="mt-2 self-start flex-row items-center bg-sky-50 border border-sky-200 rounded-full px-2 py-1">
-                                <View className="w-1.5 h-1.5 rounded-full bg-sky-500 mr-1.5" />
-                                <Text className="text-xs font-semibold text-sky-700">
+                              <View className="mt-2 self-start flex-row items-center bg-sky-50 border border-sky-200 rounded-full px-2.5 py-1">
+                                <Svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="#0284C7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <Path d="M7 2h7l5 5v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" />
+                                  <Path d="M8 11h8" />
+                                  <Path d="M8 15h5" />
+                                </Svg>
+                                <Text className="text-[11px] font-semibold text-sky-800 ml-1.5">
                                   {facultyNoteTotal === 1 ? 'Faculty note' : 'Faculty notes'}
                                 </Text>
-                                <Text className="text-xs font-semibold text-sky-700 ml-1">{facultyNoteTotal}</Text>
+                                <View className="ml-1.5 bg-white border border-sky-200 rounded-full px-1.5">
+                                  <Text className="text-[10px] font-bold text-sky-700">{facultyNoteTotal}</Text>
+                                </View>
                               </View>
                             )}
                           </View>
