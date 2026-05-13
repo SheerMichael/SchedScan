@@ -401,7 +401,7 @@ const UserProfile = () => {
                             </TouchableOpacity> */}
                             <TouchableOpacity className="p-4 border-b border-gray-500/50 flex-row items-center gap-2" onPress={() => router.push('/profile/policy')}>
                                 <FileText />
-                                <Text className="text-base">Privacy Policy, Terms of Service & Fair Use</Text>
+                                <Text className="flex-1 flex-wrap">Privacy Policy, Mission & Vision, Terms of Service & Fair Use</Text>
                             </TouchableOpacity>
                             <TouchableOpacity className="p-4 border-b border-gray-500/50 flex-row items-center gap-2" onPress={() => router.push('/profile/change_password')}>
                                 <EyeOff />

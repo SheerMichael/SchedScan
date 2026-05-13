@@ -6,7 +6,7 @@ const Policy = () => {
 
     return (
     <>
-        <ScrollView contentContainerStyle={{ paddingBottom: 40 }} className="p-5">
+      <ScrollView contentContainerStyle={{ paddingBottom: 40 }} className="p-5">
             
         <TouchableOpacity className="mb-4 pl-2" onPress={() => router.back()}>
             <ArrowLeft size={26} color="black" strokeWidth={2} />
@@ -20,6 +20,18 @@ const Policy = () => {
 
         <Text className="text-sm leading-5 text-slate-600 mb-4">
           We do not sell or distribute your personal data to third parties. All information is stored in a secure database with access strictly limited to authorized personnel. This ensures that your schedule remains private and is used solely to enhance your experience within the app.
+        </Text>
+
+        <View className="h-[1px] bg-slate-200 my-6" />
+        <Text className="text-2xl font-bold text-slate-900 mb-4">Mission</Text>
+
+        <Text className="text-sm leading-5 text-slate-600 mb-4">
+          SchedScan is committed to delivering an innovative and reliable schedule management platform that automates academic scheduling through intelligent document extraction and cross-platform synchronization. By combining accessibility, accuracy, and user-centered design, we aim to help educational communities save time, reduce scheduling difficulties, and stay connected anytime, anywhere.
+        </Text>
+
+        <Text className="text-2xl font-bold text-slate-900 mb-4">Vision</Text>
+        <Text className="text-sm leadineg-5 text-slate-600 mb-4">
+          To redefine academic schedule management through intelligent and accessible technology that simplifies coordination, improves connectivity among students, faculty, and parents, and supports a more organized and efficient educational experience.
         </Text>
 
         <View className="h-[1px] bg-slate-200 my-6" />
